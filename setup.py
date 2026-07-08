@@ -35,15 +35,14 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="lecture-manager",                     # changed to this name
-    from lecture_manager import __version__
-    version=__version__,                           # updated to match __init__.py
+    name="lecture-manager",
+    version="2.3.2",                     # Hardcoded (no import from package)
     description="Unified media manager for YouTube lectures and Facebook content with terminal and web interface",
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Udaya Raj Joshi",
     author_email="udayarajjoshi@gmail.com",
-    url="https://github.com/blee-design/lecture-manager",  # your real URL
+    url="https://github.com/blee-design/lecture-manager",
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
@@ -54,7 +53,7 @@ setup(
         "bgutil-ytdlp-pot-provider",
         "requests>=2.25.0",
         "gallery-dl>=1.20.0",
-        "ffmpeg-python>=0.2.0",   # optional but fine
+        "ffmpeg-python>=0.2.0",
     ],
     extras_require={
         "dev": ["pytest", "black", "flake8"],
@@ -72,6 +71,6 @@ setup(
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
         "Operating System :: POSIX :: Linux",
-        "Operating System :: Microsoft :: Windows",  # if supported
+        "Operating System :: Microsoft :: Windows",
     ],
 )
