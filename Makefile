@@ -4,7 +4,7 @@
 PROJECT_NAME   := youtube-lecture-manager
 BACKUP_DIR     := ./backups
 TIMESTAMP      := $(shell date +%Y%m%d_%H%M%S)
-BACKUP_FILE    := $(BACKUP_DIR)/$(PROJECT_NAME)_backup_$(TIMESTAMP).tar.gz
+BACKUP_FILE    := $(BACKUP_DIR)/$(PROJECT_NAME)_backup_$(TIMESTAMP).tar.xz
 
 # --- Database settings (for backup-db) ---
 DB_HOST        ?= localhost
@@ -38,7 +38,7 @@ help:
 	@echo "  make backup-db   - Dump the MariaDB database to a SQL file (requires DB credentials)."
 	@echo "  make clean       - Remove Python cache files and temporary files."
 	@echo "  make install     - Install the package in editable (development) mode."
-	@echo "  make dist        - Build a source distribution (.tar.xz) for distribution."
+	@echo "  make dist        - Build a source distribution (.tar.gz) for distribution."
 
 backup: $(BACKUP_DIR)
 	@echo "Creating backup of $(PROJECT_NAME)..."
@@ -67,7 +67,7 @@ install:
 	@echo "Installation complete."
 
 dist:
-	@echo "Building source distribution (.tar.xz)..."
-	python setup.py sdist --formats=xztar
+	@echo "Building source distribution (.tar.gz)..."
+	python -m build
 	@echo "Distribution created in ./dist/"
-	@ls -lh dist/*.tar.xz
+	@ls -lh dist/*.tar.gz
