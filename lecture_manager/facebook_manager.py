@@ -14,6 +14,7 @@ from .db import get_connection
 from .file_sharing import _load_share_db, _save_share_db, SHARE_DIR
 
 
+
 FACEBOOK_VIDEO_DIR = os.path.join(ROOT_DIR, 'facebook', 'videos')
 FACEBOOK_PHOTO_DIR = os.path.join(ROOT_DIR, 'facebook', 'photos')
 TABLE_NAME = 'facebook_entries'
@@ -168,12 +169,21 @@ def _extract_facebook_id(url):
     # fallback: use the last part of the URL
     return url.rstrip('/').split('/')[-1]
 
+def _extract_facebook_id_from_url_or_id(identifier):
+    """If identifier is a URL, extract the Facebook ID; otherwise return as-is."""
+    if isinstance(identifier, str) and identifier.startswith('http'):
+        from .facebook import _extract_facebook_id
+        return _extract_facebook_id(identifier)
+    return identifier
+
 def add_facebook_lecture(url_or_id):
     """
     Handle adding a Facebook video or photo.
     Detects type, downloads, organises, and stores in DB.
     """
     from .facebook import _is_video_link, _download_video, _download_single_photo
+    from .youtube import _ensure_cookie_file
+    import yt_dlp
 
     print("\n" + "═" * 50)
     print_colored("  ADD FACEBOOK CONTENT", COLORS.CYAN, bold=True)
@@ -182,6 +192,54 @@ def add_facebook_lecture(url_or_id):
     if not url_or_id.startswith('http'):
         print_colored("[!] Please provide a full Facebook URL.", COLORS.RED)
         return
+
+    # ---- Resolve to canonical ID using yt-dlp ----
+        # ---- Resolve to canonical ID using yt-dlp ----
+    facebook_id = None
+    try:
+        _ensure_cookie_file()
+        ydl_opts = {
+            'quiet': True,
+            'extract_flat': False,   # get full info, not just metadata
+            'ignoreerrors': True,
+            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url_or_id, download=False)
+            if info and isinstance(info, dict):
+                # Try multiple possible fields
+                facebook_id = info.get('id') or info.get('display_id') or info.get('webpage_url_basename')
+                if not facebook_id:
+                    # Some Facebook videos have ID in 'url' or 'original_url'
+                    if info.get('url'):
+                        import re
+                        match = re.search(r'facebook\.com/watch/?\?v=(\d+)', info['url'])
+                        if match:
+                            facebook_id = match.group(1)
+    except Exception as e:
+        print_colored(f"[!] Could not resolve URL: {e}", COLORS.YELLOW)
+
+    # ---- Fallback to old extraction method ----
+    if not facebook_id:
+        from .facebook import _extract_facebook_id
+        facebook_id = _extract_facebook_id(url_or_id)
+
+    if not facebook_id:
+        print_colored("[!] Could not extract a valid Facebook ID from the URL.", COLORS.RED)
+        return
+
+    # ---- Check if this Facebook ID already exists ----
+    existing = get_facebook_entry_by_id(facebook_id)
+    if existing:
+        print_colored(f"[!] Facebook ID {facebook_id} already exists in the database.", COLORS.YELLOW)
+        print_colored(f"   Title: {existing.get('title', 'Unknown')}", COLORS.BLUE)
+        print_colored(f"   Type: {existing.get('type', 'Unknown')}", COLORS.BLUE)
+        print_colored(f"   ID: {existing.get('id', 'Unknown')}", COLORS.BLUE)
+        overwrite = input(color_text("Download and overwrite? (y/n): ", COLORS.MAGENTA)).strip().lower()
+        if overwrite != 'y':
+            print_colored("Cancelled.", COLORS.YELLOW)
+            return
+        print_colored("[i] Overwriting existing entry...", COLORS.BLUE)
 
     custom_name = input(color_text("Enter a custom name (or press Enter to auto-detect): ", COLORS.MAGENTA)).strip()
     if not custom_name:
@@ -199,8 +257,9 @@ def add_facebook_lecture(url_or_id):
 
 def add_facebook_entry(facebook_id, entry_type, title, uploader, url, file_hash=None, original_filename=None, notes=None):
     """
-    Insert a new Facebook entry into the database.
-    Returns the inserted ID or None on error.
+    Insert or update a Facebook entry in the database.
+    If facebook_id already exists, update the record with new values.
+    Returns the inserted/updated ID or None on error.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -209,6 +268,15 @@ def add_facebook_entry(facebook_id, entry_type, title, uploader, url, file_hash=
             INSERT INTO {TABLE_NAME}
             (facebook_id, type, title, uploader, url, file_hash, original_filename, notes)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                type = VALUES(type),
+                title = VALUES(title),
+                uploader = VALUES(uploader),
+                url = VALUES(url),
+                file_hash = VALUES(file_hash),
+                original_filename = VALUES(original_filename),
+                notes = VALUES(notes),
+                download_date = NOW()
         """, (facebook_id, entry_type, title, uploader, url, file_hash, original_filename, notes))
         conn.commit()
         inserted_id = cursor.lastrowid
@@ -216,7 +284,7 @@ def add_facebook_entry(facebook_id, entry_type, title, uploader, url, file_hash=
         conn.close()
         return inserted_id
     except Exception as e:
-        print_colored(f"[!] Failed to insert Facebook entry: {e}", COLORS.RED)
+        print_colored(f"[!] Failed to insert/update Facebook entry: {e}", COLORS.RED)
         cursor.close()
         conn.close()
         return None
@@ -228,10 +296,10 @@ def get_facebook_entry_by_id(identifier):
     """
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
-    # Try by facebook_id, then id, then file_hash
+    # Use CAST to avoid implicit integer conversion
     sql = f"""
         SELECT * FROM {TABLE_NAME}
-        WHERE facebook_id = %s OR id = %s OR file_hash = %s
+        WHERE facebook_id = %s OR CAST(id AS CHAR) = %s OR file_hash = %s
     """
     cursor.execute(sql, (identifier, identifier, identifier))
     row = cursor.fetchone()
@@ -356,6 +424,7 @@ def export_facebook_csv():
 def export_facebook_json():
     """Export all Facebook entries to a JSON file."""
     import json
+    from datetime import datetime
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute("SELECT * FROM facebook_entries ORDER BY download_date DESC")
@@ -370,6 +439,11 @@ def export_facebook_json():
         filename = "facebook_export.json"
     if not filename.endswith('.json'):
         filename += '.json'
+    # Convert datetime objects to strings
+    for row in rows:
+        for key, value in row.items():
+            if isinstance(value, datetime):
+                row[key] = value.isoformat()
     try:
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(rows, f, indent=2, ensure_ascii=False)

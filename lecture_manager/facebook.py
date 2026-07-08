@@ -42,6 +42,7 @@ def _is_video_link(url):
         '/watch',
         '/reel/',
         '/share/r/',
+        '/share/v/',      # <-- Add this line
         '/videos/',
         '/video/',
     ]
@@ -51,25 +52,14 @@ def _is_video_link(url):
 def _download_video(url, custom_name=None):
     from .facebook_manager import add_facebook_entry
 
-    """
-    Download a single Facebook video/Reel.
-    After download, organise into ROOT_DIR/facebook/videos/ and add to DB.
-    """
-    # Ensure cookies.txt is fresh
     _ensure_cookie_file()
+    cookie_opt = {'cookiefile': 'cookies.txt'} if os.path.exists('cookies.txt') else {'cookiesfrombrowser': ('edge',)}
 
-    # Determine cookie option
-    if os.path.exists('cookies.txt'):
-        cookie_opt = {'cookiefile': 'cookies.txt'}
-    else:
-        cookie_opt = {'cookiesfrombrowser': ('edge',)}
-
-    # ---- Try to get metadata ----
+    # Fetch metadata
     title = None
     uploader = None
     description = None
     facebook_id = None
-
     ydl_opts_info = {
         'quiet': True,
         'no_warnings': True,
@@ -77,7 +67,6 @@ def _download_video(url, custom_name=None):
         'ignoreerrors': True,
         **cookie_opt
     }
-
     try:
         with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -87,12 +76,11 @@ def _download_video(url, custom_name=None):
                 description = info.get('description')
                 if description:
                     description = description.split('\n')[0].strip()
-                # Try to get a stable ID
                 facebook_id = info.get('id') or _extract_facebook_id(url)
     except Exception as e:
         print_colored(f"[!] Could not fetch metadata: {e}", COLORS.YELLOW)
 
-    # ---- Determine filename ----
+    # Determine filename
     if custom_name:
         filename_base = custom_name
     elif title and title.lower() != 'video':
@@ -112,7 +100,7 @@ def _download_video(url, custom_name=None):
 
     print_colored(f"[i] Saving as: {filename_base}", COLORS.GREEN)
 
-    # ---- Download ----
+    # Download
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     temp_filename = f"{filename_base}.%(ext)s"
     temp_path_pattern = os.path.join(DOWNLOAD_DIR, temp_filename)
@@ -130,13 +118,21 @@ def _download_video(url, custom_name=None):
         with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
             print_colored(f"[⏳] Downloading Facebook video...", COLORS.BLUE)
             ydl.download([url])
-        # Find the downloaded file
-        # yt-dlp may add extra extensions; we'll glob for the base name
-        downloaded_files = [f for f in os.listdir(DOWNLOAD_DIR) if f.startswith(filename_base)]
-        if not downloaded_files:
+
+        # ---- Improved file detection ----
+        import glob
+        pattern = os.path.join(DOWNLOAD_DIR, f"{filename_base}.*")
+        matches = glob.glob(pattern)
+        if not matches:
+            all_files = os.listdir(DOWNLOAD_DIR)
+            matches = [os.path.join(DOWNLOAD_DIR, f) for f in all_files
+                       if filename_base in f and f.lower().endswith(('.mp4', '.mkv', '.webm', '.avi', '.mov'))]
+        if not matches:
             print_colored("[!] Could not locate downloaded file.", COLORS.RED)
             return
-        temp_path = os.path.join(DOWNLOAD_DIR, downloaded_files[0])
+        if len(matches) > 1:
+            matches.sort(key=lambda p: os.path.getsize(p), reverse=True)
+        temp_path = matches[0]
         print_colored(f"[✓] Downloaded to {temp_path}", COLORS.GREEN)
 
         # ---- Compute MD5 and move to final directory ----
@@ -148,11 +144,13 @@ def _download_video(url, custom_name=None):
         os.makedirs(FACEBOOK_VIDEO_DIR, exist_ok=True)
         final_path = os.path.join(FACEBOOK_VIDEO_DIR, new_filename)
 
-        # Move to final location
+        # If final file already exists, remove it (replace)
+        if os.path.exists(final_path):
+            os.remove(final_path)
         shutil.move(temp_path, final_path)
         print_colored(f"[✓] File stored at: {final_path}", COLORS.BLUE)
 
-        # ---- Insert into database ----
+        # ---- Insert into database (upsert) ----
         if not facebook_id:
             facebook_id = _extract_facebook_id(url)
         entry_id = add_facebook_entry(
