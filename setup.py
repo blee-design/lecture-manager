@@ -36,7 +36,8 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="lecture-manager",                     # changed to this name
-    version="2.3.1",                           # updated to match __init__.py
+    from lecture_manager import __version__
+    version=__version__,                           # updated to match __init__.py
     description="Unified media manager for YouTube lectures and Facebook content with terminal and web interface",
     long_description=long_description,
     long_description_content_type="text/markdown",
