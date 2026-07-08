@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 *.pyo
 
+# HTML file and pypi configuration file
+.pypirc
+upload_guide.html
+
 # Virtual environment
 venv/
 env/
