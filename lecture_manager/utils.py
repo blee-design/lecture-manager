@@ -5,7 +5,7 @@ import sys
 import os
 import hashlib
 
-ROOT_DIR = os.path.expanduser("~/foxCloud/office/Udaan")
+ROOT_DIR = os.path.expanduser("~/foxCloud/office/RootData")
 TRASH_DIR = os.path.expanduser("~/.lecture_trash")
 
 
