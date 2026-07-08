@@ -1,4 +1,3 @@
-cat > .gitignore << 'EOF'
 # Python cache
 __pycache__/
 *.pyc
@@ -40,4 +39,33 @@ build/
 
 # Temporary files from ffmpeg
 *.temp.*
-EOF
+
+# Exported files (CSV, JSON)
+*.csv
+*.json
+!requirements.txt   # keep requirements.txt if you have it
+!setup.py           # keep setup.py
+
+# Combined/backup files
+lm.py
+lecture-manager.py  # if it's just a symlink or entry point, keep it; but if it's redundant, ignore
+
+# Configuration (already)
+.lecture_manager_config.json
+cookies.txt
+
+# Media files (downloads, trash)
+downloads/
+.lecture_trash/
+
+# Database dumps
+*.sql
+backups/
+
+# IDE
+.vscode/
+.idea/
+
+# OS metadata
+.DS_Store
+Thumbs.db
