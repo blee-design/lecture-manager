@@ -11,20 +11,16 @@ from setuptools.command.install import install
 class InstallWithDeno(install):
     """Custom install command that also installs Deno if not present."""
     def run(self):
-        # Run normal install
         install.run(self)
-        # Now check for Deno and install if missing
         self.install_deno()
 
     def install_deno(self):
-        # Check if deno is available
         try:
             subprocess.run(['deno', '--version'], capture_output=True, check=True)
             print("✅ Deno is already installed.")
             return
         except (subprocess.CalledProcessError, FileNotFoundError):
             print("⚠️  Deno not found. Installing Deno...")
-            # Use the official installation script
             install_script = 'curl -fsSL https://deno.land/install.sh | sh'
             try:
                 subprocess.run(install_script, shell=True, check=True)
@@ -34,15 +30,19 @@ class InstallWithDeno(install):
                 print(f"❌ Failed to install Deno: {e}")
                 print("   Please install manually: https://deno.land/#installation")
 
+# Read README
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
+
 setup(
-    name="youtube-lecture-manager",
-    version="2.3.0",
-    description="Organise and manage YouTube lecture libraries with a terminal interface, web UI, and local playback",
-    long_description=open("README.md").read() if open("README.md").read() else "",
+    name="lecture-manager",                     # changed to this name
+    version="2.3.1",                           # updated to match __init__.py
+    description="Unified media manager for YouTube lectures and Facebook content with terminal and web interface",
+    long_description=long_description,
     long_description_content_type="text/markdown",
     author="Udaya Raj Joshi",
     author_email="udayarajjoshi@gmail.com",
-    url="https://github.com/yourusername/lecture-manager",
+    url="https://github.com/blee-design/lecture-manager",  # your real URL
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
@@ -51,9 +51,9 @@ setup(
         "flask>=2.0.0",
         "browser-cookie3",
         "bgutil-ytdlp-pot-provider",
-        "requests>=2.25.0",           # For thumbnail download
-        "gallery-dl>=1.20.0",          # For Facebook photo albums (optional)
-        "ffmpeg-python>=0.2.0",        # Optional, but some use it; we rely on system ffmpeg
+        "requests>=2.25.0",
+        "gallery-dl>=1.20.0",
+        "ffmpeg-python>=0.2.0",   # optional but fine
     ],
     extras_require={
         "dev": ["pytest", "black", "flake8"],
@@ -71,5 +71,6 @@ setup(
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
         "Operating System :: POSIX :: Linux",
+        "Operating System :: Microsoft :: Windows",  # if supported
     ],
 )
