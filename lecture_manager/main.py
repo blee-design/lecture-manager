@@ -1,0 +1,162 @@
+# main.py
+
+import readline
+import sys
+from .config import load_or_create_config, edit_config
+from .db import create_table, migrate_table
+from .crud import (
+    add_lecture, view_all, view_one, update_lecture, delete_lecture,
+    download_existing, show_embed_link, refresh_titles, search_lectures
+)
+from .dashboard import show_dashboard
+from .export import export_csv, export_json, import_csv, import_json
+from .file_manager import (
+    move_video_interactive,
+    delete_video_to_trash, restore_from_trash, empty_trash,
+    tally_db_with_files, scan_duplicates, resolve_duplicates, backfill_hashes, play_video,
+    backfill_hash_naming   # <-- new
+)
+# NEW: import web server runner
+from .web import run_web_server
+from .utils import print_colored, color_text, COLORS
+from .youtube import refresh_cookies
+from .facebook import download_facebook
+
+def show_banner():
+    width = 60
+    title = "YOUTUBE LECTURE MANAGER  v2.3.0"
+    subtitle = "Manage your lecture library with style"
+    owner = "By Udaya Raj Joshi"
+
+    # Build box with fixed width
+    top = "╔" + "═" * width + "╗"
+    mid1 = "║" + color_text(title.center(width), COLORS.CYAN, bold=True) + "║"
+    mid2 = "║" + color_text(subtitle.center(width), COLORS.BLUE) + "║"
+    mid3 = "║" + color_text(owner.center(width), COLORS.BLUE) + "║"
+    bottom = "╚" + "═" * width + "╝"
+    print("\n" + top)
+    print(mid1)
+    print(mid2)
+    print(mid3)
+    print(bottom)
+    print()
+
+def main():
+    load_or_create_config()
+    create_table()
+    migrate_table()
+
+    while True:
+        show_banner()
+        print("  " + color_text("MAIN MENU", COLORS.YELLOW, bold=True))
+        print("  " + "─" * 40)
+        print("  1. " + color_text("Add new lecture", COLORS.WHITE))
+        print("  2. " + color_text("View all lectures (with sorting)", COLORS.WHITE))
+        print("  3. " + color_text("View a single lecture", COLORS.WHITE))
+        print("  4. " + color_text("Update a lecture", COLORS.WHITE))
+        print("  5. " + color_text("Delete a lecture", COLORS.WHITE))
+        print("  6. " + color_text("Download a video (from existing record)", COLORS.WHITE))
+        print("  7. " + color_text("Show YouTube embed link", COLORS.WHITE))
+        print("  8. " + color_text("Refresh video titles from YouTube", COLORS.WHITE))
+        print("  9. " + color_text("Search lectures", COLORS.WHITE))
+        print(" 10. " + color_text("Export to CSV", COLORS.WHITE))
+        print(" 11. " + color_text("Export to JSON", COLORS.WHITE))
+        print(" 12. " + color_text("Import from CSV", COLORS.WHITE))
+        print(" 13. " + color_text("Import from JSON", COLORS.WHITE))
+        print(" 14. " + color_text("Edit database configuration", COLORS.WHITE))
+        print(" 15. " + color_text("Move/rename a video manually", COLORS.WHITE))
+        print(" 16. " + color_text("Delete a video (move to trash)", COLORS.WHITE))
+        print(" 17. " + color_text("Restore from trash", COLORS.WHITE))
+        print(" 18. " + color_text("Empty trash", COLORS.WHITE))
+        print(" 19. " + color_text("Tally database with video files", COLORS.WHITE))
+        print(" 20. " + color_text("Start web interface", COLORS.WHITE))
+        print(" 21. " + color_text("Scan for duplicate video files", COLORS.WHITE))
+        print(" 22. " + color_text("Auto-resolve duplicate video files", COLORS.WHITE))
+        print(" 23. " + color_text("Backfill file hashes (one-time)", COLORS.WHITE))
+        print(" 24. " + color_text("Show library dashboard", COLORS.WHITE))
+        print(" 25. " + color_text("Play a video (local file)", COLORS.WHITE))
+        print(" 26. " + color_text("Refresh YouTube cookies", COLORS.WHITE))
+        print(" 27. " + color_text("Backfill hash naming (rename files to MD5)", COLORS.WHITE))
+        print(" 28. " + color_text("Download Facebook video/photos", COLORS.WHITE))
+        print(" 29. " + color_text("Manage Facebook downloads", COLORS.WHITE))
+        print("  0. " + color_text("Exit", COLORS.RED, bold=True))
+        print("  " + "─" * 40)
+        choice = input(color_text("Choose an option: ", COLORS.MAGENTA)).strip()
+
+        if choice == '1':
+            add_lecture()
+        elif choice == '2':
+            view_all()
+        elif choice == '3':
+            view_one()
+        elif choice == '4':
+            update_lecture()
+        elif choice == '5':
+            delete_lecture()
+        elif choice == '6':
+            download_existing()
+        elif choice == '7':
+            show_embed_link()
+        elif choice == '8':
+            refresh_titles()
+        elif choice == '9':
+            from .crud import search_all
+            search_all()
+        elif choice == '10':
+            export_csv()
+        elif choice == '11':
+            export_json()
+        elif choice == '12':
+            import_csv()
+        elif choice == '13':
+            import_json()
+        elif choice == '14':
+            edit_config()
+        elif choice == '15':
+            move_video_interactive()
+        elif choice == '16':
+            delete_video_to_trash()
+        elif choice == '17':
+            restore_from_trash()
+        elif choice == '18':
+            empty_trash()
+        elif choice == '19':
+            tally_db_with_files()
+        elif choice == '20':
+            print_colored("\nStarting web server at http://127.0.0.1:5000", COLORS.GREEN)
+            print_colored("Press Ctrl+C to stop the server and return to CLI", COLORS.YELLOW)
+            try:
+                run_web_server()
+            except KeyboardInterrupt:
+                print_colored("\n[✓] Web server stopped.", COLORS.GREEN)
+            except Exception as e:
+                print_colored(f"[!] Failed to start web server: {e}", COLORS.RED)
+        elif choice == '21':
+            scan_duplicates()
+        elif choice == '22':
+            resolve_duplicates()
+        elif choice == '23':
+            backfill_hashes()
+        elif choice == '24':
+            show_dashboard()
+        elif choice == '25':
+            play_video()
+        elif choice == '26':
+            refresh_cookies()
+        elif choice == '27':
+            backfill_hash_naming()
+        elif choice == '28':
+            download_facebook()
+        elif choice == '29':
+            from .facebook_manager import facebook_menu
+            facebook_menu()
+        elif choice == '0':
+            print_colored("\nGoodbye! Have a great day! 👋", COLORS.CYAN)
+            break
+        else:
+            print_colored("[!] Invalid option. Please try again.", COLORS.RED)
+
+        input("\nPress Enter to continue...")
+
+# if __name__ == "__main__":
+#    main()

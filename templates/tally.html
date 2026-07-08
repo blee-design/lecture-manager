@@ -1,0 +1,48 @@
+<!-- tally.html -->
+{% extends "base.html" %}
+{% block content %}
+<h2>Tally Report</h2>
+<div class="row">
+  <div class="col-md-3"><div class="card text-white bg-primary"><div class="card-body"><h5>Records</h5><p class="display-4">{{ tally.total_records }}</p></div></div></div>
+  <div class="col-md-3"><div class="card text-white bg-success"><div class="card-body"><h5>Matched</h5><p class="display-4">{{ tally.matched }}</p></div></div></div>
+  <div class="col-md-3"><div class="card text-white bg-danger"><div class="card-body"><h5>Missing</h5><p class="display-4">{{ tally.missing }}</p></div></div></div>
+  <div class="col-md-3"><div class="card text-white bg-warning"><div class="card-body"><h5>Orphan</h5><p class="display-4">{{ tally.orphan }}</p></div></div></div>
+</div>
+<div class="row mt-4">
+  <div class="col-md-6">
+    <h4>Missing Records</h4>
+    <ul class="list-group">
+      {% for rec in tally.missing_list %}
+      <li class="list-group-item">{{ rec.syllabus_id }} - {{ rec.subject }} ({{ rec.video_id }})</li>
+      {% else %}
+      <li class="list-group-item">None</li>
+      {% endfor %}
+    </ul>
+  </div>
+  <div class="col-md-6">
+    <h4>Orphan Files</h4>
+    <ul class="list-group">
+      {% for f in tally.orphan_list[:20] %}
+      <li class="list-group-item">{{ f }}</li>
+      {% else %}
+      <li class="list-group-item">None</li>
+      {% endfor %}
+      {% if tally.orphan_list|length > 20 %}
+      <li class="list-group-item">... and {{ tally.orphan_list|length - 20 }} more</li>
+      {% endif %}
+    </ul>
+  </div>
+</div>
+<div class="row mt-4">
+  <div class="col">
+    <h4>Mismatched</h4>
+    <ul class="list-group">
+      {% for item in tally.mismatched_list %}
+      <li class="list-group-item">{{ item.record.syllabus_id }} - {{ item.record.subject }} (found: {{ item.files|join(', ') }})</li>
+      {% else %}
+      <li class="list-group-item">None</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endblock %}

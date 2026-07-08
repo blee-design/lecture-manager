@@ -1,0 +1,45 @@
+<!-- add_edit.html -->
+{% extends "base.html" %}
+{% block content %}
+<h2>{{ title }}</h2>
+<form method="post">
+  <div class="mb-3">
+    <label for="video_id" class="form-label">Video ID *</label>
+    <input type="text" class="form-control" id="video_id" name="video_id" value="{{ record.video_id if record else '' }}" required>
+  </div>
+  <div class="mb-3">
+    <label for="syllabus_id" class="form-label">Syllabus ID</label>
+    <input type="text" class="form-control" id="syllabus_id" name="syllabus_id" value="{{ record.syllabus_id if record else '' }}">
+  </div>
+  <div class="mb-3">
+    <label for="subject" class="form-label">Subject</label>
+    <input type="text" class="form-control" id="subject" name="subject" value="{{ record.subject if record else '' }}">
+  </div>
+  <div class="mb-3">
+    <label for="chapter" class="form-label">Chapter</label>
+    <input type="text" class="form-control" id="chapter" name="chapter" value="{{ record.chapter if record else '' }}">
+  </div>
+  <div class="mb-3">
+    <label for="lecturer" class="form-label">Lecturer</label>
+    <input type="text" class="form-control" id="lecturer" name="lecturer" value="{{ record.lecturer if record else '' }}">
+  </div>
+  <div class="mb-3">
+    <label for="nepali_date" class="form-label">Nepali Date</label>
+    <input type="text" class="form-control" id="nepali_date" name="nepali_date" value="{{ record.nepali_date if record else '' }}">
+  </div>
+  <div class="mb-3">
+    <label for="time" class="form-label">Time</label>
+    <input type="text" class="form-control" id="time" name="time" value="{{ record.time if record else '' }}">
+  </div>
+  <div class="mb-3">
+    <label for="mirror_id" class="form-label">Mirror Video ID</label>
+    <input type="text" class="form-control" id="mirror_id" name="mirror_id" value="{{ record.mirror_video_id if record else '' }}">
+  </div>
+  <div class="mb-3">
+    <label for="notes" class="form-label">Notes</label>
+    <textarea class="form-control" id="notes" name="notes" rows="3">{{ record.notes if record else '' }}</textarea>
+  </div>
+  <button type="submit" class="btn btn-primary">Save</button>
+  <a href="{{ url_for('lectures') if record else url_for('index') }}" class="btn btn-secondary">Cancel</a>
+</form>
+{% endblock %}

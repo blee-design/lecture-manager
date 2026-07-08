@@ -1,0 +1,101 @@
+<!-- detail.html -->
+{% extends "base.html" %}
+{% block content %}
+<h2>Lecture Details</h2>
+<div class="card">
+  <div class="card-body">
+    <dl class="row">
+      <dt class="col-sm-3">ID</dt>
+      <dd class="col-sm-9">{{ record.id }}</dd>
+
+      <dt class="col-sm-3">Video ID</dt>
+      <dd class="col-sm-9">{{ record.video_id }}</dd>
+
+      <dt class="col-sm-3">Mirror ID</dt>
+      <dd class="col-sm-9">
+        {% if record.mirror_video_id %}
+          {{ record.mirror_video_id }}
+          <span class="badge bg-success">available</span>
+        {% else %}
+          <span class="text-muted">Not available</span>
+          <span class="badge bg-secondary">no mirror</span>
+        {% endif %}
+      </dd>
+
+      <dt class="col-sm-3">Syllabus</dt>
+      <dd class="col-sm-9">{{ record.syllabus_id or '' }}</dd>
+
+      <dt class="col-sm-3">Subject</dt>
+      <dd class="col-sm-9">{{ record.subject or '' }}</dd>
+
+      <dt class="col-sm-3">Chapter</dt>
+      <dd class="col-sm-9">{{ record.chapter or '' }}</dd>
+
+      <dt class="col-sm-3">Lecturer</dt>
+      <dd class="col-sm-9">{{ record.lecturer or '' }}</dd>
+
+      <dt class="col-sm-3">Nepali Date</dt>
+      <dd class="col-sm-9">{{ record.nepali_date or '' }}</dd>
+
+      <dt class="col-sm-3">Time</dt>
+      <dd class="col-sm-9">{{ record.time or '' }}</dd>
+
+      <dt class="col-sm-3">Notes</dt>
+      <dd class="col-sm-9">{{ record.notes or '' }}</dd>
+    </dl>
+
+    <div class="mt-4">
+      <h5>Playback source:</h5>
+      {% if config_status == 'missing_mirror' %}
+        <div class="alert alert-warning">
+          <i class="bi bi-exclamation-triangle"></i>
+          <strong>Mirror ID is not available</strong> for this lecture, but your config is set to <code>mirror_only</code>.
+          <br>
+          <small>You can change the <code>PLAYBACK_SOURCE</code> variable in <code>web.py</code> to <code>prefer_mirror</code> or <code>original_only</code>.</small>
+        </div>
+      {% elif config_status == 'using_original' %}
+        <div class="alert alert-info">
+          <i class="bi bi-info-circle"></i>
+          <strong>Using original video</strong> (no mirror available). Config: <code>{{ playback_config }}</code>
+        </div>
+      {% else %}
+        <span class="badge {% if using_mirror %}bg-info{% else %}bg-secondary{% endif %}">
+          {% if using_mirror %}
+            Mirror (ID: {{ embed_vid }})
+          {% else %}
+            Original (ID: {{ embed_vid }})
+          {% endif %}
+        </span>
+      {% endif %}
+
+      {% if embed_url %}
+        <div class="ratio ratio-16x9 mt-2">
+          <iframe src="{{ embed_url }}" frameborder="0" allowfullscreen></iframe>
+        </div>
+      {% else %}
+        <div class="alert alert-danger mt-2">
+          <i class="bi bi-x-circle"></i>
+          <strong>No video can be played.</strong>
+          {% if config_status == 'missing_mirror' %}
+            Please add a mirror ID to this lecture or change the playback config.
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="mt-4">
+      <a href="{{ url_for('lectures') }}" class="btn btn-secondary">Back to list</a>
+      <a href="{{ url_for('edit_lecture_web', id=record.id) }}" class="btn btn-warning">Edit</a>
+      <form method="post" action="{{ url_for('organize_lecture', id=record.id) }}" style="display:inline;">
+        <button type="submit" class="btn btn-success">Organize File</button>
+      </form>
+      <form method="post" action="{{ url_for('trash_lecture', id=record.id) }}" style="display:inline;" onsubmit="return confirm('Move video to trash?')">
+        <button type="submit" class="btn btn-secondary">Trash Video</button>
+      </form>
+      <a href="{{ url_for('stream_video', id=record.id) }}" class="btn btn-primary" target="_blank">
+        <i class="bi bi-play-circle"></i> Watch Local Video
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}

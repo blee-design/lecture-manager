@@ -1,0 +1,57 @@
+<!-- facebook_entries.html -->
+
+{% extends "base.html" %}
+{% block content %}
+<h2>Facebook Entries</h2>
+<div class="row mb-3">
+  <div class="col">
+    <form method="get" class="row g-3">
+      <div class="col-auto">
+        <input type="text" name="search" value="{{ search }}" class="form-control" placeholder="Search...">
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-primary">Search</button>
+      </div>
+      <div class="col-auto">
+        <a href="{{ url_for('facebook_entries') }}" class="btn btn-secondary">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+<div class="table-responsive">
+  <table class="table table-striped table-hover">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th><a href="{{ url_for('facebook_entries', sort='type', order='asc') }}">Type</a></th>
+        <th><a href="{{ url_for('facebook_entries', sort='title', order='asc') }}">Title</a></th>
+        <th><a href="{{ url_for('facebook_entries', sort='uploader', order='asc') }}">Uploader</a></th>
+        <th><a href="{{ url_for('facebook_entries', sort='download_date', order='asc') }}">Date</a></th>
+        <th>File Hash</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for rec in records %}
+      <tr>
+        <td>{{ rec.id }}</td>
+        <td><span class="badge {% if rec.type == 'video' %}bg-success{% else %}bg-secondary{% endif %}">{{ rec.type }}</span></td>
+        <td>{{ rec.title or '—' }}</td>
+        <td>{{ rec.uploader or '—' }}</td>
+        <td>{{ rec.download_date }}</td>
+        <td><code>{{ rec.file_hash[:8] if rec.file_hash else '—' }}</code></td>
+        <td>
+          <a href="{{ url_for('facebook_detail', id=rec.id) }}" class="btn btn-sm btn-info"><i class="bi bi-eye"></i></a>
+          {% if rec.type == 'video' %}
+          <a href="{{ url_for('stream_facebook_video', id=rec.id) }}" class="btn btn-sm btn-success" target="_blank"><i class="bi bi-play-circle"></i></a>
+          {% endif %}
+          <form method="post" action="{{ url_for('facebook_delete', id=rec.id) }}" style="display:inline;" onsubmit="return confirm('Delete this entry and file?')">
+            <button type="submit" class="btn btn-sm btn-danger"><i class="bi bi-trash"></i></button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

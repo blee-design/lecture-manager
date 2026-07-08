@@ -1,0 +1,63 @@
+<!-- index.html -->
+
+{% extends "base.html" %}
+{% block content %}
+<div class="row">
+  <div class="col-md-4">
+    <div class="card text-white bg-primary mb-3">
+      <div class="card-body">
+        <h5 class="card-title">YouTube Lectures</h5>
+        <p class="card-text display-4">{{ total_yt }}</p>
+        <p class="card-text">Missing: {{ missing_yt }}</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card text-white bg-info mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Facebook Entries</h5>
+        <p class="card-text display-4">{{ total_fb }}</p>
+        <p class="card-text">Missing: {{ missing_fb }} | Orphan: {{ orphan_fb }}</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+  <div class="card text-white bg-warning mb-3">
+    <div class="card-body">
+      <h5 class="card-title">Orphan Files (YouTube)</h5>
+      <p class="card-text display-4">{{ orphan_yt }}</p>
+    </div>
+  </div>
+</div>
+</div>
+<div class="row">
+  <div class="col">
+    <div class="card">
+      <div class="card-header">
+        Quick Actions
+      </div>
+      <div class="card-body">
+        <a href="{{ url_for('add_lecture_web') }}" class="btn btn-success"><i class="bi bi-plus-circle"></i> Add YouTube Lecture</a>
+        <a href="{{ url_for('tally') }}" class="btn btn-info"><i class="bi bi-list-check"></i> Tally Files</a>
+        <a href="{{ url_for('lectures') }}" class="btn btn-secondary"><i class="bi bi-table"></i> View YouTube Lectures</a>
+        <a href="{{ url_for('facebook_entries') }}" class="btn btn-primary"><i class="bi bi-facebook"></i> View Facebook</a>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="row mt-4">
+  <div class="col">
+    <div class="card">
+      <div class="card-header">
+        <i class="bi bi-gear"></i> Current Configuration
+      </div>
+      <div class="card-body">
+        <p><strong>Playback Source:</strong> <code>{{ playback_config }}</code></p>
+        <p class="text-muted small">
+          Change in <code>web.py</code> (PLAYBACK_SOURCE variable).
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

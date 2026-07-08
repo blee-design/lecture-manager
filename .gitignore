@@ -1,0 +1,43 @@
+cat > .gitignore << 'EOF'
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Configuration (contains database credentials)
+.lecture_manager_config.json
+
+# Cookies
+cookies.txt
+cookies
+
+# Downloaded media (large files)
+downloads/
+.lecture_trash/
+foxCloud/          # if your ROOT_DIR is inside the project – better not commit large media
+
+# Backup files
+*.sql
+backups/
+
+# IDE files
+.vscode/
+.idea/
+
+# Logs
+*.log
+*.py~   # backup files from editors
+
+# Distribution files
+dist/
+build/
+*.egg-info/
+
+# Temporary files from ffmpeg
+*.temp.*
+EOF
