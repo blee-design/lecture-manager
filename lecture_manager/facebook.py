@@ -55,7 +55,7 @@ def _download_video(url, custom_name=None):
     _ensure_cookie_file()
     cookie_opt = {'cookiefile': 'cookies.txt'} if os.path.exists('cookies.txt') else {'cookiesfrombrowser': ('edge',)}
 
-    # Fetch metadata
+    # Fetch metadata (title, uploader, facebook_id) – keep this as before
     title = None
     uploader = None
     description = None
@@ -80,31 +80,30 @@ def _download_video(url, custom_name=None):
     except Exception as e:
         print_colored(f"[!] Could not fetch metadata: {e}", COLORS.YELLOW)
 
-    # Determine filename
+    # Determine the display name for the database (original_filename)
     if custom_name:
-        filename_base = custom_name
+        original_name = custom_name
     elif title and title.lower() != 'video':
-        filename_base = sanitize_filename(title)
+        original_name = title
     elif description:
-        filename_base = sanitize_filename(description)
+        original_name = description
     elif uploader:
-        filename_base = sanitize_filename(uploader)
+        original_name = uploader
     else:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename_base = f"Facebook_Video_{timestamp}"
+        original_name = f"Facebook_Video_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    filename_base = sanitize_filename(filename_base)
-    if not filename_base:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename_base = f"Facebook_Video_{timestamp}"
+    # Sanitize and truncate for DB storage (but NOT for temporary file)
+    original_name = sanitize_filename(original_name)
+    if len(original_name) > 200:
+        original_name = original_name[:200]
+    print_colored(f"[i] Saving as: {original_name}", COLORS.GREEN)
 
-    print_colored(f"[i] Saving as: {filename_base}", COLORS.GREEN)
+    # ---- NEW: Use a short temporary name for download ----
+    import time
+    temp_base = f"fb_temp_{int(time.time())}_{os.urandom(4).hex()}"
+    temp_path_pattern = os.path.join(DOWNLOAD_DIR, f"{temp_base}.%(ext)s")
 
-    # Download
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    temp_filename = f"{filename_base}.%(ext)s"
-    temp_path_pattern = os.path.join(DOWNLOAD_DIR, temp_filename)
-
     ydl_opts_download = {
         'outtmpl': temp_path_pattern,
         'format': 'bestvideo+bestaudio/best',
@@ -119,23 +118,17 @@ def _download_video(url, custom_name=None):
             print_colored(f"[⏳] Downloading Facebook video...", COLORS.BLUE)
             ydl.download([url])
 
-        # ---- Improved file detection ----
+        # Locate the downloaded file using the temp pattern
         import glob
-        pattern = os.path.join(DOWNLOAD_DIR, f"{filename_base}.*")
+        pattern = os.path.join(DOWNLOAD_DIR, f"{temp_base}.*")
         matches = glob.glob(pattern)
-        if not matches:
-            all_files = os.listdir(DOWNLOAD_DIR)
-            matches = [os.path.join(DOWNLOAD_DIR, f) for f in all_files
-                       if filename_base in f and f.lower().endswith(('.mp4', '.mkv', '.webm', '.avi', '.mov'))]
         if not matches:
             print_colored("[!] Could not locate downloaded file.", COLORS.RED)
             return
-        if len(matches) > 1:
-            matches.sort(key=lambda p: os.path.getsize(p), reverse=True)
         temp_path = matches[0]
         print_colored(f"[✓] Downloaded to {temp_path}", COLORS.GREEN)
 
-        # ---- Compute MD5 and move to final directory ----
+        # Compute MD5 and move to final directory
         file_hash = compute_md5(temp_path)
         _, ext = os.path.splitext(temp_path)
         if not ext:
@@ -144,23 +137,23 @@ def _download_video(url, custom_name=None):
         os.makedirs(FACEBOOK_VIDEO_DIR, exist_ok=True)
         final_path = os.path.join(FACEBOOK_VIDEO_DIR, new_filename)
 
-        # If final file already exists, remove it (replace)
+        # Remove existing file if any (replace)
         if os.path.exists(final_path):
             os.remove(final_path)
         shutil.move(temp_path, final_path)
         print_colored(f"[✓] File stored at: {final_path}", COLORS.BLUE)
 
-        # ---- Insert into database (upsert) ----
+        # Insert into database (upsert)
         if not facebook_id:
             facebook_id = _extract_facebook_id(url)
         entry_id = add_facebook_entry(
             facebook_id=facebook_id,
             entry_type='video',
-            title=title or filename_base,
+            title=title or original_name,
             uploader=uploader or 'Unknown',
             url=url,
             file_hash=file_hash,
-            original_filename=os.path.basename(final_path),
+            original_filename=original_name,
             notes=None
         )
         if entry_id:
@@ -293,12 +286,10 @@ def download_facebook():
 def _download_single_photo(url, custom_name=None):
     from .facebook_manager import add_facebook_entry
 
-    """Download a single Facebook photo and add to database."""
     _ensure_cookie_file()
-
     cookie_opt = {'cookiefile': 'cookies.txt'} if os.path.exists('cookies.txt') else {'cookiesfrombrowser': ('edge',)}
 
-    # Fetch metadata
+    # Fetch metadata (same as before)
     title = None
     uploader = None
     facebook_id = None
@@ -313,17 +304,22 @@ def _download_single_photo(url, custom_name=None):
     except Exception as e:
         print_colored(f"[!] Could not fetch metadata: {e}", COLORS.YELLOW)
 
-    # Determine filename
-    base = custom_name or title or uploader or 'Facebook_Photo'
-    original_base = sanitize_filename(base)
-    if not original_base:
-        original_base = f"Facebook_Photo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # Determine original name for DB
+    original_name = custom_name or title or uploader or 'Facebook_Photo'
+    original_name = sanitize_filename(original_name)
+    if len(original_name) > 200:
+        original_name = original_name[:200]
+    if not original_name:
+        original_name = f"Facebook_Photo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    # Download (yt-dlp will save as jpg/png etc.)
+    # ---- Use short temporary name ----
+    import time
+    temp_base = f"fb_photo_temp_{int(time.time())}_{os.urandom(4).hex()}"
+    temp_path_pattern = os.path.join(DOWNLOAD_DIR, f"{temp_base}.%(ext)s")
+
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    temp_template = os.path.join(DOWNLOAD_DIR, f"{original_base}.%(ext)s")
     ydl_opts_download = {
-        'outtmpl': temp_template,
+        'outtmpl': temp_path_pattern,
         'format': 'best',
         'quiet': False,
         'no_warnings': True,
@@ -337,12 +333,14 @@ def _download_single_photo(url, custom_name=None):
         print_colored(f"[!] Download failed: {e}", COLORS.RED)
         return
 
-    # Find the downloaded file
-    downloaded = [f for f in os.listdir(DOWNLOAD_DIR) if f.startswith(original_base)]
-    if not downloaded:
+    # Locate downloaded file
+    import glob
+    pattern = os.path.join(DOWNLOAD_DIR, f"{temp_base}.*")
+    matches = glob.glob(pattern)
+    if not matches:
         print_colored("[!] Could not locate downloaded file.", COLORS.RED)
         return
-    temp_path = os.path.join(DOWNLOAD_DIR, downloaded[0])
+    temp_path = matches[0]
 
     # Compute hash and move to organised folder
     file_hash = compute_md5(temp_path)
@@ -361,11 +359,11 @@ def _download_single_photo(url, custom_name=None):
     entry_id = add_facebook_entry(
         facebook_id=facebook_id,
         entry_type='photo',
-        title=title or original_base,
+        title=title or original_name,
         uploader=uploader or 'Unknown',
         url=url,
         file_hash=file_hash,
-        original_filename=os.path.basename(final_path),
+        original_filename=original_name,
         notes=None
     )
     if entry_id:
