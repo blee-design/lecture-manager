@@ -54,6 +54,7 @@ setup(
         "requests>=2.25.0",
         "gallery-dl>=1.20.0",
         "ffmpeg-python>=0.2.0",
+        "curl-cffi",
     ],
     extras_require={
         "dev": ["pytest", "black", "flake8"],
