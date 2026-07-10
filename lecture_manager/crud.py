@@ -4,7 +4,7 @@ import os
 import subprocess
 import mysql.connector
 import glob
-from .db import get_connection, TABLE_NAME, get_record_by_video_id, get_record_by_any_id
+from .db import get_connection, TABLE_NAME, get_record_by_video_id, get_record_by_any_id, get_any_media_record
 from .youtube import extract_video_id, fetch_youtube_title, get_embed_link, _ensure_cookie_file
 from .utils import clean_field, get_display_title, sanitize_filename, parse_lecture_title, color_text, print_colored, COLORS, normalize_syllabus_id
 from .file_manager import organize_video, sync_record_files, detect_paper, PAPER_CONFIG, get_target_path, ROOT_DIR
@@ -822,22 +822,30 @@ def delete_lecture():
     print_colored(f"[✓] Deleted {deleted} record(s).", COLORS.GREEN)
 
 def download_existing():
-    identifier = input(color_text("Enter video ID or mirror ID to download (or URL): ", COLORS.MAGENTA)).strip()
+    identifier = input(color_text("Enter video ID, mirror ID, Facebook ID, or URL: ", COLORS.MAGENTA)).strip()
     if not identifier:
         return
 
-    vid_to_dl = extract_video_id(identifier)
-    if not vid_to_dl:
-        print_colored("[!] Invalid video ID or URL.", COLORS.RED)
-        return
-
-    # Try to get record by video_id first, then mirror
-    record = get_record_by_video_id(vid_to_dl) or get_record_by_any_id(vid_to_dl)
+    # Try to get any media record (YouTube or Facebook)
+    record = get_any_media_record(identifier)
     if not record:
-        print_colored("[!] No record found for that ID.", COLORS.RED)
+        print_colored("[!] No record found for that identifier.", COLORS.RED)
         return
 
-    download_video(record, video_id_to_download=vid_to_dl)
+    if record.get('source') == 'youtube':
+        vid_to_dl = extract_video_id(identifier) or record.get('video_id')
+        if not vid_to_dl:
+            print_colored("[!] Invalid video ID.", COLORS.RED)
+            return
+        download_video(record, video_id_to_download=vid_to_dl)
+
+    elif record.get('source') == 'facebook':
+        print_colored(f"[i] Re-downloading Facebook {record.get('type')}: {record.get('title', '')}", COLORS.BLUE)
+        from .facebook_manager import re_download_facebook_entry
+        re_download_facebook_entry(record)
+
+    else:
+        print_colored("[!] Unknown source type.", COLORS.RED)
 
 def show_embed_link():
     raw = input(color_text("Enter video ID, mirror ID, or YouTube URL: ", COLORS.MAGENTA)).strip()

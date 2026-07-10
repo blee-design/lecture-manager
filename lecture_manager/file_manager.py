@@ -1041,7 +1041,10 @@ def collect_tally_data():
     # Scan for video files on disk
     video_exts = ('.mp4', '.mkv', '.webm', '.avi', '.mov')
     all_files = []
+    facebook_dir = os.path.join(ROOT_DIR, 'facebook')
     for root, _, files in os.walk(ROOT_DIR):
+        if root.startswith(facebook_dir):
+            continue
         for f in files:
             if f.lower().endswith(video_exts):
                 all_files.append(os.path.join(root, f))
@@ -1561,7 +1564,10 @@ def get_tally_data():
 
     video_exts = ('.mp4', '.mkv', '.webm', '.avi', '.mov')
     all_files = []
-    for root, dirs, files in os.walk(ROOT_DIR):
+    facebook_dir = os.path.join(ROOT_DIR, 'facebook')
+    for root, _, files in os.walk(ROOT_DIR):
+        if root.startswith(facebook_dir):
+            continue
         for f in files:
             if f.lower().endswith(video_exts):
                 all_files.append(os.path.join(root, f))

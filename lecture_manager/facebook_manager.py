@@ -19,6 +19,18 @@ FACEBOOK_VIDEO_DIR = os.path.join(ROOT_DIR, 'facebook', 'videos')
 FACEBOOK_PHOTO_DIR = os.path.join(ROOT_DIR, 'facebook', 'photos')
 TABLE_NAME = 'facebook_entries'
 
+def re_download_facebook_entry(entry):
+    """
+    Re-download a Facebook entry (video or photo) using its stored URL,
+    and update the database entry with new file hash and original filename.
+    """
+    from .facebook import _download_video, _download_single_photo
+
+    if entry['type'] == 'video':
+        _download_video(entry['url'], custom_name=entry.get('original_filename'))
+    else:
+        _download_single_photo(entry['url'], custom_name=entry.get('original_filename'))
+
 def get_facebook_file_path(entry):
     """
     Given a Facebook entry dict, return the full path to its file if exists.
