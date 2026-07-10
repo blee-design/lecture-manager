@@ -1,7 +1,7 @@
 # Makefile for YouTube Lecture Manager
 
 # --- Project settings ---
-PROJECT_NAME   := youtube-lecture-manager
+PROJECT_NAME   := lecture-manager
 BACKUP_DIR     := ./backups
 TIMESTAMP      := $(shell date +%Y%m%d_%H%M%S)
 BACKUP_FILE    := $(BACKUP_DIR)/$(PROJECT_NAME)_backup_$(TIMESTAMP).tar.xz
