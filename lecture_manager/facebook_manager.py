@@ -691,7 +691,7 @@ def facebook_menu():
             else:
                 print(f"\n--- FACEBOOK ENTRIES ({len(entries)}) ---")
                 for e in entries:
-                    print(f"  ID:{e['id']:4} | {e['type']:5} | {e['uploader']:20} | {e['title'][:40]}")
+                    print(f"  ID:{e['id']:4} | FB ID: {e['facebook_id']:>16} | {e['type']:5} | {e['uploader']:20} | {e['title'][:40]}")
                 print()
             input("Press Enter to continue...")
 

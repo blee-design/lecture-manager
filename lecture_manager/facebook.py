@@ -10,13 +10,30 @@ from .utils import sanitize_filename, print_colored, color_text, COLORS, compute
 from .youtube import _ensure_cookie_file
 from .file_manager import ROOT_DIR
 
-
 DOWNLOAD_DIR = './downloads'
 PHOTO_BASE_DIR = os.path.join(DOWNLOAD_DIR, 'facebook_photos')
 
 # Organised directories
 FACEBOOK_VIDEO_DIR = os.path.join(ROOT_DIR, 'facebook', 'videos')
 FACEBOOK_PHOTO_DIR = os.path.join(ROOT_DIR, 'facebook', 'photos')
+
+def _extract_facebook_title(info):
+    if not info or not isinstance(info, dict):
+        return None
+    title = info.get('title', '').strip()
+    generic = ['video', 'facebook video', 'reel', 'photo', '']
+    if title.lower() not in generic:
+        return title
+    desc = info.get('description', '').strip()
+    if desc:
+        lines = desc.split('\n')
+        first = lines[0].strip()
+        if first:
+            return first[:200]
+    uploader = info.get('uploader', '').strip()
+    if uploader:
+        return f"Video from {uploader}"
+    return None
 
 def _extract_facebook_id(url):
     """Try to extract a stable ID from a Facebook URL."""
@@ -55,55 +72,49 @@ def _download_video(url, custom_name=None):
     _ensure_cookie_file()
     cookie_opt = {'cookiefile': 'cookies.txt'} if os.path.exists('cookies.txt') else {'cookiesfrombrowser': ('edge',)}
 
-    # Fetch metadata (title, uploader, facebook_id) – keep this as before
+    # ---- Extract metadata (safe) ----
     title = None
     uploader = None
     description = None
     facebook_id = None
-    ydl_opts_info = {
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': False,
-        'ignoreerrors': True,
-        **cookie_opt
-    }
+
     try:
+        ydl_opts_info = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+            'ignoreerrors': True,
+            **cookie_opt
+        }
         with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
             info = ydl.extract_info(url, download=False)
             if info and isinstance(info, dict):
-                title = info.get('title')
-                uploader = info.get('uploader')
-                description = info.get('description')
-                if description:
-                    description = description.split('\n')[0].strip()
+                title = _extract_facebook_title(info)   # our helper
+                uploader = info.get('uploader', '').strip()
+                description = info.get('description', '').strip()
                 facebook_id = info.get('id') or _extract_facebook_id(url)
     except Exception as e:
         print_colored(f"[!] Could not fetch metadata: {e}", COLORS.YELLOW)
 
-    # Determine the display name for the database (original_filename)
+    # ---- Fallbacks ----
+    if not title:
+        title = "Facebook Video"
+    if not uploader:
+        uploader = "Unknown"
+
+    # ---- Determine display title and original name ----
+    display_title = title
     if custom_name:
         original_name = custom_name
-    elif title and title.lower() != 'video':
-        original_name = title
-    elif description:
-        original_name = description
-    elif uploader:
-        original_name = uploader
     else:
-        original_name = f"Facebook_Video_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        original_name = display_title
 
-    # Sanitize and truncate for DB storage (but NOT for temporary file)
-    original_name = sanitize_filename(original_name)
-    if len(original_name) > 200:
-        original_name = original_name[:200]
-    print_colored(f"[i] Saving as: {original_name}", COLORS.GREEN)
-
-    # ---- NEW: Use a short temporary name for download ----
+    # ---- Download with a temporary name ----
     import time
     temp_base = f"fb_temp_{int(time.time())}_{os.urandom(4).hex()}"
     temp_path_pattern = os.path.join(DOWNLOAD_DIR, f"{temp_base}.%(ext)s")
-
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
     ydl_opts_download = {
         'outtmpl': temp_path_pattern,
         'format': 'bestvideo+bestaudio/best',
@@ -118,7 +129,7 @@ def _download_video(url, custom_name=None):
             print_colored(f"[⏳] Downloading Facebook video...", COLORS.BLUE)
             ydl.download([url])
 
-        # Locate the downloaded file using the temp pattern
+        # Locate the downloaded file
         import glob
         pattern = os.path.join(DOWNLOAD_DIR, f"{temp_base}.*")
         matches = glob.glob(pattern)
@@ -128,7 +139,7 @@ def _download_video(url, custom_name=None):
         temp_path = matches[0]
         print_colored(f"[✓] Downloaded to {temp_path}", COLORS.GREEN)
 
-        # Compute MD5 and move to final directory
+        # ---- Compute hash and move ----
         file_hash = compute_md5(temp_path)
         _, ext = os.path.splitext(temp_path)
         if not ext:
@@ -137,20 +148,19 @@ def _download_video(url, custom_name=None):
         os.makedirs(FACEBOOK_VIDEO_DIR, exist_ok=True)
         final_path = os.path.join(FACEBOOK_VIDEO_DIR, new_filename)
 
-        # Remove existing file if any (replace)
         if os.path.exists(final_path):
             os.remove(final_path)
         shutil.move(temp_path, final_path)
         print_colored(f"[✓] File stored at: {final_path}", COLORS.BLUE)
 
-        # Insert into database (upsert)
+        # ---- Insert/update DB ----
         if not facebook_id:
             facebook_id = _extract_facebook_id(url)
         entry_id = add_facebook_entry(
             facebook_id=facebook_id,
             entry_type='video',
-            title=title or original_name,
-            uploader=uploader or 'Unknown',
+            title=display_title,
+            uploader=uploader,
             url=url,
             file_hash=file_hash,
             original_filename=original_name,
@@ -289,35 +299,43 @@ def _download_single_photo(url, custom_name=None):
     _ensure_cookie_file()
     cookie_opt = {'cookiefile': 'cookies.txt'} if os.path.exists('cookies.txt') else {'cookiesfrombrowser': ('edge',)}
 
-    # Fetch metadata (same as before)
+    # ---- Extract metadata (safe) ----
     title = None
     uploader = None
     facebook_id = None
-    ydl_opts_info = {'quiet': True, 'no_warnings': True, 'extract_flat': False, 'ignoreerrors': True, **cookie_opt}
+
     try:
+        ydl_opts_info = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+            'ignoreerrors': True,
+            **cookie_opt
+        }
         with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
             info = ydl.extract_info(url, download=False)
             if info and isinstance(info, dict):
-                title = info.get('title') or info.get('description')
-                uploader = info.get('uploader')
+                title = _extract_facebook_title(info)
+                uploader = info.get('uploader', '').strip()
                 facebook_id = info.get('id') or _extract_facebook_id(url)
     except Exception as e:
         print_colored(f"[!] Could not fetch metadata: {e}", COLORS.YELLOW)
 
-    # Determine original name for DB
-    original_name = custom_name or title or uploader or 'Facebook_Photo'
-    original_name = sanitize_filename(original_name)
-    if len(original_name) > 200:
-        original_name = original_name[:200]
-    if not original_name:
-        original_name = f"Facebook_Photo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # ---- Fallbacks ----
+    if not title:
+        title = "Facebook Photo"
+    if not uploader:
+        uploader = "Unknown"
 
-    # ---- Use short temporary name ----
+    display_title = title
+    original_name = custom_name if custom_name else display_title
+
+    # ---- Download with temporary name ----
     import time
     temp_base = f"fb_photo_temp_{int(time.time())}_{os.urandom(4).hex()}"
     temp_path_pattern = os.path.join(DOWNLOAD_DIR, f"{temp_base}.%(ext)s")
-
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
     ydl_opts_download = {
         'outtmpl': temp_path_pattern,
         'format': 'best',
@@ -326,6 +344,7 @@ def _download_single_photo(url, custom_name=None):
         'ignoreerrors': True,
         **cookie_opt
     }
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
             ydl.download([url])
@@ -342,7 +361,7 @@ def _download_single_photo(url, custom_name=None):
         return
     temp_path = matches[0]
 
-    # Compute hash and move to organised folder
+    # ---- Compute hash and move ----
     file_hash = compute_md5(temp_path)
     _, ext = os.path.splitext(temp_path)
     if not ext:
@@ -353,14 +372,14 @@ def _download_single_photo(url, custom_name=None):
     shutil.move(temp_path, final_path)
     print_colored(f"[✓] Photo stored at: {final_path}", COLORS.BLUE)
 
-    # Insert DB entry
+    # ---- Insert/update DB ----
     if not facebook_id:
         facebook_id = _extract_facebook_id(url)
     entry_id = add_facebook_entry(
         facebook_id=facebook_id,
         entry_type='photo',
-        title=title or original_name,
-        uploader=uploader or 'Unknown',
+        title=display_title,
+        uploader=uploader,
         url=url,
         file_hash=file_hash,
         original_filename=original_name,
