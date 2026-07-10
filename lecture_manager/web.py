@@ -366,16 +366,16 @@ def stream_video(id):
 
     return send_file(file_path, as_attachment=False)
 
-@app.route('/stream_facebook_photo/<int:id>')
-def stream_facebook_photo(id):
-    from .facebook_manager import get_facebook_entry_by_id, get_facebook_file_path
+@app.route('/stream_facebook_file/<int:id>')
+def stream_facebook_file(id):
+    """Serve a Facebook file (video or photo) by its entry ID."""
     record = get_facebook_entry_by_id(id)
-    if not record or record['type'] != 'photo':
-        flash('Photo not found', 'danger')
+    if not record:
+        flash('Entry not found', 'danger')
         return redirect(url_for('facebook_entries'))
     file_path = get_facebook_file_path(record)
     if not file_path or not os.path.exists(file_path):
-        flash('Photo file not found on disk.', 'warning')
+        flash('File not found on disk.', 'warning')
         return redirect(url_for('facebook_detail', id=id))
     return send_file(file_path, as_attachment=False)
 

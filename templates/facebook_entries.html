@@ -43,7 +43,9 @@
         <td>
           <a href="{{ url_for('facebook_detail', id=rec.id) }}" class="btn btn-sm btn-info"><i class="bi bi-eye"></i></a>
           {% if rec.type == 'video' %}
-          <a href="{{ url_for('stream_facebook_video', id=rec.id) }}" class="btn btn-sm btn-success" target="_blank"><i class="bi bi-play-circle"></i></a>
+              <a href="{{ url_for('stream_facebook_file', id=rec.id) }}" class="btn btn-sm btn-success" target="_blank"><i class="bi bi-play-circle"></i></a>
+          {% else %}
+              <a href="{{ url_for('stream_facebook_file', id=rec.id) }}" class="btn btn-sm btn-info" target="_blank"><i class="bi bi-image"></i></a>
           {% endif %}
           <form method="post" action="{{ url_for('facebook_delete', id=rec.id) }}" style="display:inline;" onsubmit="return confirm('Delete this entry and file?')">
             <button type="submit" class="btn btn-sm btn-danger"><i class="bi bi-trash"></i></button>
