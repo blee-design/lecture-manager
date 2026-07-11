@@ -243,15 +243,23 @@ def add_facebook_lecture(url_or_id):
     # ---- Check if this Facebook ID already exists ----
     existing = get_facebook_entry_by_id(facebook_id)
     if existing:
-        print_colored(f"[!] Facebook ID {facebook_id} already exists in the database.", COLORS.YELLOW)
+        print_colored(f"[!] Facebook ID {facebook_id} already exists.", COLORS.YELLOW)
         print_colored(f"   Title: {existing.get('title', 'Unknown')}", COLORS.BLUE)
         print_colored(f"   Type: {existing.get('type', 'Unknown')}", COLORS.BLUE)
-        print_colored(f"   ID: {existing.get('id', 'Unknown')}", COLORS.BLUE)
-        overwrite = input(color_text("Download and overwrite? (y/n): ", COLORS.MAGENTA)).strip().lower()
-        if overwrite != 'y':
-            print_colored("Cancelled.", COLORS.YELLOW)
-            return
-        print_colored("[i] Overwriting existing entry...", COLORS.BLUE)
+        # Check if file exists
+        file_path = get_facebook_file_path(existing)
+        if file_path and os.path.exists(file_path):
+            print_colored(f"   File exists: {file_path}", COLORS.GREEN)
+            overwrite = input(color_text("File already exists. Re-download anyway? (y/n): ", COLORS.MAGENTA)).strip().lower()
+            if overwrite != 'y':
+                print_colored("Keeping existing file. No action taken.", COLORS.YELLOW)
+                return
+        else:
+            print_colored("   File missing on disk.", COLORS.YELLOW)
+            overwrite = input(color_text("Download again? (y/n): ", COLORS.MAGENTA)).strip().lower()
+            if overwrite != 'y':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                return
 
     custom_name = input(color_text("Enter a custom name (or press Enter to auto-detect): ", COLORS.MAGENTA)).strip()
     if not custom_name:

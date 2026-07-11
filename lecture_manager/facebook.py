@@ -66,13 +66,13 @@ def _is_video_link(url):
     url_lower = url.lower()
     return any(pattern in url_lower for pattern in video_patterns)
 
-def _download_video(url, custom_name=None):
-    from .facebook_manager import add_facebook_entry
+def _download_video(url, custom_name=None, force=False):
+    from .facebook_manager import add_facebook_entry, get_facebook_entry_by_id, get_facebook_file_path
 
     _ensure_cookie_file()
     cookie_opt = {'cookiefile': 'cookies.txt'} if os.path.exists('cookies.txt') else {'cookiesfrombrowser': ('edge',)}
 
-    # ---- Extract metadata (safe) ----
+    # ---- Step 1: Extract metadata (including ID) ----
     title = None
     uploader = None
     description = None
@@ -89,7 +89,7 @@ def _download_video(url, custom_name=None):
         with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
             info = ydl.extract_info(url, download=False)
             if info and isinstance(info, dict):
-                title = _extract_facebook_title(info)   # our helper
+                title = _extract_facebook_title(info)
                 uploader = info.get('uploader', '').strip()
                 description = info.get('description', '').strip()
                 facebook_id = info.get('id') or _extract_facebook_id(url)
@@ -101,15 +101,23 @@ def _download_video(url, custom_name=None):
         title = "Facebook Video"
     if not uploader:
         uploader = "Unknown"
+    if not facebook_id:
+        facebook_id = _extract_facebook_id(url)
 
-    # ---- Determine display title and original name ----
+    # ---- Step 2: Check if entry already exists and file is present ----
+    if not force:
+        existing = get_facebook_entry_by_id(facebook_id)
+        if existing:
+            file_path = get_facebook_file_path(existing)
+            if file_path and os.path.exists(file_path):
+                print_colored(f"[i] File already exists: {file_path}", COLORS.GREEN)
+                # Optionally update metadata? Not needed.
+                return   # <-- skip download
+
+    # ---- Step 3: Download ----
     display_title = title
-    if custom_name:
-        original_name = custom_name
-    else:
-        original_name = display_title
+    original_name = custom_name if custom_name else display_title
 
-    # ---- Download with a temporary name ----
     import time
     temp_base = f"fb_temp_{int(time.time())}_{os.urandom(4).hex()}"
     temp_path_pattern = os.path.join(DOWNLOAD_DIR, f"{temp_base}.%(ext)s")
@@ -154,8 +162,6 @@ def _download_video(url, custom_name=None):
         print_colored(f"[✓] File stored at: {final_path}", COLORS.BLUE)
 
         # ---- Insert/update DB ----
-        if not facebook_id:
-            facebook_id = _extract_facebook_id(url)
         entry_id = add_facebook_entry(
             facebook_id=facebook_id,
             entry_type='video',
@@ -295,97 +301,126 @@ def download_facebook():
 
 def _download_single_photo(url, custom_name=None):
     from .facebook_manager import add_facebook_entry
-
-    _ensure_cookie_file()
-    cookie_opt = {'cookiefile': 'cookies.txt'} if os.path.exists('cookies.txt') else {'cookiesfrombrowser': ('edge',)}
-
-    # ---- Extract metadata (safe) ----
-    title = None
-    uploader = None
-    facebook_id = None
-
-    try:
-        ydl_opts_info = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'ignoreerrors': True,
-            **cookie_opt
-        }
-        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if info and isinstance(info, dict):
-                title = _extract_facebook_title(info)
-                uploader = info.get('uploader', '').strip()
-                facebook_id = info.get('id') or _extract_facebook_id(url)
-    except Exception as e:
-        print_colored(f"[!] Could not fetch metadata: {e}", COLORS.YELLOW)
-
-    # ---- Fallbacks ----
-    if not title:
-        title = "Facebook Photo"
-    if not uploader:
-        uploader = "Unknown"
-
-    display_title = title
-    original_name = custom_name if custom_name else display_title
-
-    # ---- Download with temporary name ----
+    import subprocess
+    import json
+    import shutil
+    import tempfile
+    import os
     import time
-    temp_base = f"fb_photo_temp_{int(time.time())}_{os.urandom(4).hex()}"
-    temp_path_pattern = os.path.join(DOWNLOAD_DIR, f"{temp_base}.%(ext)s")
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-    ydl_opts_download = {
-        'outtmpl': temp_path_pattern,
-        'format': 'best',
-        'quiet': False,
-        'no_warnings': True,
-        'ignoreerrors': True,
-        **cookie_opt
-    }
+    # Ensure cookies are fresh
+    _ensure_cookie_file()
+    cookie_file = 'cookies.txt'
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
-            ydl.download([url])
-    except Exception as e:
-        print_colored(f"[!] Download failed: {e}", COLORS.RED)
-        return
+    # Create a temporary directory
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Step 1: Get metadata with -j (no download)
+        cmd_meta = [
+            'gallery-dl',
+            '-j',
+            '--cookies', cookie_file,
+            '--directory', tmpdir,
+            url
+        ]
 
-    # Locate downloaded file
-    import glob
-    pattern = os.path.join(DOWNLOAD_DIR, f"{temp_base}.*")
-    matches = glob.glob(pattern)
-    if not matches:
-        print_colored("[!] Could not locate downloaded file.", COLORS.RED)
-        return
-    temp_path = matches[0]
+        try:
+            result_meta = subprocess.run(cmd_meta, capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as e:
+            print_colored(f"[!] gallery-dl metadata fetch failed: {e.stderr}", COLORS.RED)
+            return
 
-    # ---- Compute hash and move ----
-    file_hash = compute_md5(temp_path)
-    _, ext = os.path.splitext(temp_path)
-    if not ext:
-        ext = '.jpg'
-    new_filename = f"{file_hash}{ext}"
-    os.makedirs(FACEBOOK_PHOTO_DIR, exist_ok=True)
-    final_path = os.path.join(FACEBOOK_PHOTO_DIR, new_filename)
-    shutil.move(temp_path, final_path)
-    print_colored(f"[✓] Photo stored at: {final_path}", COLORS.BLUE)
+        output = result_meta.stdout.strip()
+        if not output:
+            print_colored("[!] No metadata from gallery-dl.", COLORS.RED)
+            return
 
-    # ---- Insert/update DB ----
-    if not facebook_id:
-        facebook_id = _extract_facebook_id(url)
-    entry_id = add_facebook_entry(
-        facebook_id=facebook_id,
-        entry_type='photo',
-        title=display_title,
-        uploader=uploader,
-        url=url,
-        file_hash=file_hash,
-        original_filename=original_name,
-        notes=None
-    )
-    if entry_id:
-        print_colored(f"[✓] Facebook entry added (ID: {entry_id})", COLORS.GREEN)
-    else:
-        print_colored("[!] Database insertion failed, but file was saved.", COLORS.RED)
+        # Parse JSON metadata
+        try:
+            data = json.loads(output)
+        except json.JSONDecodeError as e:
+            print_colored(f"[!] Failed to parse JSON: {e}", COLORS.RED)
+            return
+
+        # Extract photo info
+        photo_info = None
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, list) and len(item) >= 3 and isinstance(item[2], dict):
+                    if 'id' in item[2] and 'url' in item[2]:
+                        photo_info = item[2]
+                        break
+                elif isinstance(item, list) and len(item) >= 2 and isinstance(item[1], dict):
+                    if 'id' in item[1] and 'url' in item[1]:
+                        photo_info = item[1]
+                        break
+                elif isinstance(item, dict) and 'id' in item and 'url' in item:
+                    photo_info = item
+                    break
+
+        if not photo_info:
+            print_colored("[!] Could not find photo info in metadata.", COLORS.RED)
+            return
+
+        facebook_id = photo_info.get('id') or _extract_facebook_id(url)
+        title = photo_info.get('caption') or custom_name or "Facebook Photo"
+        uploader = photo_info.get('username') or "Unknown"
+
+        # Step 2: Download the file (without -j)
+        cmd_dl = [
+            'gallery-dl',
+            '--cookies', cookie_file,
+            '--directory', tmpdir,
+            url
+        ]
+
+        print_colored(f"[⏳] Downloading photo with gallery-dl...", COLORS.BLUE)
+        try:
+            subprocess.run(cmd_dl, capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as e:
+            print_colored(f"[!] gallery-dl download failed: {e.stderr}", COLORS.RED)
+            return
+
+        # Locate the downloaded file
+        downloaded_file = None
+        for root, _, files in os.walk(tmpdir):
+            for f in files:
+                if f.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')):
+                    downloaded_file = os.path.join(root, f)
+                    break
+            if downloaded_file:
+                break
+
+        if not downloaded_file or not os.path.exists(downloaded_file):
+            print_colored("[!] Could not locate downloaded file.", COLORS.RED)
+            return
+
+        # Compute hash and move to final location
+        file_hash = compute_md5(downloaded_file)
+        _, ext = os.path.splitext(downloaded_file)
+        if not ext:
+            ext = '.jpg'
+        new_filename = f"{file_hash}{ext}"
+        target_dir = os.path.join(ROOT_DIR, 'facebook', 'photos')
+        os.makedirs(target_dir, exist_ok=True)
+        final_path = os.path.join(target_dir, new_filename)
+
+        if os.path.exists(final_path):
+            os.remove(final_path)
+        shutil.move(downloaded_file, final_path)
+        print_colored(f"[✓] Photo stored at: {final_path}", COLORS.BLUE)
+
+        # Insert into database
+        entry_id = add_facebook_entry(
+            facebook_id=facebook_id,
+            entry_type='photo',
+            title=title,
+            uploader=uploader,
+            url=url,
+            file_hash=file_hash,
+            original_filename=custom_name or title,
+            notes=None
+        )
+        if entry_id:
+            print_colored(f"[✓] Facebook entry added (ID: {entry_id})", COLORS.GREEN)
+        else:
+            print_colored("[!] Database insertion failed, but file was saved.", COLORS.RED)
