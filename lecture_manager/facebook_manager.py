@@ -19,6 +19,116 @@ FACEBOOK_VIDEO_DIR = os.path.join(ROOT_DIR, 'facebook', 'videos')
 FACEBOOK_PHOTO_DIR = os.path.join(ROOT_DIR, 'facebook', 'photos')
 TABLE_NAME = 'facebook_entries'
 
+def delete_facebook_entries_by_url(url, delete_files=False):
+    """Delete all entries with the given URL. Return count."""
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT id, file_hash FROM facebook_entries WHERE url = %s", (url,))
+    rows = cursor.fetchall()
+    if not rows:
+        cursor.close()
+        conn.close()
+        return 0
+    ids = [row['id'] for row in rows]
+    if delete_files:
+        from .file_manager import ROOT_DIR
+        import glob
+        for row in rows:
+            if row['file_hash']:
+                for base in [os.path.join(ROOT_DIR, 'facebook', 'videos'), os.path.join(ROOT_DIR, 'facebook', 'photos')]:
+                    if os.path.exists(base):
+                        pattern = os.path.join(base, row['file_hash'] + '.*')
+                        for fp in glob.glob(pattern):
+                            try:
+                                os.remove(fp)
+                            except:
+                                pass
+    placeholders = ','.join(['%s'] * len(ids))
+    cursor.execute(f"DELETE FROM facebook_entries WHERE id IN ({placeholders})", ids)
+    conn.commit()
+    deleted = cursor.rowcount
+    cursor.close()
+    conn.close()
+    return deleted
+
+def delete_facebook_entries_by_uploader(uploader, delete_files=False):
+    """Delete all entries with the given uploader. Return count."""
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT id, file_hash FROM facebook_entries WHERE uploader = %s", (uploader,))
+    rows = cursor.fetchall()
+    if not rows:
+        cursor.close()
+        conn.close()
+        return 0
+    ids = [row['id'] for row in rows]
+    if delete_files:
+        from .file_manager import ROOT_DIR
+        import glob
+        for row in rows:
+            if row['file_hash']:
+                for base in [os.path.join(ROOT_DIR, 'facebook', 'videos'), os.path.join(ROOT_DIR, 'facebook', 'photos')]:
+                    if os.path.exists(base):
+                        pattern = os.path.join(base, row['file_hash'] + '.*')
+                        for fp in glob.glob(pattern):
+                            try:
+                                os.remove(fp)
+                            except:
+                                pass
+    placeholders = ','.join(['%s'] * len(ids))
+    cursor.execute(f"DELETE FROM facebook_entries WHERE id IN ({placeholders})", ids)
+    conn.commit()
+    deleted = cursor.rowcount
+    cursor.close()
+    conn.close()
+    return deleted
+
+def delete_all_facebook_entries(delete_files=False):
+    """Delete all Facebook entries. Return count."""
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT id, file_hash FROM facebook_entries")
+    rows = cursor.fetchall()
+    if not rows:
+        cursor.close()
+        conn.close()
+        return 0
+    ids = [row['id'] for row in rows]
+    if delete_files:
+        from .file_manager import ROOT_DIR
+        import glob
+        for row in rows:
+            if row['file_hash']:
+                for base in [os.path.join(ROOT_DIR, 'facebook', 'videos'), os.path.join(ROOT_DIR, 'facebook', 'photos')]:
+                    if os.path.exists(base):
+                        pattern = os.path.join(base, row['file_hash'] + '.*')
+                        for fp in glob.glob(pattern):
+                            try:
+                                os.remove(fp)
+                            except:
+                                pass
+    placeholders = ','.join(['%s'] * len(ids))
+    cursor.execute(f"DELETE FROM facebook_entries WHERE id IN ({placeholders})", ids)
+    conn.commit()
+    deleted = cursor.rowcount
+    cursor.close()
+    conn.close()
+    return deleted
+
+def get_facebook_entry_by_url(url):
+    """Return a Facebook entry with the given URL, or None."""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True, buffered=True)
+        cursor.execute("SELECT * FROM facebook_entries WHERE url = %s LIMIT 1", (url,))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return row
+    except Exception as e:
+        print_colored(f"[!] Database error in get_facebook_entry_by_url: {e}", COLORS.RED)
+        return None
+
 def re_download_facebook_entry(entry):
     """
     Re-download a Facebook entry (video or photo) using its stored URL,
@@ -680,17 +790,20 @@ def facebook_menu():
         print("═" * 50)
         print("  1. List all entries")
         print("  2. View entry details")
-        print("  3. Delete an entry (and file)")
-        print("  4. Share/Restore a Facebook file")
-        print("  5. Refresh file hashes (recompute MD5)")
-        print("  6. Export Facebook entries to CSV")
-        print("  7. Export Facebook entries to JSON")
-        print("  8. Import Facebook entries from CSV")
-        print("  9. Import Facebook entries from JSON")
+        print("  3. Delete entries by album URL (bulk)")
+        print("  4. Delete entries by uploader (bulk)")
+        print("  5. Delete ALL Facebook entries")
+        print("  6. Delete a single entry (by ID)")
+        print("  7. Share/Restore a Facebook file")
+        print("  8. Refresh file hashes (recompute MD5)")
+        print("  9. Export Facebook entries to CSV")
+        print(" 10. Export Facebook entries to JSON")
+        print(" 11. Import Facebook entries from CSV")
+        print(" 12. Import Facebook entries from JSON")
         print("  0. Return to main menu")
         print("═" * 50)
 
-        choice = input(color_text("Choose an option (0-9): ", COLORS.MAGENTA)).strip()
+        choice = input(color_text("Choose an option (0-12): ", COLORS.MAGENTA)).strip()
 
         if choice == '1':
             entries = list_facebook_entries()
@@ -733,7 +846,74 @@ def facebook_menu():
             input("\nPress Enter to continue...")
 
         elif choice == '3':
-            identifier = input(color_text("Enter Facebook ID, entry ID, or file hash: ", COLORS.MAGENTA)).strip()
+            url = input(color_text("Enter the exact album URL: ", COLORS.MAGENTA)).strip()
+            if not url:
+                continue
+            # Count how many will be deleted
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM facebook_entries WHERE url = %s", (url,))
+            count = cursor.fetchone()[0]
+            cursor.close()
+            conn.close()
+            if count == 0:
+                print_colored("[i] No entries found with that URL.", COLORS.YELLOW)
+                continue
+            print_colored(f"[i] Found {count} entries with that URL.", COLORS.BLUE)
+            delete_files = input(color_text("Also delete the actual files from disk? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y'
+            confirm = input(color_text(f"Delete {count} entries? (y/n): ", COLORS.RED)).strip().lower()
+            if confirm != 'y':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                continue
+            deleted = delete_facebook_entries_by_url(url, delete_files)
+            print_colored(f"[✓] Deleted {deleted} entries.", COLORS.GREEN)
+            input("\nPress Enter to continue...")
+
+        elif choice == '4':
+            uploader = input(color_text("Enter uploader name (case-sensitive): ", COLORS.MAGENTA)).strip()
+            if not uploader:
+                continue
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM facebook_entries WHERE uploader = %s", (uploader,))
+            count = cursor.fetchone()[0]
+            cursor.close()
+            conn.close()
+            if count == 0:
+                print_colored("[i] No entries found with that uploader.", COLORS.YELLOW)
+                continue
+            print_colored(f"[i] Found {count} entries by '{uploader}'.", COLORS.BLUE)
+            delete_files = input(color_text("Also delete the actual files from disk? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y'
+            confirm = input(color_text(f"Delete {count} entries? (y/n): ", COLORS.RED)).strip().lower()
+            if confirm != 'y':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                continue
+            deleted = delete_facebook_entries_by_uploader(uploader, delete_files)
+            print_colored(f"[✓] Deleted {deleted} entries.", COLORS.GREEN)
+            input("\nPress Enter to continue...")
+
+        elif choice == '5':
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM facebook_entries")
+            count = cursor.fetchone()[0]
+            cursor.close()
+            conn.close()
+            if count == 0:
+                print_colored("[i] No Facebook entries at all.", COLORS.YELLOW)
+                continue
+            print_colored(f"[!] WARNING: This will delete ALL {count} Facebook entries!", COLORS.RED)
+            delete_files = input(color_text("Also delete the actual files from disk? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y'
+            confirm = input(color_text(f"Type 'yes' to confirm deletion of ALL {count} entries: ", COLORS.RED)).strip()
+            if confirm.lower() != 'yes':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                continue
+            deleted = delete_all_facebook_entries(delete_files)
+            print_colored(f"[✓] Deleted {deleted} entries.", COLORS.GREEN)
+            input("\nPress Enter to continue...")
+
+        elif choice == '6':
+            identifier = input(color_text("Enter entry ID: ", COLORS.MAGENTA)).strip()
             if not identifier:
                 continue
             entry = get_facebook_entry_by_id(identifier)
@@ -747,7 +927,7 @@ def facebook_menu():
             confirm = input(color_text("Delete this entry and file? (y/n): ", COLORS.MAGENTA)).strip().lower()
             if confirm == 'y':
                 result = delete_facebook_entry_with_file(entry['id'])
-                if result['status'] == 'deleted' or result['status'] == 'partial':
+                if result['status'] in ('deleted', 'partial'):
                     print_colored(f"[✓] {result['message']}", COLORS.GREEN)
                 else:
                     print_colored(f"[!] {result['message']}", COLORS.RED)
@@ -755,7 +935,7 @@ def facebook_menu():
                 print_colored("Cancelled.", COLORS.YELLOW)
             input("\nPress Enter to continue...")
 
-        elif choice == '4':
+        elif choice == '7':
             identifier = input(color_text("Enter Facebook ID, entry ID, or file hash: ", COLORS.MAGENTA)).strip()
             if not identifier:
                 continue
@@ -768,12 +948,11 @@ def facebook_menu():
                 print_colored(f"[!] {result['message']}", COLORS.RED)
             input("\nPress Enter to continue...")
 
-        elif choice == '5':
-            # Refresh file hashes: for each entry without a file hash, recompute
+        elif choice == '8':
             print_colored("[i] Refreshing Facebook file hashes...", COLORS.BLUE)
             conn = get_connection()
             cursor = conn.cursor(dictionary=True)
-            cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE file_hash IS NULL OR file_hash = ''")
+            cursor.execute("SELECT * FROM facebook_entries WHERE file_hash IS NULL OR file_hash = ''")
             entries = cursor.fetchall()
             cursor.close()
             conn.close()
@@ -796,16 +975,16 @@ def facebook_menu():
             print_colored(f"[✓] Updated {updated} entries.", COLORS.GREEN)
             input("\nPress Enter to continue...")
 
-        elif choice == '6':
+        elif choice == '9':
             export_facebook_csv()
             input("\nPress Enter to continue...")
-        elif choice == '7':
+        elif choice == '10':
             export_facebook_json()
             input("\nPress Enter to continue...")
-        elif choice == '8':
+        elif choice == '11':
             import_facebook_csv()
             input("\nPress Enter to continue...")
-        elif choice == '9':
+        elif choice == '12':
             import_facebook_json()
             input("\nPress Enter to continue...")
 

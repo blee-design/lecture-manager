@@ -132,6 +132,23 @@ def migrate_table():
         );
         """)
         print_colored("[✓] Created 'hash_cache' table.", COLORS.GREEN)
+    else:
+        # Drop obsolete scan_session if present
+        cursor.execute("SHOW COLUMNS FROM hash_cache LIKE 'scan_session'")
+        if cursor.fetchone():
+            cursor.execute("ALTER TABLE hash_cache DROP COLUMN scan_session")
+            print_colored("[✓] Dropped obsolete 'scan_session' column.", COLORS.GREEN)
+        # Add status if missing
+        cursor.execute("SHOW COLUMNS FROM hash_cache LIKE 'status'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE hash_cache ADD COLUMN status ENUM('active', 'trashed') DEFAULT 'active'")
+            print_colored("[✓] Added 'status' column to hash_cache.", COLORS.GREEN)
+        # Add last_scan if missing
+        cursor.execute("SHOW COLUMNS FROM hash_cache LIKE 'last_scan'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE hash_cache ADD COLUMN last_scan DATETIME DEFAULT CURRENT_TIMESTAMP")
+            print_colored("[✓] Added 'last_scan' column to hash_cache.", COLORS.GREEN)
+
     # Ensure facebook_entries exists
     cursor.execute("SHOW TABLES LIKE 'facebook_entries'")
     if not cursor.fetchone():
@@ -153,23 +170,13 @@ def migrate_table():
         """)
         print_colored("[✓] Created 'facebook_entries' table.", COLORS.GREEN)
     else:
-        # Drop obsolete scan_session if present
+        # Drop obsolete scan_session if present (only if it exists)
         cursor.execute("SHOW COLUMNS FROM hash_cache LIKE 'scan_session'")
         if cursor.fetchone():
             cursor.execute("ALTER TABLE hash_cache DROP COLUMN scan_session")
             print_colored("[✓] Dropped obsolete 'scan_session' column.", COLORS.GREEN)
-        # Add status if missing
-        cursor.execute("SHOW COLUMNS FROM hash_cache LIKE 'status'")
-        if not cursor.fetchone():
-            cursor.execute("ALTER TABLE hash_cache ADD COLUMN status ENUM('active', 'trashed') DEFAULT 'active'")
-            print_colored("[✓] Added 'status' column to hash_cache.", COLORS.GREEN)
-        # Add last_scan if missing
-        cursor.execute("SHOW COLUMNS FROM hash_cache LIKE 'last_scan'")
-        if not cursor.fetchone():
-            cursor.execute("ALTER TABLE hash_cache ADD COLUMN last_scan DATETIME DEFAULT CURRENT_TIMESTAMP")
-            print_colored("[✓] Added 'last_scan' column to hash_cache.", COLORS.GREEN)
 
-    # --- New: Add unique index on mirror_video_id if missing ---
+    # --- NEW: Add unique index on mirror_video_id if missing ---
     cursor.execute("SHOW INDEX FROM youtube_lectures WHERE Key_name = 'idx_mirror_video_id'")
     if not cursor.fetchone():
         print_colored("[i] Adding unique index on mirror_video_id...", COLORS.YELLOW)
@@ -191,6 +198,15 @@ def migrate_table():
     if not cursor.fetchone():
         cursor.execute("ALTER TABLE youtube_lectures ADD COLUMN original_filename VARCHAR(512) NULL")
         print_colored("[✓] Added 'original_filename' column.", COLORS.GREEN)
+
+    # --- NEW: Add index on facebook_entries.url for faster duplicate lookups ---
+    cursor.execute("SHOW INDEX FROM facebook_entries WHERE Key_name = 'idx_url'")
+    if not cursor.fetchone():
+        try:
+            cursor.execute("ALTER TABLE facebook_entries ADD INDEX idx_url (url(255))")
+            print_colored("[✓] Added index on facebook_entries.url", COLORS.GREEN)
+        except mysql.connector.Error as e:
+            print_colored(f"[!] Failed to add index: {e}", COLORS.YELLOW)
 
     cursor.close()
     conn.close()
