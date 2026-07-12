@@ -13,11 +13,37 @@ from .youtube import _ensure_cookie_file
 from .db import get_connection
 from .file_sharing import _load_share_db, _save_share_db, SHARE_DIR
 
-
-
 FACEBOOK_VIDEO_DIR = os.path.join(ROOT_DIR, 'facebook', 'videos')
 FACEBOOK_PHOTO_DIR = os.path.join(ROOT_DIR, 'facebook', 'photos')
 TABLE_NAME = 'facebook_entries'
+
+def update_facebook_entry(entry_id, title=None, uploader=None, notes=None):
+    """Update title, uploader, or notes for a Facebook entry."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    updates = []
+    params = []
+    if title is not None:
+        updates.append("title = %s")
+        params.append(title)
+    if uploader is not None:
+        updates.append("uploader = %s")
+        params.append(uploader)
+    if notes is not None:
+        updates.append("notes = %s")
+        params.append(notes)
+    if not updates:
+        cursor.close()
+        conn.close()
+        return False
+    params.append(entry_id)
+    query = f"UPDATE facebook_entries SET {', '.join(updates)} WHERE id = %s"
+    cursor.execute(query, params)
+    conn.commit()
+    affected = cursor.rowcount
+    cursor.close()
+    conn.close()
+    return affected > 0
 
 def delete_facebook_entries_by_url(url, delete_files=False):
     """Delete all entries with the given URL. Return count."""
@@ -800,10 +826,11 @@ def facebook_menu():
         print(" 10. Export Facebook entries to JSON")
         print(" 11. Import Facebook entries from CSV")
         print(" 12. Import Facebook entries from JSON")
+        print(" 13. Update entry metadata (title, uploader, notes)")
         print("  0. Return to main menu")
         print("═" * 50)
 
-        choice = input(color_text("Choose an option (0-12): ", COLORS.MAGENTA)).strip()
+        choice = input(color_text("Choose an option (0-13): ", COLORS.MAGENTA)).strip()
 
         if choice == '1':
             entries = list_facebook_entries()
@@ -849,7 +876,6 @@ def facebook_menu():
             url = input(color_text("Enter the exact album URL: ", COLORS.MAGENTA)).strip()
             if not url:
                 continue
-            # Count how many will be deleted
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM facebook_entries WHERE url = %s", (url,))
@@ -978,18 +1004,45 @@ def facebook_menu():
         elif choice == '9':
             export_facebook_csv()
             input("\nPress Enter to continue...")
+
         elif choice == '10':
             export_facebook_json()
             input("\nPress Enter to continue...")
+
         elif choice == '11':
             import_facebook_csv()
             input("\nPress Enter to continue...")
+
         elif choice == '12':
             import_facebook_json()
             input("\nPress Enter to continue...")
 
+        elif choice == '13':
+            identifier = input(color_text("Enter entry ID, Facebook ID, or file hash: ", COLORS.MAGENTA)).strip()
+            if not identifier:
+                continue
+            entry = get_facebook_entry_by_id(identifier)
+            if not entry:
+                print_colored("[!] Entry not found.", COLORS.RED)
+                input("\nPress Enter to continue...")
+                continue
+            print(f"ID           : {entry['id']}")
+            print(f"Facebook ID  : {entry['facebook_id']}")
+            print(f"Current title    : {entry['title']}")
+            print(f"Current uploader : {entry['uploader']}")
+            print(f"Current notes    : {entry['notes'] or '(none)'}")
+            new_title = input(color_text("New title (press Enter to keep): ", COLORS.MAGENTA)).strip()
+            new_uploader = input(color_text("New uploader (press Enter to keep): ", COLORS.MAGENTA)).strip()
+            new_notes = input(color_text("New notes (press Enter to keep): ", COLORS.MAGENTA)).strip()
+            if update_facebook_entry(entry['id'], new_title or None, new_uploader or None, new_notes or None):
+                print_colored("[✓] Entry updated.", COLORS.GREEN)
+            else:
+                print_colored("[!] No changes made.", COLORS.YELLOW)
+            input("\nPress Enter to continue...")
+
         elif choice == '0':
             break
+
         else:
             print_colored("[!] Invalid choice.", COLORS.RED)
             input("\nPress Enter to continue...")
