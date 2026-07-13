@@ -170,22 +170,25 @@ def re_download_facebook_entry(entry):
 def get_facebook_file_path(entry):
     """
     Given a Facebook entry dict, return the full path to its file if exists.
-    Searches in ROOT_DIR/facebook/videos and ROOT_DIR/facebook/photos.
+    Searches recursively inside ROOT_DIR/facebook/videos and ROOT_DIR/facebook/photos.
     """
     file_hash = entry.get('file_hash')
     if not file_hash:
         return None
-    # Check both video and photo directories
+
     base_dirs = [
         os.path.join(ROOT_DIR, 'facebook', 'videos'),
         os.path.join(ROOT_DIR, 'facebook', 'photos')
     ]
+
     for base in base_dirs:
-        if os.path.exists(base):
-            pattern = os.path.join(base, file_hash + '.*')
-            matches = glob.glob(pattern)
-            if matches:
-                return matches[0]
+        if not os.path.exists(base):
+            continue
+        # Walk the entire tree recursively
+        for root, _, files in os.walk(base):
+            for f in files:
+                if f.startswith(file_hash):
+                    return os.path.join(root, f)
     return None
 
 def delete_facebook_entry_with_file(entry_id):

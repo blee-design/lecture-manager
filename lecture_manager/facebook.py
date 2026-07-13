@@ -6,6 +6,7 @@ import shutil
 import yt_dlp
 from datetime import datetime
 import re
+import hashlib
 from .utils import sanitize_filename, print_colored, color_text, COLORS, compute_md5
 from .youtube import _ensure_cookie_file
 from .file_manager import ROOT_DIR
@@ -371,7 +372,7 @@ def download_facebook():
 
 def _process_album_files(file_paths, url, uploader=None, title=None):
     from .facebook_manager import add_facebook_entry
-    import shutil, os
+    import shutil, os, hashlib
 
     if not file_paths:
         return
@@ -382,33 +383,38 @@ def _process_album_files(file_paths, url, uploader=None, title=None):
     if not title:
         title = f"Album from {uploader}" if uploader != "Unknown" else "Facebook Album"
 
-    target_dir = os.path.join(ROOT_DIR, 'facebook', 'photos')
-    os.makedirs(target_dir, exist_ok=True)
+    # Create a unique folder name from the URL
+    url_hash = hashlib.md5(url.encode()).hexdigest()[:12]
+    album_folder = os.path.join(ROOT_DIR, 'facebook', 'photos', url_hash)
+    os.makedirs(album_folder, exist_ok=True)
 
-    print_colored(f"[i] Processing {len(file_paths)} photos...", COLORS.BLUE)
+    print_colored(f"[i] Processing {len(file_paths)} photos into album folder: {album_folder}", COLORS.BLUE)
+
     for idx, filepath in enumerate(file_paths, 1):
         print(f"  [{idx}/{len(file_paths)}] {os.path.basename(filepath)}", end="\r")
         file_hash = compute_md5(filepath)
         _, ext = os.path.splitext(filepath)
         new_name = f"{file_hash}{ext}"
-        final_path = os.path.join(target_dir, new_name)
+        final_path = os.path.join(album_folder, new_name)
+
+        # Remove if already exists (deduplicate)
         if os.path.exists(final_path):
             os.remove(final_path)
         shutil.move(filepath, final_path)
 
-        notes = f"Album from {url}"
+        # Store in DB with the same file_hash
         entry_id = add_facebook_entry(
-            facebook_id=file_hash,
+            facebook_id=file_hash,          # unique per file
             entry_type='photo',
             title=title,
             uploader=uploader,
             url=url,
             file_hash=file_hash,
             original_filename=os.path.basename(filepath),
-            notes=notes
+            notes=f"Album folder: {url_hash}"
         )
-    print()
-    print_colored(f"[✓] Album processed: {len(file_paths)} photos added.", COLORS.GREEN)
+    print()  # newline after progress
+    print_colored(f"[✓] Album processed: {len(file_paths)} photos added to {album_folder}.", COLORS.GREEN)
 
 def _download_single_photo(url, custom_name=None):
     from .facebook_manager import add_facebook_entry, get_facebook_entry_by_url

@@ -97,9 +97,6 @@ PAPER_KEYWORDS = {
 }
 
 def collect_facebook_tally_data():
-    """
-    Scan the Facebook directories and return a tally summary.
-    """
     facebook_dir = os.path.join(ROOT_DIR, 'facebook')
     if not os.path.exists(facebook_dir):
         return {
@@ -110,41 +107,49 @@ def collect_facebook_tally_data():
             'by_type': {'video': 0, 'photo': 0}
         }
 
-    # Get all entries from DB
     from .facebook_manager import list_facebook_entries
-    db_entries = list_facebook_entries(limit=None)  # all
+    db_entries = list_facebook_entries(limit=None)
 
-    # Map file_hash to entry
-    entry_by_hash = {e['file_hash']: e for e in db_entries if e['file_hash']}
+    # Build a dict of hash -> entry, and collect entries without a hash
+    entry_by_hash = {}
+    entries_without_hash = []
+    for e in db_entries:
+        if e['file_hash']:
+            entry_by_hash[e['file_hash']] = e
+        else:
+            entries_without_hash.append(e)
 
-    # Scan files on disk
+    # Scan files recursively
     video_exts = ('.mp4', '.mkv', '.webm', '.avi', '.mov')
     photo_exts = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
     all_files = []
-    video_dir = os.path.join(facebook_dir, 'videos')
-    photo_dir = os.path.join(facebook_dir, 'photos')
-    if os.path.exists(video_dir):
-        for f in os.listdir(video_dir):
-            if f.lower().endswith(video_exts):
-                all_files.append(os.path.join(video_dir, f))
-    if os.path.exists(photo_dir):
-        for f in os.listdir(photo_dir):
-            if f.lower().endswith(photo_exts):
-                all_files.append(os.path.join(photo_dir, f))
 
+    for subdir in ['videos', 'photos']:
+        dir_path = os.path.join(facebook_dir, subdir)
+        if os.path.exists(dir_path):
+            for root, _, files in os.walk(dir_path):
+                for f in files:
+                    if f.lower().endswith(video_exts if subdir == 'videos' else photo_exts):
+                        all_files.append(os.path.join(root, f))
+
+    # Map file path -> hash (from filename)
     file_hash_from_path = {fp: os.path.splitext(os.path.basename(fp))[0] for fp in all_files}
 
-    missing = []
+    # Find orphans (files not in DB)
     orphan = []
     for fp in all_files:
         h = file_hash_from_path[fp]
-        if h in entry_by_hash:
-            continue
-        else:
+        if h not in entry_by_hash:
             orphan.append(fp)
+
+    # Find missing entries (hashed entries without a file)
+    missing = []
     for h, entry in entry_by_hash.items():
         if not any(os.path.basename(fp).startswith(h) for fp in all_files):
             missing.append(entry)
+
+    # Add entries without a hash to missing
+    missing.extend(entries_without_hash)
 
     return {
         'total_entries': len(db_entries),
