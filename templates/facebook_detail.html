@@ -37,31 +37,35 @@
       <dd class="col-sm-9">{{ record.notes or '—' }}</dd>
     </dl>
 
-    {% if file_path %}
-      <div class="mt-4">
-        <h5>File Location</h5>
-        <p><code>{{ file_path }}</code></p>
-        {% if record.type == 'video' %}
-          <!-- ⚠️ IMPORTANT: This link MUST use 'stream_facebook_video' -->
-          <a href="{{ url_for('stream_facebook_video', id=record.id) }}" class="btn btn-primary" target="_blank">
-            <i class="bi bi-play-circle"></i> Watch Video
+    <!-- ===== PLAYBACK OPTIONS ===== -->
+    <div class="mt-4">
+      <h5>Playback</h5>
+      <div class="d-flex gap-2 flex-wrap">
+        {% if file_path %}
+          <a href="{{ url_for('stream_facebook_file', id=record.id) }}" class="btn btn-primary" target="_blank">
+            <i class="bi bi-play-circle"></i>
+            {% if record.type == 'video' %}Watch Local Video{% else %}View Local Photo{% endif %}
           </a>
         {% else %}
-          <a href="{{ url_for('stream_facebook_photo', id=record.id) }}" class="btn btn-primary" target="_blank">
-              <i class="bi bi-image"></i> View Photo
-          </a>
+          <button class="btn btn-secondary" disabled>
+            <i class="bi bi-exclamation-triangle"></i> Local file missing
+          </button>
         {% endif %}
-      </div>
-    {% else %}
-      <div class="alert alert-warning mt-4">
-        <i class="bi bi-exclamation-triangle"></i> File not found on disk.
-      </div>
-    {% endif %}
 
+        <a href="{{ record.url }}" class="btn btn-success" target="_blank">
+          <i class="bi bi-box-arrow-up-right"></i> Watch on Facebook
+        </a>
+      </div>
+      <p class="mt-2 text-muted small">
+        <i class="bi bi-info-circle"></i> The “Watch on Facebook” button opens the original post/video in a new tab – works for all content, including private/reel videos.
+      </p>
+    </div>
+
+    <!-- ===== ACTIONS ===== -->
     <div class="mt-4">
       <a href="{{ url_for('facebook_entries') }}" class="btn btn-secondary">Back to list</a>
       <form method="post" action="{{ url_for('facebook_delete', id=record.id) }}" style="display:inline;" onsubmit="return confirm('Delete this entry and file?')">
-        <button type="submit" class="btn btn-danger">Delete Entry & File</button>
+        <button type="submit" class="btn btn-danger">Delete Entry &amp; File</button>
       </form>
     </div>
   </div>

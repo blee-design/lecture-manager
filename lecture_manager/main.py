@@ -79,6 +79,8 @@ def main():
         print(" 27. " + color_text("Backfill hash naming (rename files to MD5)", COLORS.WHITE))
         print(" 28. " + color_text("Download Facebook video/photos", COLORS.WHITE))
         print(" 29. " + color_text("Manage Facebook downloads", COLORS.WHITE))
+        print(" 30. " + color_text("Scan YouTube channel and match mirrors", COLORS.GREEN, bold=True))
+        print(" 31. " + color_text("Upload video to YouTube (unlisted)", COLORS.GREEN, bold=True))
         print("  0. " + color_text("Exit", COLORS.RED, bold=True))
         print("  " + "─" * 40)
         choice = input(color_text("Choose an option: ", COLORS.MAGENTA)).strip()
@@ -150,6 +152,25 @@ def main():
         elif choice == '29':
             from .facebook_manager import facebook_menu
             facebook_menu()
+        elif choice == '30':
+            from .upload import scan_and_match_youtube_videos
+            scan_and_match_youtube_videos()
+        elif choice == '31':
+            identifier = input(color_text("Enter Video ID, Syllabus ID, or mirror ID: ", COLORS.MAGENTA)).strip()
+            if not identifier:
+                continue
+            from .db import get_record_by_any_id
+            record = get_record_by_any_id(identifier)
+            if not record:
+                print_colored("[!] Record not found.", COLORS.RED)
+            else:
+                from .upload import upload_video_to_youtube
+                print_colored(f"[i] Uploading video for record {record['video_id']} ...", COLORS.BLUE)
+                success, msg, vid = upload_video_to_youtube(record)
+                if success:
+                    print_colored(f"[✓] {msg}", COLORS.GREEN)
+                else:
+                    print_colored(f"[!] {msg}", COLORS.RED)
         elif choice == '0':
             print_colored("\nGoodbye! Have a great day! 👋", COLORS.CYAN)
             break

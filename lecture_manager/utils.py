@@ -44,7 +44,10 @@ def get_file_path_for_record(record):
     Locate the video file for a given record.
     Uses hash_cache first, then falls back to target directory, then whole ROOT_DIR.
     """
-    from .file_manager import get_target_path  # local import to avoid circular
+    from .db import get_connection  # local import to avoid circular dependency
+    import glob
+    from .file_manager import get_target_path  # local import
+
     file_hash = record.get('file_hash')
     if file_hash:
         conn = get_connection()

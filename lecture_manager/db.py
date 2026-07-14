@@ -208,6 +208,17 @@ def migrate_table():
         except mysql.connector.Error as e:
             print_colored(f"[!] Failed to add index: {e}", COLORS.YELLOW)
 
+    # ---- NEW: YouTube upload columns ----
+    cursor.execute("SHOW COLUMNS FROM youtube_lectures LIKE 'youtube_upload_id'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE youtube_lectures ADD COLUMN youtube_upload_id VARCHAR(255) NULL")
+        print_colored("[✓] Added 'youtube_upload_id' column.", COLORS.GREEN)
+
+    cursor.execute("SHOW COLUMNS FROM youtube_lectures LIKE 'youtube_upload_status'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE youtube_lectures ADD COLUMN youtube_upload_status ENUM('pending','uploaded','failed') DEFAULT NULL")
+        print_colored("[✓] Added 'youtube_upload_status' column.", COLORS.GREEN)
+
     cursor.close()
     conn.close()
 

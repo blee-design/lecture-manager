@@ -1,0 +1,24 @@
+<!-- YouTube Upload -->
+<div class="mt-4">
+  <h5>YouTube Upload</h5>
+  {% if record.youtube_upload_id %}
+    <div class="alert alert-success">
+      <i class="bi bi-check-circle"></i>
+      Uploaded successfully!
+      <a href="https://youtu.be/{{ record.youtube_upload_id }}" target="_blank">Watch on YouTube</a>
+    </div>
+  {% elif record.youtube_upload_status == 'failed' %}
+    <div class="alert alert-danger">
+      <i class="bi bi-exclamation-triangle"></i> Previous upload failed.
+    </div>
+    <form method="post" action="{{ url_for('upload_to_youtube_web', id=record.id) }}" style="display:inline;">
+      <button type="submit" class="btn btn-warning">Retry Upload</button>
+    </form>
+  {% else %}
+    <form method="post" action="{{ url_for('upload_to_youtube_web', id=record.id) }}" style="display:inline;">
+      <button type="submit" class="btn btn-primary">
+        <i class="bi bi-cloud-upload"></i> Upload to YouTube (Unlisted)
+      </button>
+    </form>
+  {% endif %}
+</div>

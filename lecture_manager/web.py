@@ -24,6 +24,26 @@ template_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'templat
 app = Flask(__name__, template_folder=template_dir)
 app.secret_key = os.urandom(24)
 
+def get_tally_data():
+    """Return tally data using hash‑based matching (same as CLI)."""
+    from .file_manager import collect_tally_data
+    data = collect_tally_data()
+
+    # Convert to the format expected by the web template
+    return {
+        'total_records': len(data['records']),
+        'matched': len(data['correctly_placed']),
+        'missing': len(data['missing']),
+        'missing_list': data['missing'],
+        'orphan': len(data['orphan']),
+        'orphan_list': data['orphan'],
+        'mismatched': len(data['mismatched']),
+        'mismatched_list': [
+            {'record': rec, 'files': [fp for fp, v in data['file_to_vid'].items() if v == rec['video_id']]}
+            for rec in data['mismatched']
+        ],
+    }
+
 def get_all_youtube_records():
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -32,6 +52,26 @@ def get_all_youtube_records():
     cursor.close()
     conn.close()
     return rows
+
+@app.route('/lecture/upload/<int:id>', methods=['POST'])
+def upload_to_youtube_web(id):
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE id = %s", (id,))
+    record = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    if not record:
+        flash('Record not found', 'danger')
+        return redirect(url_for('lecture_detail', id=id))
+
+    from .upload import upload_video_to_youtube
+    success, msg, vid = upload_video_to_youtube(record)
+    if success:
+        flash(msg, 'success')
+    else:
+        flash(msg, 'danger')
+    return redirect(url_for('lecture_detail', id=id))
 
 # ---------- YouTube routes ----------
 @app.route('/')
