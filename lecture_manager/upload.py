@@ -94,12 +94,12 @@ def _get_authenticated_service(force=False):
     """
     Get authenticated YouTube service.
     Tries local token file, then DB, then runs OAuth flow.
-    Also ensures client_secrets.json exists (restores from DB if missing).
+    Always saves to DB after loading/creating.
     """
     credentials = None
+    token_loaded_from = None
 
     # -------- Ensure client_secrets.json exists --------
-    # If local file missing, try to restore from DB
     if not os.path.exists(CLIENT_SECRETS):
         print_colored(f"[i] {CLIENT_SECRETS} not found locally. Checking DB...", COLORS.YELLOW)
         _, secrets_from_db = _get_oauth_from_db()
@@ -127,6 +127,7 @@ def _get_authenticated_service(force=False):
         try:
             with open(TOKEN_PICKLE, "rb") as token:
                 credentials = pickle.load(token)
+            token_loaded_from = "local file"
             print_colored("[i] Loaded token from local file.", COLORS.BLUE)
         except Exception as e:
             print_colored(f"[i] Failed to load local token: {e}", COLORS.YELLOW)
@@ -137,6 +138,7 @@ def _get_authenticated_service(force=False):
         if token_data_from_db:
             try:
                 credentials = pickle.loads(token_data_from_db)
+                token_loaded_from = "database"
                 print_colored("[i] Loaded token from database.", COLORS.BLUE)
                 # Write to local file for next time
                 with open(TOKEN_PICKLE, "wb") as token:
@@ -149,15 +151,22 @@ def _get_authenticated_service(force=False):
         print_colored("[i] Running OAuth flow... (browser will open)", COLORS.BLUE)
         flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS, SCOPES)
         credentials = flow.run_local_server(port=0)
-        # Save credentials to local file
+        token_loaded_from = "OAuth flow"
+        # Save to local file
         with open(TOKEN_PICKLE, "wb") as token:
             pickle.dump(credentials, token)
         print_colored(f"[✓] Token saved to {TOKEN_PICKLE}", COLORS.GREEN)
-        # Save to DB
+
+    # -------- ALWAYS save to database after loading/creating --------
+    if credentials and credentials.valid:
         token_data = pickle.dumps(credentials)
-        # Also save client secrets if we have it
-        _save_oauth_to_db(token_data, secrets_content)
-        print_colored("[✓] Token saved to database.", COLORS.GREEN)
+        if token_loaded_from != "database":  # avoid unnecessary writes
+            _save_oauth_to_db(token_data, secrets_content)
+            print_colored("[✓] Token saved to database.", COLORS.GREEN)
+        else:
+            # If it came from DB, still ensure secrets are stored
+            if secrets_content:
+                _save_oauth_to_db(token_data, secrets_content)
 
     return build("youtube", "v3", credentials=credentials)
 

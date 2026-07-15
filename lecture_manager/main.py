@@ -81,6 +81,7 @@ def main():
         print(" 29. " + color_text("Manage Facebook downloads", COLORS.WHITE))
         print(" 30. " + color_text("Scan YouTube channel and match mirrors", COLORS.WHITE))
         print(" 31. " + color_text("Upload video to YouTube (unlisted)", COLORS.WHITE))
+        print(" 32. " + color_text("Sync YouTube OAuth token to database", COLORS.WHITE))
         print("  0. " + color_text("Exit", COLORS.RED, bold=True))
         print("  " + "─" * 40)
         choice = input(color_text("Choose an option: ", COLORS.MAGENTA)).strip()
@@ -171,6 +172,21 @@ def main():
                     print_colored(f"[✓] {msg}", COLORS.GREEN)
                 else:
                     print_colored(f"[!] {msg}", COLORS.RED)
+        elif choice == '32':
+            print_colored("[i] Syncing YouTube OAuth token to database...", COLORS.BLUE)
+            import pickle
+            from .upload import _save_oauth_to_db
+            try:
+                with open('youtube_token.pickle', 'rb') as f:
+                    token_data = pickle.load(f)
+                with open('client_secrets.json', 'r') as f:
+                    secrets = f.read()
+                _save_oauth_to_db(pickle.dumps(token_data), secrets)
+                print_colored("[✓] Token and client secrets saved to database.", COLORS.GREEN)
+            except FileNotFoundError as e:
+                print_colored(f"[!] File not found: {e}. Please run Option 31 first to generate the token.", COLORS.YELLOW)
+            except Exception as e:
+                print_colored(f"[!] Sync failed: {e}", COLORS.RED)
         elif choice == '0':
             print_colored("\nGoodbye! Have a great day! 👋", COLORS.CYAN)
             break
@@ -179,5 +195,5 @@ def main():
 
         input("\nPress Enter to continue...")
 
-# if __name__ == "__main__":
-#    main()
+if __name__ == "__main__":
+    main()
