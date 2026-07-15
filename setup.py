@@ -36,7 +36,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="lecture-manager",
-    version = "2.3.3",                     # Hardcoded (no import from package)
+    version="2.4.0",                     # bumped version to reflect new YouTube upload features
     description="Unified media manager for YouTube lectures and Facebook content with terminal and web interface",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -49,12 +49,16 @@ setup(
         "mysql-connector-python>=8.0.0",
         "yt-dlp>=2023.0.0",
         "flask>=2.0.0",
-        "browser-cookie3",
-        "bgutil-ytdlp-pot-provider",
+        "browser-cookie3>=0.1.0",
+        "bgutil-ytdlp-pot-provider>=0.0.1",   # for yt-dlp challenges
         "requests>=2.25.0",
         "gallery-dl>=1.20.0",
         "ffmpeg-python>=0.2.0",
-        "curl-cffi",
+        "curl-cffi>=0.5.0",                 # for advanced HTTP requests
+        # --- new dependencies for YouTube upload ---
+        "google-api-python-client>=2.0.0",
+        "google-auth-oauthlib>=0.4.0",
+        "tqdm>=4.60.0",                      # progress bars
     ],
     extras_require={
         "dev": ["pytest", "black", "flake8"],
@@ -67,7 +71,7 @@ setup(
     cmdclass={
         'install': InstallWithDeno,
     },
-    python_requires=">=3.6",
+    python_requires=">=3.8",
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",

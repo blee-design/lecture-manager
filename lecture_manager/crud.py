@@ -6,7 +6,7 @@ import mysql.connector
 import glob
 from .db import get_connection, TABLE_NAME, get_record_by_video_id, get_record_by_any_id, get_any_media_record
 from .youtube import extract_video_id, fetch_youtube_title, get_embed_link, _ensure_cookie_file
-from .utils import clean_field, get_display_title, sanitize_filename, parse_lecture_title, color_text, print_colored, COLORS, normalize_syllabus_id
+from .utils import clean_field, get_display_title, sanitize_filename, parse_lecture_title, color_text, print_colored, COLORS, normalize_syllabus_id, build_original_filename
 from .file_manager import organize_video, sync_record_files, detect_paper, PAPER_CONFIG, get_target_path, ROOT_DIR
 from .facebook_manager import add_facebook_lecture
 
@@ -538,11 +538,8 @@ def update_lecture():
 
         while True:
             conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute(f"""
-                SELECT id, video_id, mirror_video_id, video_title, syllabus_id, subject, chapter, lecturer, nepali_date, time, notes, paper
-                FROM {TABLE_NAME} WHERE video_id = %s
-            """, (video_id,))
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE video_id = %s", (video_id,))
             row = cursor.fetchone()
             cursor.close()
             conn.close()
@@ -554,17 +551,17 @@ def update_lecture():
             print("\n" + "═" * 50)
             print_colored("  UPDATE LECTURE", COLORS.CYAN, bold=True)
             print("═" * 50)
-            print(f"1. Video ID     : {row[1]}")
-            print(f"2. Syllabus ID  : {row[4]}")
-            print(f"3. Subject      : {row[5]}")
-            print(f"4. Chapter      : {row[6] if row[6] else '(auto)'}")
-            print(f"5. Lecturer     : {row[7]}")
-            print(f"6. Nepali Date  : {row[8]}")
-            print(f"7. Time         : {row[9]}")
-            print(f"8. Video Title  : {row[3]}")
-            print(f"9. Mirror ID    : {row[2] if row[2] else '(none)'}")
-            print("10. Notes        : " + (row[10] if row[10] else '(none)'))
-            print("11. Paper        : " + (row[11] if row[11] else '(none)'))
+            print(f"1. Video ID     : {row['video_id']}")
+            print(f"2. Syllabus ID  : {row['syllabus_id']}")
+            print(f"3. Subject      : {row['subject']}")
+            print(f"4. Chapter      : {row['chapter'] if row['chapter'] else '(auto)'}")
+            print(f"5. Lecturer     : {row['lecturer']}")
+            print(f"6. Nepali Date  : {row['nepali_date']}")
+            print(f"7. Time         : {row['time']}")
+            print(f"8. Video Title  : {row['video_title']}")
+            print(f"9. Mirror ID    : {row['mirror_video_id'] if row['mirror_video_id'] else '(none)'}")
+            print("10. Notes        : " + (row['notes'] if row['notes'] else '(none)'))
+            print("11. Paper        : " + (row['paper'] if row['paper'] else '(none)'))
             print("0. Finish / Exit update mode for this lecture")
 
             field_map = {
@@ -600,20 +597,19 @@ def update_lecture():
                     folder = PAPER_CONFIG.get(p, {}).get('folder', '')
                     print(f"  {i}. {p} ({folder})")
                 print("  0. Cancel (keep current)")
-                paper_choice = input(color_text(f"Choose paper (1-4, or 0 to keep '{row[11] if row[11] else 'none'}'): ", COLORS.MAGENTA)).strip()
+                paper_choice = input(color_text(f"Choose paper (1-4, or 0 to keep '{row['paper'] if row['paper'] else 'none'}'): ", COLORS.MAGENTA)).strip()
 
                 if paper_choice.isdigit():
                     idx = int(paper_choice)
                     if 1 <= idx <= len(paper_options):
                         new_paper = paper_options[idx-1]
                     elif idx == 0:
-                        new_paper = row[11]  # keep existing
+                        new_paper = row['paper']  # keep existing
                     else:
                         print_colored("[!] Invalid choice.", COLORS.RED)
                         continue
                 else:
-                    # fallback: manual entry
-                    new_paper = input(color_text(f"Paper (or press Enter to keep '{row[11] if row[11] else 'none'}'): ", COLORS.MAGENTA)).strip()
+                    new_paper = input(color_text(f"Paper (or press Enter to keep '{row['paper'] if row['paper'] else 'none'}'): ", COLORS.MAGENTA)).strip()
                     if new_paper and new_paper not in ('pretest', 'paper_i', 'paper_ii', 'paper_iii'):
                         print_colored("[!] Invalid paper. Must be pretest, paper_i, paper_ii, or paper_iii.", COLORS.RED)
                         continue
@@ -622,14 +618,13 @@ def update_lecture():
                 if new_paper:
                     conn = get_connection()
                     cursor = conn.cursor()
-                    cursor.execute(f"UPDATE {TABLE_NAME} SET paper = %s WHERE id = %s", (new_paper, row[0]))
+                    cursor.execute(f"UPDATE {TABLE_NAME} SET paper = %s WHERE id = %s", (new_paper, row['id']))
                     conn.commit()
                     cursor.close()
                     conn.close()
                     print_colored("[✓] Paper updated.", COLORS.GREEN)
 
-                    # --- NEW: Ask to move the file if paper changed ---
-                    if new_paper != row[11]:
+                    if new_paper != row['paper']:
                         updated_record = get_record_by_video_id(video_id)
                         if updated_record:
                             move_choice = input(color_text("Paper updated. Move the video file to the new location now? (y/n): ", COLORS.MAGENTA)).strip().lower()
@@ -641,15 +636,15 @@ def update_lecture():
                                 else:
                                     print_colored("[!] File move failed. You can manually move it later with option 15.", COLORS.YELLOW)
                 else:
-                    # Set to NULL if empty
                     conn = get_connection()
                     cursor = conn.cursor()
-                    cursor.execute(f"UPDATE {TABLE_NAME} SET paper = NULL WHERE id = %s", (row[0],))
+                    cursor.execute(f"UPDATE {TABLE_NAME} SET paper = NULL WHERE id = %s", (row['id'],))
                     conn.commit()
                     cursor.close()
                     conn.close()
                     print_colored("[✓] Paper cleared.", COLORS.GREEN)
-                continue  # skip the rest of the loop for paper
+                # After paper update, we may also want to rebuild original_filename? Paper does not affect original_filename, so skip.
+                continue
 
             # --- For other fields, get new value ---
             new_value = input(color_text(f"New value for {field}: ", COLORS.MAGENTA)).strip()
@@ -661,7 +656,7 @@ def update_lecture():
                     continue
                 conn = get_connection()
                 cursor = conn.cursor()
-                cursor.execute(f"SELECT id FROM {TABLE_NAME} WHERE video_id = %s AND id != %s", (new_value, row[0]))
+                cursor.execute(f"SELECT id FROM {TABLE_NAME} WHERE video_id = %s AND id != %s", (new_value, row['id']))
                 if cursor.fetchone():
                     print_colored("[!] ID already used.", COLORS.RED)
                     cursor.close()
@@ -674,14 +669,16 @@ def update_lecture():
                 cursor = conn.cursor()
                 if new_title:
                     cursor.execute(f"UPDATE {TABLE_NAME} SET video_id = %s, video_title = %s WHERE id = %s",
-                                   (new_value, new_title, row[0]))
+                                   (new_value, new_title, row['id']))
                 else:
-                    cursor.execute(f"UPDATE {TABLE_NAME} SET video_id = %s WHERE id = %s", (new_value, row[0]))
+                    cursor.execute(f"UPDATE {TABLE_NAME} SET video_id = %s WHERE id = %s", (new_value, row['id']))
                 conn.commit()
                 cursor.close()
                 conn.close()
                 video_id = new_value
                 print_colored("[✓] Video ID updated.", COLORS.GREEN)
+                # Video ID doesn't affect original_filename, skip rebuild
+                continue
 
             elif field == 'syllabus_id':
                 if new_value:
@@ -689,16 +686,35 @@ def update_lecture():
                 conn = get_connection()
                 cursor = conn.cursor()
                 try:
-                    cursor.execute(f"UPDATE {TABLE_NAME} SET syllabus_id = %s WHERE id = %s", (new_value, row[0]))
+                    cursor.execute(f"UPDATE {TABLE_NAME} SET syllabus_id = %s WHERE id = %s", (new_value, row['id']))
                     conn.commit()
                     cursor.close()
                     conn.close()
                     print_colored("[✓] Syllabus ID updated.", COLORS.GREEN)
+                    # ----- AUTO-REGENERATE original_filename -----
+                    # Re-fetch updated record
+                    conn2 = get_connection()
+                    cur2 = conn2.cursor(dictionary=True)
+                    cur2.execute(f"SELECT * FROM {TABLE_NAME} WHERE id = %s", (row['id'],))
+                    updated_row = cur2.fetchone()
+                    cur2.close()
+                    conn2.close()
+                    if updated_row:
+                        new_original = build_original_filename(updated_row)
+                        if new_original:
+                            conn3 = get_connection()
+                            cur3 = conn3.cursor()
+                            cur3.execute(f"UPDATE {TABLE_NAME} SET original_filename = %s WHERE id = %s", (new_original, row['id']))
+                            conn3.commit()
+                            cur3.close()
+                            conn3.close()
+                            print_colored(f"[✓] Original filename auto-regenerated to: {new_original}", COLORS.GREEN)
                 except mysql.connector.Error as e:
                     conn.rollback()
                     cursor.close()
                     conn.close()
                     print_colored(f"[!] Update failed: {e}", COLORS.RED)
+                continue
 
             elif field == 'mirror_video_id':
                 if new_value:
@@ -711,7 +727,7 @@ def update_lecture():
                     cursor.execute(f"""
                         SELECT id FROM {TABLE_NAME}
                         WHERE (video_id = %s OR mirror_video_id = %s) AND id != %s
-                    """, (new_value, new_value, row[0]))
+                    """, (new_value, new_value, row['id']))
                     if cursor.fetchone():
                         print_colored("[!] This mirror ID is already used by another record.", COLORS.YELLOW)
                         proceed = input(color_text("Do you still want to use it? (y/n): ", COLORS.MAGENTA)).strip().lower()
@@ -727,11 +743,12 @@ def update_lecture():
                 conn = get_connection()
                 cursor = conn.cursor()
                 try:
-                    cursor.execute(f"UPDATE {TABLE_NAME} SET mirror_video_id = %s WHERE id = %s", (new_value, row[0]))
+                    cursor.execute(f"UPDATE {TABLE_NAME} SET mirror_video_id = %s WHERE id = %s", (new_value, row['id']))
                     conn.commit()
                     cursor.close()
                     conn.close()
                     print_colored("[✓] Mirror ID updated.", COLORS.GREEN)
+                    # Mirror ID doesn't affect original_filename, skip rebuild
                 except mysql.connector.IntegrityError as e:
                     conn.rollback()
                     cursor.close()
@@ -740,33 +757,57 @@ def update_lecture():
                         print_colored("[!] Mirror ID is already used by another record. Update failed.", COLORS.RED)
                     else:
                         print_colored(f"[!] Database error: {e}", COLORS.RED)
+                continue
 
             elif field == 'notes':
                 if not new_value:
                     new_value = None
                 conn = get_connection()
                 cursor = conn.cursor()
-                cursor.execute(f"UPDATE {TABLE_NAME} SET notes = %s WHERE id = %s", (new_value, row[0]))
+                cursor.execute(f"UPDATE {TABLE_NAME} SET notes = %s WHERE id = %s", (new_value, row['id']))
                 conn.commit()
                 cursor.close()
                 conn.close()
                 print_colored("[✓] Notes updated.", COLORS.GREEN)
+                # Notes don't affect original_filename, skip rebuild
+                continue
 
             else:
-                # Generic update for other fields (subject, chapter, lecturer, etc.)
+                # Generic update for subject, chapter, lecturer, nepali_date, time
                 conn = get_connection()
                 cursor = conn.cursor()
                 try:
-                    cursor.execute(f"UPDATE {TABLE_NAME} SET {field} = %s WHERE id = %s", (new_value, row[0]))
+                    cursor.execute(f"UPDATE {TABLE_NAME} SET {field} = %s WHERE id = %s", (new_value, row['id']))
                     conn.commit()
                     cursor.close()
                     conn.close()
                     print_colored(f"[✓] {field.capitalize()} updated.", COLORS.GREEN)
+
+                    # ----- AUTO-REGENERATE original_filename -----
+                    # Re-fetch updated record
+                    conn2 = get_connection()
+                    cur2 = conn2.cursor(dictionary=True)
+                    cur2.execute(f"SELECT * FROM {TABLE_NAME} WHERE id = %s", (row['id'],))
+                    updated_row = cur2.fetchone()
+                    cur2.close()
+                    conn2.close()
+                    if updated_row:
+                        new_original = build_original_filename(updated_row)
+                        if new_original:
+                            conn3 = get_connection()
+                            cur3 = conn3.cursor()
+                            cur3.execute(f"UPDATE {TABLE_NAME} SET original_filename = %s WHERE id = %s", (new_original, row['id']))
+                            conn3.commit()
+                            cur3.close()
+                            conn3.close()
+                            print_colored(f"[✓] Original filename auto-regenerated to: {new_original}", COLORS.GREEN)
+
                 except mysql.connector.Error as e:
                     conn.rollback()
                     cursor.close()
                     conn.close()
                     print_colored(f"[!] Update failed: {e}", COLORS.RED)
+                continue
 
         # After exiting inner loop, ask if user wants to continue updating another record
         if input(color_text("Update another lecture? (y/n): ", COLORS.MAGENTA)).strip().lower() != 'y':

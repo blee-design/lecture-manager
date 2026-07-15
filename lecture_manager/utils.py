@@ -218,3 +218,21 @@ def compute_md5(file_path, chunk_size=8192):
         for chunk in iter(lambda: f.read(chunk_size), b""):
             hash_md5.update(chunk)
     return hash_md5.hexdigest()
+
+def build_original_filename(record):
+    """
+    Build the original filename from record fields.
+    Returns a string like: "syllabus || chapter || subject || lecturer || date || time"
+    or None if all fields are empty.
+    """
+    parts = [
+        record.get('syllabus_id', ''),
+        record.get('chapter', ''),
+        record.get('subject', ''),
+        record.get('lecturer', ''),
+        record.get('nepali_date', ''),
+        record.get('time', '')
+    ]
+    # Filter empty parts
+    parts = [str(p).strip() for p in parts if p and str(p).strip()]
+    return " || ".join(parts) if parts else None

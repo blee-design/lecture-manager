@@ -219,6 +219,29 @@ def migrate_table():
         cursor.execute("ALTER TABLE youtube_lectures ADD COLUMN youtube_upload_status ENUM('pending','uploaded','failed') DEFAULT NULL")
         print_colored("[✓] Added 'youtube_upload_status' column.", COLORS.GREEN)
 
+    # ---- NEW: OAuth credentials table ----
+    cursor.execute("SHOW TABLES LIKE 'oauth_credentials'")
+    if not cursor.fetchone():
+        cursor.execute("""
+        CREATE TABLE oauth_credentials (
+            id INT PRIMARY KEY DEFAULT 1,
+            token_data LONGBLOB NULL,
+            client_secrets TEXT NULL,
+            last_refresh DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+        print_colored("[✓] Created 'oauth_credentials' table.", COLORS.GREEN)
+    else:
+        # Ensure columns exist
+        cursor.execute("SHOW COLUMNS FROM oauth_credentials LIKE 'token_data'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE oauth_credentials ADD COLUMN token_data LONGBLOB NULL")
+            print_colored("[✓] Added 'token_data' column to oauth_credentials.", COLORS.GREEN)
+        cursor.execute("SHOW COLUMNS FROM oauth_credentials LIKE 'client_secrets'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE oauth_credentials ADD COLUMN client_secrets TEXT NULL")
+            print_colored("[✓] Added 'client_secrets' column to oauth_credentials.", COLORS.GREEN)
+
     cursor.close()
     conn.close()
 
