@@ -25,30 +25,27 @@ SCOPES = [
 TOKEN_PICKLE = "youtube_token.pickle"
 CLIENT_SECRETS = "client_secrets.json"
 
-import os
-import pickle
-import sys
-import re
-from datetime import datetime
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-from .db import get_connection, TABLE_NAME
-from .utils import print_colored, COLORS, get_file_path_for_record, color_text
-
-try:
-    from tqdm import tqdm
-    HAS_TQDM = True
-except ImportError:
-    HAS_TQDM = False
-    print_colored("[i] Install 'tqdm' for a better progress bar: pip install tqdm", COLORS.YELLOW)
-
-SCOPES = [
-    "https://www.googleapis.com/auth/youtube.upload",
-    "https://www.googleapis.com/auth/youtube.readonly"
-]
-TOKEN_PICKLE = "youtube_token.pickle"
-CLIENT_SECRETS = "client_secrets.json"
+def normalize_syllabus_for_matching(syllabus):
+    """
+    Remove leading zeros from each dot-separated part.
+    Example: '09.02.12-2' -> '9.2.12-2'
+    Also handles cases without suffix.
+    """
+    if not syllabus:
+        return syllabus
+    parts = syllabus.split('.')
+    normalized_parts = []
+    suffix = ''
+    for part in parts:
+        if '-' in part:
+            main, dash = part.split('-', 1)
+            main_stripped = main.lstrip('0') or '0'
+            normalized_parts.append(main_stripped)
+            suffix = '-' + dash
+        else:
+            main_stripped = part.lstrip('0') or '0'
+            normalized_parts.append(main_stripped)
+    return '.'.join(normalized_parts) + suffix
 
 # ---------- Database helpers for OAuth credentials ----------
 def _get_oauth_from_db():
@@ -204,12 +201,18 @@ def display_comparison(db_record, youtube_video):
     db_subject = db_record.get('subject', '')
     db_chapter = db_record.get('chapter', '')
     video_title = youtube_video['title'].lower()
+    video_syllabus = extract_syllabus_from_title(youtube_video['title']) or ''
 
     matches = []
-    if db_syllabus and db_syllabus in youtube_video['title']:
-        matches.append(f"✅ Syllabus ID '{db_syllabus}' found in title")
-    elif db_syllabus:
-        matches.append(f"⚠️  Syllabus ID '{db_syllabus}' NOT found in title")
+
+    # ---- Flexible syllabus match ----
+    if db_syllabus:
+        if db_syllabus in youtube_video['title']:
+            matches.append(f"✅ Syllabus ID '{db_syllabus}' found in title")
+        elif normalize_syllabus_for_matching(db_syllabus) == normalize_syllabus_for_matching(video_syllabus):
+            matches.append(f"✅ Syllabus ID '{db_syllabus}' matches (normalized) in title")
+        else:
+            matches.append(f"⚠️  Syllabus ID '{db_syllabus}' NOT found in title")
 
     if db_subject and db_subject.lower() in video_title:
         matches.append(f"✅ Subject '{db_subject}' found in title")
@@ -235,7 +238,7 @@ def display_comparison(db_record, youtube_video):
         print_colored("  → Low confidence match (probably wrong)", COLORS.RED)
 
 def scan_and_match_youtube_videos(interactive=True):
-    """Smart match with date-aware scoring."""
+    """Smart match with date-aware scoring and flexible syllabus matching."""
     youtube = _get_authenticated_service(force=False)
     if not youtube:
         print_colored("[!] Authentication failed.", COLORS.RED)
@@ -272,10 +275,12 @@ def scan_and_match_youtube_videos(interactive=True):
 
     print_colored(f"[i] Found {len(videos)} videos in your channel.", COLORS.BLUE)
 
-    videos_by_syllabus = {}
+    # Build an index by normalized syllabus (and also original for display)
+    videos_by_norm_syllabus = {}
     for vid in videos:
         if vid['syllabus']:
-            videos_by_syllabus.setdefault(vid['syllabus'], []).append(vid)
+            norm = normalize_syllabus_for_matching(vid['syllabus'])
+            videos_by_norm_syllabus.setdefault(norm, []).append(vid)
 
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -293,18 +298,22 @@ def scan_and_match_youtube_videos(interactive=True):
     auto_matched = 0
     manual_review = []
 
-    # First pass: exact syllabus + date match
+    # First pass: exact or normalized syllabus match + date
     for rec in records:
         syllabus = rec.get('syllabus_id', '').strip()
         if not syllabus:
             continue
 
-        if syllabus in videos_by_syllabus:
+        norm_syll = normalize_syllabus_for_matching(syllabus)
+        # Try to find videos with same normalized syllabus
+        candidate_vids = videos_by_norm_syllabus.get(norm_syll, [])
+        if candidate_vids:
             best_vid = None
             best_score = 0
             rec_date = rec.get('nepali_date', '').strip()
-            for vid in videos_by_syllabus[syllabus]:
-                score = 10
+            for vid in candidate_vids:
+                score = 10  # base for normalized syllabus match
+                # Date bonus
                 if rec_date and vid.get('date') == rec_date:
                     score += 20
                 elif rec_date and vid.get('date') and rec_date in vid.get('date', ''):
@@ -315,6 +324,7 @@ def scan_and_match_youtube_videos(interactive=True):
 
             if best_vid:
                 vid_id = best_vid['id']
+                # Check if already used as mirror
                 conn = get_connection()
                 cursor = conn.cursor(dictionary=True)
                 cursor.execute("""
@@ -346,12 +356,13 @@ def scan_and_match_youtube_videos(interactive=True):
         else:
             manual_review.append(rec)
 
-    print_colored(f"\n✅ Auto-matched {auto_matched} records by syllabus ID + date.", COLORS.GREEN)
+    print_colored(f"\n✅ Auto-matched {auto_matched} records by syllabus ID + date (with normalization).", COLORS.GREEN)
 
-    # Second pass: manual review with ranked candidates (date-aware)
+    # Second pass: manual review with ranked candidates (date-aware + normalized syllabus)
     if manual_review and interactive:
         print_colored(f"\n[i] {len(manual_review)} records need manual review.", COLORS.YELLOW)
-        print_colored("[i] Candidates are scored by: syllabus ID (10pts), date match (20pts), subject (5pts), lecturer (3pts).\n", COLORS.BLUE)
+        print_colored("[i] Candidates are scored by: syllabus ID (10pts), date match (20pts), subject (5pts), lecturer (3pts).", COLORS.BLUE)
+        print_colored("[i] Syllabus matching is now flexible (leading zeros ignored).\n", COLORS.BLUE)
 
         for rec in manual_review:
             syllabus = rec.get('syllabus_id', '')
@@ -360,12 +371,19 @@ def scan_and_match_youtube_videos(interactive=True):
             chapter = rec.get('chapter', '')
             rec_date = rec.get('nepali_date', '')
 
+            # Score candidates
             scored = []
             for vid in videos:
                 title_lower = vid['title'].lower()
                 score = 0
-                if syllabus and syllabus in vid['title']:
-                    score += 10
+                # Check syllabus with normalization
+                vid_syll = vid.get('syllabus', '')
+                if syllabus:
+                    if syllabus in vid['title']:
+                        score += 10
+                    elif normalize_syllabus_for_matching(syllabus) == normalize_syllabus_for_matching(vid_syll):
+                        score += 10  # same as exact match
+                # Date match
                 if rec_date and vid.get('date') == rec_date:
                     score += 20
                 elif rec_date and vid.get('date') and rec_date in vid.get('date', ''):

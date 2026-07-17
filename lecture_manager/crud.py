@@ -9,6 +9,7 @@ from .youtube import extract_video_id, fetch_youtube_title, get_embed_link, _ens
 from .utils import clean_field, get_display_title, sanitize_filename, parse_lecture_title, color_text, print_colored, COLORS, normalize_syllabus_id, build_original_filename
 from .file_manager import organize_video, sync_record_files, detect_paper, PAPER_CONFIG, get_target_path, ROOT_DIR
 from .facebook_manager import add_facebook_lecture
+from .upload import upload_video_to_youtube
 
 DOWNLOAD_DIR = './downloads'
 
@@ -120,7 +121,7 @@ def add_lecture():
         add_facebook_lecture(url_or_id)
         return
 
-    # ---- Continue with YouTube logic (unchanged) ----
+    # ---- Continue with YouTube logic ----
     video_id = extract_video_id(url_or_id)
     if not video_id:
         print_colored("[!] Invalid YouTube URL or video ID.", COLORS.RED)
@@ -165,7 +166,6 @@ def add_lecture():
         # ---- Auto‑detect paper ----
         detected_paper = detect_paper(parsed['subject'], syllabus_id, chapter, interactive=True)
         if not detected_paper:
-            # Fallback: ask user to pick
             print_colored("[!] Could not auto‑detect paper. Please select manually.", COLORS.YELLOW)
             print("Options: pretest, paper_i, paper_ii, paper_iii")
             paper_choice = input(color_text("Enter paper: ", COLORS.MAGENTA)).strip()
@@ -182,7 +182,6 @@ def add_lecture():
         print("─" * 40)
         use = input(color_text("Use these values? (y/n, default y): ", COLORS.MAGENTA)).strip().lower()
         if use == 'n':
-            # ---- Interactive edit menu with paper ----
             fields = {
                 'syllabus_id': syllabus_id,
                 'chapter': chapter,
@@ -249,11 +248,10 @@ def add_lecture():
                         if 1 <= idx <= len(paper_options):
                             fields['paper'] = paper_options[idx-1]
                         elif idx == 0:
-                            pass  # keep current
+                            pass
                         else:
                             print_colored("[!] Invalid choice.", COLORS.RED)
                     else:
-                        # fallback: allow manual entry
                         new_val = input(color_text(f"Paper (or press Enter to keep '{fields['paper']}'): ", COLORS.MAGENTA)).strip()
                         if new_val:
                             if new_val in ('pretest','paper_i','paper_ii','paper_iii'):
@@ -275,13 +273,11 @@ def add_lecture():
             time_str = parsed['time']
             paper = detected_paper
     else:
-        # ---- No auto‑detection – ask manually ----
         print_colored("[i] Could not auto‑parse title. Please enter manually.", COLORS.YELLOW)
         subject = input(color_text("Subject (course name): ", COLORS.MAGENTA)).strip()
         lecturer = input(color_text("Lecturer Name: ", COLORS.MAGENTA)).strip()
         nepali_date = input(color_text("Nepali Date (B.S.): ", COLORS.MAGENTA)).strip()
         time_str = input(color_text("Time: ", COLORS.MAGENTA)).strip()
-        # Ask paper manually
         print("Select paper:")
         print("  pretest  - Pretest Officer")
         print("  paper_i  - First Paper: Economics")
@@ -298,7 +294,6 @@ def add_lecture():
         if mirror_id and len(mirror_id) != 11:
             print_colored("[!] Invalid mirror ID, will be stored as-is.", COLORS.YELLOW)
 
-        # Duplicate mirror check
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute(f"""
@@ -320,15 +315,17 @@ def add_lecture():
 
     notes = input(color_text("Notes (optional, press Enter to skip): ", COLORS.MAGENTA)).strip() or None
 
-    # ---- Insert ----
+    # ---- Insert record ----
     conn = get_connection()
     cursor = conn.cursor()
     try:
+        # Build original_filename from fields
+        original_filename = " || ".join([p for p in [syllabus_id, chapter, subject, lecturer, nepali_date, time_str] if p])
         cursor.execute(f"""
         INSERT INTO {TABLE_NAME}
-        (video_id, mirror_video_id, video_title, syllabus_id, subject, chapter, lecturer, nepali_date, time, notes, paper)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (video_id, mirror_id, title, syllabus_id, subject, chapter, lecturer, nepali_date, time_str, notes, paper))
+        (video_id, mirror_video_id, video_title, syllabus_id, subject, chapter, lecturer, nepali_date, time, notes, paper, original_filename)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (video_id, mirror_id, title, syllabus_id, subject, chapter, lecturer, nepali_date, time_str, notes, paper, original_filename))
         conn.commit()
         cursor.close()
         conn.close()
@@ -344,11 +341,34 @@ def add_lecture():
             print_colored(f"[!] Database error: {e}", COLORS.RED)
         return
 
-    # ---- Download ----
+    # ---- Fetch the new record ----
+    record = get_record_by_video_id(video_id)
+    if not record:
+        print_colored("[!] Record added but could not retrieve. Skipping further actions.", COLORS.RED)
+        return
+
+    # ---- Step 1: Download the video (if user wants) ----
     if input(color_text("Download now? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y':
+        download_video(record, silent=True)
+        # Re‑fetch the record after download (file_hash and original_filename may have been updated)
         record = get_record_by_video_id(video_id)
-        if record:
-            download_video(record, silent=True)
+        if not record:
+            print_colored("[!] Could not re‑fetch record after download.", COLORS.RED)
+            return
+
+    # ---- Step 2: Upload to YouTube (if user wants and file exists) ----
+    if record.get('file_hash'):
+        # File exists (or was downloaded earlier)
+        if input(color_text("Upload this lecture to YouTube now? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y':
+            from .upload import upload_video_to_youtube
+            print_colored("[i] Uploading to YouTube...", COLORS.BLUE)
+            success, msg, vid = upload_video_to_youtube(record)
+            if success:
+                print_colored(f"[✓] {msg}", COLORS.GREEN)
+            else:
+                print_colored(f"[!] {msg}", COLORS.RED)
+    else:
+        print_colored("[i] Video file not found on disk. Please download it first to upload.", COLORS.YELLOW)
 
 def view_all():
     conn = get_connection()
