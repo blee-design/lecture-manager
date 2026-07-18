@@ -36,7 +36,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="lecture-manager",
-    version="2.4.0",                     # bumped version to reflect new YouTube upload features
+    version="2.4.0-1",                     # bumped version to reflect new YouTube upload features
     description="Unified media manager for YouTube lectures and Facebook content with terminal and web interface",
     long_description=long_description,
     long_description_content_type="text/markdown",
