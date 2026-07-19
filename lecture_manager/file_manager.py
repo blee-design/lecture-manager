@@ -1936,7 +1936,7 @@ def resolve_duplicates():
     conn.close()
 
     if not rows:
-        print_colored("[i] No active files in cache. Run option 22 first.", COLORS.YELLOW)
+        print_colored("[i] No active files in cache. Run option 18 first.", COLORS.YELLOW)
         return
 
     # --- Clean stale entries: remove or mark as 'deleted' if file doesn't exist ---
@@ -2085,7 +2085,7 @@ def resolve_duplicates():
     print(f"  Kept  : {len(kept)} files (primary copies)")
     print(f"  Trashed: {len(trashed)} duplicate files")
     if trashed:
-        print_colored(f"  You can restore them using option 18.", COLORS.BLUE)
+        print_colored(f"  You can restore them using option 14.", COLORS.BLUE)
     print("═" * 50)
 
 def backfill_original_filenames():
@@ -2258,7 +2258,7 @@ def backfill_hash_naming():
             skipped += 1
 
     print(f"\n[✓] Done. Renamed: {renamed}, Skipped: {skipped}, Not found: {not_found} out of {total}.")
-    print("[i] Now run option 19 (Tally) – everything should be perfectly synced.")
+    print("[i] Now run option 16 (Tally) – everything should be perfectly synced.")
 
 def backfill_hashes():
     print("\n" + "═" * 50)

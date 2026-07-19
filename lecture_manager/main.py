@@ -42,6 +42,41 @@ def show_banner():
     print(bottom)
     print()
 
+def export_import_submenu():
+    """Sub‑menu for all import/export operations (main menu)."""
+    while True:
+        print("\n" + "═" * 50)
+        print_colored("  EXPORT / IMPORT", COLORS.CYAN, bold=True)
+        print("═" * 50)
+        print("  1. Export to CSV")
+        print("  2. Export to JSON")
+        print("  3. Import from CSV")
+        print("  4. Import from JSON")
+        print("  0. Return to main menu")
+        print("═" * 50)
+
+        choice = input(color_text("Choose an option (0-4): ", COLORS.MAGENTA)).strip()
+
+        if choice == '1':
+            from .export import export_csv
+            export_csv()
+        elif choice == '2':
+            from .export import export_json
+            export_json()
+        elif choice == '3':
+            from .export import import_csv
+            import_csv()
+        elif choice == '4':
+            from .export import import_json
+            import_json()
+        elif choice == '0':
+            print_colored("Returning to main menu.", COLORS.YELLOW)
+            break
+        else:
+            print_colored("[!] Invalid option.", COLORS.RED)
+
+        input("\nPress Enter to continue...")
+
 def main():
     load_or_create_config()
     create_table()
@@ -60,29 +95,27 @@ def main():
         print("  7. " + color_text("Show YouTube embed link", COLORS.WHITE))
         print("  8. " + color_text("Refresh video titles from YouTube", COLORS.WHITE))
         print("  9. " + color_text("Search lectures", COLORS.WHITE))
-        print(" 10. " + color_text("Export to CSV", COLORS.WHITE))
-        print(" 11. " + color_text("Export to JSON", COLORS.WHITE))
-        print(" 12. " + color_text("Import from CSV", COLORS.WHITE))
-        print(" 13. " + color_text("Import from JSON", COLORS.WHITE))
-        print(" 14. " + color_text("Edit database configuration", COLORS.WHITE))
-        print(" 15. " + color_text("Move/rename a video manually", COLORS.WHITE))
-        print(" 16. " + color_text("Delete a video (move to trash)", COLORS.WHITE))
-        print(" 17. " + color_text("Restore from trash", COLORS.WHITE))
-        print(" 18. " + color_text("Empty trash", COLORS.WHITE))
-        print(" 19. " + color_text("Tally database with video files", COLORS.WHITE))
-        print(" 20. " + color_text("Start web interface", COLORS.WHITE))
-        print(" 21. " + color_text("Scan for duplicate video files", COLORS.WHITE))
-        print(" 22. " + color_text("Auto-resolve duplicate video files", COLORS.WHITE))
-        print(" 23. " + color_text("Backfill file hashes (one-time)", COLORS.WHITE))
-        print(" 24. " + color_text("Show library dashboard", COLORS.WHITE))
-        print(" 25. " + color_text("Play a video (local file)", COLORS.WHITE))
-        print(" 26. " + color_text("Refresh YouTube cookies", COLORS.WHITE))
-        print(" 27. " + color_text("Backfill hash naming (rename files to MD5)", COLORS.WHITE))
-        print(" 28. " + color_text("Download Facebook video/photos", COLORS.WHITE))
-        print(" 29. " + color_text("Manage Facebook downloads", COLORS.WHITE))
-        print(" 30. " + color_text("Scan YouTube channel and match mirrors", COLORS.WHITE))
-        print(" 31. " + color_text("Upload video to YouTube (unlisted)", COLORS.WHITE))
-        print(" 32. " + color_text("Sync YouTube OAuth token to database", COLORS.WHITE))
+        print(" 10. " + color_text("Export/Import (CSV, JSON)", COLORS.WHITE))
+        print(" 11. " + color_text("Edit database configuration", COLORS.WHITE))
+        print(" 12. " + color_text("Move/rename a video manually", COLORS.WHITE))
+        print(" 13. " + color_text("Delete a video (move to trash)", COLORS.WHITE))
+        print(" 14. " + color_text("Restore from trash", COLORS.WHITE))
+        print(" 15. " + color_text("Empty trash", COLORS.WHITE))
+        print(" 16. " + color_text("Tally database with video files", COLORS.WHITE))
+        print(" 17. " + color_text("Start web interface", COLORS.WHITE))
+        print(" 18. " + color_text("Scan for duplicate video files", COLORS.WHITE))
+        print(" 19. " + color_text("Auto-resolve duplicate video files", COLORS.WHITE))
+        print(" 20. " + color_text("Backfill file hashes (one-time)", COLORS.WHITE))
+        print(" 21. " + color_text("Show library dashboard", COLORS.WHITE))
+        print(" 22. " + color_text("Play a video (local file)", COLORS.WHITE))
+        print(" 23. " + color_text("Refresh YouTube cookies", COLORS.WHITE))
+        print(" 24. " + color_text("Backfill hash naming (rename files to MD5)", COLORS.WHITE))
+        print(" 25. " + color_text("Download Facebook video/photos", COLORS.WHITE))
+        print(" 26. " + color_text("Manage Facebook downloads", COLORS.WHITE))
+        print(" 27. " + color_text("Scan YouTube channel and match mirrors", COLORS.WHITE))
+        print(" 28. " + color_text("Upload video to YouTube (unlisted)", COLORS.WHITE))
+        print(" 29. " + color_text("Sync YouTube OAuth token to database", COLORS.WHITE))
+        print(" 30. " + color_text("Question Bank", COLORS.WHITE))
         print("  0. " + color_text("Exit", COLORS.RED, bold=True))
         print("  " + "─" * 40)
         choice = input(color_text("Choose an option: ", COLORS.MAGENTA)).strip()
@@ -107,57 +140,52 @@ def main():
             from .crud import search_all
             search_all()
         elif choice == '10':
-            export_csv()
+            export_import_submenu()
         elif choice == '11':
-            export_json()
-        elif choice == '12':
-            import_csv()
-        elif choice == '13':
-            import_json()
-        elif choice == '14':
             edit_config()
-        elif choice == '15':
+        elif choice == '12':
             move_video_interactive()
-        elif choice == '16':
+        elif choice == '13':
             delete_video_to_trash()
-        elif choice == '17':
+        elif choice == '14':
             restore_from_trash()
-        elif choice == '18':
+        elif choice == '15':
             empty_trash()
-        elif choice == '19':
+        elif choice == '16':
             tally_db_with_files()
-        elif choice == '20':
-            print_colored("\nStarting web server at http://127.0.0.1:5000", COLORS.GREEN)
+        elif choice == '17':
+            print_colored("\nStarting web server at http://0.0.0.0:5000", COLORS.GREEN)
+            print_colored("Access from other devices using your local IP (e.g., http://192.168.1.100:5000)", COLORS.BLUE)
             print_colored("Press Ctrl+C to stop the server and return to CLI", COLORS.YELLOW)
             try:
-                run_web_server()
+                run_web_server(host='0.0.0.0')
             except KeyboardInterrupt:
                 print_colored("\n[✓] Web server stopped.", COLORS.GREEN)
             except Exception as e:
                 print_colored(f"[!] Failed to start web server: {e}", COLORS.RED)
-        elif choice == '21':
+        elif choice == '18':
             scan_duplicates()
-        elif choice == '22':
+        elif choice == '19':
             resolve_duplicates()
-        elif choice == '23':
+        elif choice == '20':
             backfill_hashes()
-        elif choice == '24':
+        elif choice == '21':
             show_dashboard()
-        elif choice == '25':
+        elif choice == '22':
             play_video()
-        elif choice == '26':
+        elif choice == '23':
             refresh_cookies()
-        elif choice == '27':
+        elif choice == '24':
             backfill_hash_naming()
-        elif choice == '28':
+        elif choice == '25':
             download_facebook()
-        elif choice == '29':
+        elif choice == '26':
             from .facebook_manager import facebook_menu
             facebook_menu()
-        elif choice == '30':
+        elif choice == '27':
             from .upload import scan_and_match_youtube_videos
             scan_and_match_youtube_videos()
-        elif choice == '31':
+        elif choice == '28':
             identifier = input(color_text("Enter Video ID, Syllabus ID, or mirror ID: ", COLORS.MAGENTA)).strip()
             if not identifier:
                 continue
@@ -173,7 +201,7 @@ def main():
                     print_colored(f"[✓] {msg}", COLORS.GREEN)
                 else:
                     print_colored(f"[!] {msg}", COLORS.RED)
-        elif choice == '32':
+        elif choice == '29':
             print_colored("[i] Syncing YouTube OAuth token to database...", COLORS.BLUE)
             import pickle
             from .upload import _save_oauth_to_db
@@ -188,6 +216,9 @@ def main():
                 print_colored(f"[!] File not found: {e}. Please run Option 31 first to generate the token.", COLORS.YELLOW)
             except Exception as e:
                 print_colored(f"[!] Sync failed: {e}", COLORS.RED)
+        elif choice == '30':
+            from .question_bank import question_bank_menu
+            question_bank_menu()
         elif choice == '0':
             print_colored("\nGoodbye! Have a great day! 👋", COLORS.CYAN)
             break

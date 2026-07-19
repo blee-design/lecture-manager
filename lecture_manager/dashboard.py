@@ -142,7 +142,7 @@ def show_dashboard():
     if missing == 0 and mismatched == 0 and unresolved == 0:
         print_colored("\n  ✅ Library is perfectly synced! All records have files in the right place.", COLORS.GREEN)
     else:
-        print_colored("\n  ⚠️ Some issues detected – run option 19 (Tally) to investigate and fix.", COLORS.YELLOW)
+        print_colored("\n  ⚠️ Some issues detected – run option 1 (Tally) to investigate and fix.", COLORS.YELLOW)
 
     # ----- Paper storage breakdown -----
     if paper_sizes:

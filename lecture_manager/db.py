@@ -86,6 +86,8 @@ def create_table():
         INDEX idx_type (type)
     );
     """)
+    from .question_bank import create_question_table
+    create_question_table()
     conn.commit()
     cursor.close()
     conn.close()
@@ -241,7 +243,8 @@ def migrate_table():
         if not cursor.fetchone():
             cursor.execute("ALTER TABLE oauth_credentials ADD COLUMN client_secrets TEXT NULL")
             print_colored("[✓] Added 'client_secrets' column to oauth_credentials.", COLORS.GREEN)
-
+    from .question_bank import create_question_table
+    create_question_table()
     cursor.close()
     conn.close()
 

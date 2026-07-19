@@ -1,8 +1,7 @@
 # web.py
 
-
 import os
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
 from .db import get_connection, TABLE_NAME, get_record_by_video_id
 from .file_manager import (
     get_target_path,
@@ -14,7 +13,15 @@ from .file_manager import (
 )
 from .facebook_manager import list_facebook_entries, get_facebook_entry_by_id, delete_facebook_entry, get_facebook_file_path
 from .youtube import fetch_youtube_title
-from .file_manager import collect_tally_data   # add this
+from .file_manager import collect_tally_data
+from .question_bank import (
+    get_all_questions,
+    get_question_by_id,
+    get_questions_by_criteria,
+    add_question,
+    update_question,
+    delete_question
+)
 
 # ===== PLAYBACK CONFIGURATION =====
 PLAYBACK_SOURCE = 'mirror_only'   # Change this to your preference
@@ -473,6 +480,96 @@ def facebook_delete(id):
     else:
         flash('Failed to delete entry', 'danger')
     return redirect(url_for('facebook_entries'))
+
+# ---------- Question Bank Routes ----------
+
+@app.route('/questions')
+def question_list():
+    search = request.args.get('search', '')
+    sort_by = request.args.get('sort', 'question_date')
+    order = request.args.get('order', 'desc')
+
+    if search:
+        rows = get_all_questions(search=search)
+    else:
+        rows = get_all_questions(sort_by=sort_by, order=order.upper())
+
+    return render_template('questions.html',
+                           questions=rows,
+                           search=search,
+                           sort_by=sort_by,
+                           order=order)
+
+@app.route('/question/<int:id>')
+def question_detail(id):
+    q = get_question_by_id(id)
+    if not q:
+        flash('Question not found', 'danger')
+        return redirect(url_for('question_list'))
+    return render_template('question_detail.html', question=q)
+
+@app.route('/question/paper')
+def question_paper():
+    date = request.args.get('date', '')
+    institution = request.args.get('institution', '')
+    level = request.args.get('level', '')
+    paper = request.args.get('paper', '')
+
+    if not any([date, institution, level, paper]):
+        return render_template('paper_form.html')
+
+    results = get_questions_by_criteria(date=date, institution=institution,
+                                        level=level, paper=paper)
+    if not results:
+        flash('No questions found for this paper.', 'warning')
+        return render_template('paper_form.html', date=date, institution=institution,
+                               level=level, paper=paper)
+
+    from collections import defaultdict
+    grouped = defaultdict(lambda: defaultdict(list))
+    for q in results:
+        grp = q.get('group', 'General')
+        subj = q.get('subject', '')
+        grouped[grp][subj].append(q)
+
+    return render_template('question_paper.html',
+                           grouped=grouped,
+                           date=date,
+                           institution=institution,
+                           level=level,
+                           paper=paper)
+
+@app.route('/question/suggestions')
+def question_suggestions():
+    """Return JSON suggestions for autocomplete, ranked by relevance."""
+    query = request.args.get('q', '').strip()
+    if len(query) < 2:
+        return jsonify([])
+
+    rows = get_all_questions(search=query)
+    suggestions_set = set()
+    for row in rows:
+        if row.get('question_date'):
+            suggestions_set.add(str(row['question_date']))
+        for field in ['institution', 'subject', 'paper', 'level', 'chapter', 'question_number']:
+            val = row.get(field)
+            if val:
+                suggestions_set.add(str(val))
+
+    query_lower = query.lower()
+
+    # Rank: exact/startswith first, then contains, then others (if any)
+    def relevance_score(s):
+        s_lower = s.lower()
+        if s_lower.startswith(query_lower):
+            return (0, s_lower)          # first priority
+        elif query_lower in s_lower:
+            return (1, s_lower)          # second priority
+        else:
+            return (2, s_lower)          # last (shouldn't happen often)
+
+    suggestions = sorted(suggestions_set, key=relevance_score)[:10]
+    return jsonify(suggestions)
 
 def run_web_server(host='127.0.0.1', port=5000):
     app.run(host=host, port=port, debug=False, threaded=True)

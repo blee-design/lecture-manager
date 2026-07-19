@@ -47,6 +47,7 @@ build/
 # Exported files (CSV, JSON)
 *.csv
 *.json
+*.txt
 !requirements.txt   # keep requirements.txt if you have it
 !setup.py           # keep setup.py
 

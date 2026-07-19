@@ -281,7 +281,7 @@ def _download_photos(url, output_dir=None):
 
     cookie_file = 'cookies.txt'
     if not os.path.exists(cookie_file):
-        print_colored("[!] cookies.txt not found. Please run option 26 to refresh cookies.", COLORS.RED)
+        print_colored("[!] cookies.txt not found. Please run option 23 to refresh cookies.", COLORS.RED)
         return
 
     # Default base directory

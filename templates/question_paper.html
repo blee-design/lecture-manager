@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row">
+  <div class="col">
+    <div class="card shadow border-0">
+      <!-- Paper Header -->
+      <div class="card-header bg-dark text-white text-center py-4">
+        <h1 class="display-5 fw-bold">{{ institution|upper }}</h1>
+        <h3 class="mt-2">{{ level }}</h3>
+        <h4 class="mt-1 text-muted">{{ date }}</h4>
+        {% if paper %}
+          <span class="badge bg-info text-dark mt-2 px-3 py-2">{{ paper }}</span>
+        {% endif %}
+        <hr class="my-3 border-light">
+        <p class="mb-0 small">
+          <i class="bi bi-clock"></i> Exam Date: {{ date }}
+          {% if paper %} | <i class="bi bi-file-text"></i> {{ paper }}{% endif %}
+        </p>
+      </div>
+
+      <div class="card-body p-4">
+        <!-- Instructions -->
+        <div class="alert alert-light border mb-4">
+          <i class="bi bi-info-circle"></i>
+          <strong>Instructions:</strong> Answer all questions. Each question carries marks as indicated.
+        </div>
+
+        <!-- Loop through groups and subjects -->
+        {% for group, subjects in grouped.items()|sort %}
+          <div class="group-section mt-4">
+            <h3 class="border-bottom pb-2 text-primary">
+              <i class="bi bi-tag"></i> Group: {{ group }}
+            </h3>
+
+            {% for subject, qs in subjects.items()|sort %}
+              <div class="subject-section mt-3">
+                <h4 class="text-secondary">
+                  <i class="bi bi-book"></i> {{ subject }}
+                </h4>
+                <ul class="list-unstyled ps-3">
+                  {% for q in qs|sort(attribute='question_number') %}
+                    <li class="question-item mb-4 p-3 bg-light rounded">
+                      <div class="d-flex align-items-start">
+                        <span class="fw-bold fs-5 me-3 text-primary">{{ q.question_number }}.</span>
+                        <div class="flex-grow-1">
+                          <!-- Marks and Chapter badges -->
+                          <div class="mb-2">
+                            {% if q.marks %}
+                              <span class="badge bg-warning text-dark fs-6 me-2">
+                                <i class="bi bi-star"></i> {{ q.marks }} marks
+                              </span>
+                            {% endif %}
+                            {% if q.chapter %}
+                              <span class="badge bg-secondary">
+                                <i class="bi bi-bookmark"></i> {{ q.chapter }}
+                              </span>
+                            {% endif %}
+                          </div>
+
+                          <!-- Question text: Nepali (English) in one line -->
+                          <div class="question-text">
+                            {% if q.nepali_transcription %}
+                              <span>{{ q.nepali_transcription }}</span>
+                            {% endif %}
+                            {% if q.english_transcription %}
+                              <span class="text-muted"> ({{ q.english_transcription }})</span>
+                            {% endif %}
+                          </div>
+                        </div>
+                      </div>
+                    </li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle"></i>
+            No questions found for this paper.
+          </div>
+        {% endfor %}
+      </div>
+
+      <!-- Footer -->
+      <div class="card-footer bg-light d-flex justify-content-between align-items-center">
+        <div>
+          <a href="{{ url_for('question_paper') }}" class="btn btn-secondary">
+            <i class="bi bi-arrow-left"></i> New Search
+          </a>
+          <a href="{{ url_for('question_list') }}" class="btn btn-outline-primary">
+            <i class="bi bi-list"></i> All Questions
+          </a>
+        </div>
+        <div class="text-muted small">
+          <i class="bi bi-printer"></i>
+          <span onclick="window.print()" style="cursor:pointer;">Print this paper</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Additional styles -->
+<style>
+  .question-item {
+    transition: background-color 0.2s;
+  }
+  .question-item:hover {
+    background-color: #e8f0fe !important;
+  }
+  .question-text {
+    font-size: 1.05rem;
+    line-height: 1.6;
+  }
+  .question-text .text-muted {
+    font-size: 0.95rem;
+  }
+  @media print {
+    .card {
+      border: none !important;
+    }
+    .card-header {
+      background-color: #f8f9fa !important;
+      color: #000 !important;
+    }
+    .btn, .navbar {
+      display: none !important;
+    }
+  }
+</style>
+{% endblock %}

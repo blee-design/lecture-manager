@@ -103,7 +103,7 @@ def download_video(record, output_dir=DOWNLOAD_DIR, video_id_to_download=None, s
     except subprocess.CalledProcessError as e:
         print_colored(f"[!] Download failed: {e}", COLORS.RED)
         print_colored("[i] If you get a 'Sign in to confirm you’re not a bot' error, try:", COLORS.YELLOW)
-        print_colored("    1. Run option 26 to refresh YouTube cookies.", COLORS.YELLOW)
+        print_colored("    1. Run option 23 to refresh YouTube cookies.", COLORS.YELLOW)
         print_colored("    2. Make sure you are logged into YouTube in your browser.", COLORS.YELLOW)
 
 def add_lecture():
@@ -654,7 +654,7 @@ def update_lecture():
                                 if result:
                                     print_colored("[✓] File moved to correct location.", COLORS.GREEN)
                                 else:
-                                    print_colored("[!] File move failed. You can manually move it later with option 15.", COLORS.YELLOW)
+                                    print_colored("[!] File move failed. You can manually move it later with option 12.", COLORS.YELLOW)
                 else:
                     conn = get_connection()
                     cursor = conn.cursor()
