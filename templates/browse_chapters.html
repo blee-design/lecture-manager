@@ -1,10 +1,25 @@
 {% extends "base.html" %}
 {% block content %}
 <h2>📂 Browse by Chapter</h2>
+
+<!-- Search box with autocomplete -->
+<div class="row mb-4">
+  <div class="col-md-6">
+    <div style="position: relative;">
+      <input type="text" id="chapter-search" class="form-control" placeholder="Search for a chapter..." autocomplete="off">
+      <div id="suggestions" class="list-group" style="position: absolute; z-index: 1000; width: 100%; max-height: 200px; overflow-y: auto; display: none;"></div>
+    </div>
+    <small class="text-muted">Type to filter the list, or click a suggestion to go directly to that chapter.</small>
+  </div>
+  <div class="col-md-6 text-end">
+    <span class="text-muted">{{ chapters|length }} chapters</span>
+  </div>
+</div>
+
 <div class="row">
   <div class="col">
     <div class="table-responsive">
-      <table class="table table-striped table-hover">
+      <table class="table table-striped table-hover" id="chapter-table">
         <thead>
           <tr>
             <th>Chapter</th>
@@ -17,7 +32,7 @@
         </thead>
         <tbody>
           {% for ch in chapters %}
-          <tr>
+          <tr data-chapter="{{ ch.name }}">
             <td>{{ ch.name }}</td>
             <td>{{ ch.subject }}</td>
             <td>{{ ch.paper }}</td>
@@ -37,4 +52,94 @@
     </div>
   </div>
 </div>
+
+<script>
+  const searchInput = document.getElementById('chapter-search');
+  const suggestionsBox = document.getElementById('suggestions');
+  const tableRows = document.querySelectorAll('#chapter-table tbody tr');
+
+  // Function to filter table rows
+  function filterTable(query) {
+    const q = query.toLowerCase().trim();
+    let hasVisible = false;
+    tableRows.forEach(row => {
+      const chapterCell = row.cells[0];
+      if (chapterCell) {
+        const text = chapterCell.textContent.trim().toLowerCase();
+        if (text.includes(q)) {
+          row.style.display = '';
+          hasVisible = true;
+        } else {
+          row.style.display = 'none';
+        }
+      }
+    });
+
+    // Handle "no results" message
+    let noResults = document.getElementById('no-results');
+    if (!hasVisible && q.length > 0) {
+      if (!noResults) {
+        const tbody = document.querySelector('#chapter-table tbody');
+        const tr = document.createElement('tr');
+        tr.id = 'no-results';
+        tr.innerHTML = `<td colspan="6" class="text-center text-muted">No chapters match your search.</td>`;
+        tbody.appendChild(tr);
+      } else {
+        noResults.style.display = '';
+      }
+    } else if (noResults) {
+      noResults.style.display = 'none';
+    }
+  }
+
+  // Live filter as user types
+  searchInput.addEventListener('input', function() {
+    const query = this.value.trim();
+    filterTable(query);
+
+    // Fetch suggestions for autocomplete
+    if (query.length >= 2) {
+      fetch('/question/chapter/suggestions?q=' + encodeURIComponent(query))
+        .then(response => response.json())
+        .then(data => {
+          suggestionsBox.innerHTML = '';
+          if (data.length === 0) {
+            suggestionsBox.style.display = 'none';
+            return;
+          }
+          data.forEach(item => {
+            const div = document.createElement('div');
+            div.className = 'list-group-item list-group-item-action';
+            div.textContent = item;
+            div.style.cursor = 'pointer';
+            div.addEventListener('click', function() {
+              // Redirect to the chapter view
+              window.location.href = '/questions/chapter/' + encodeURIComponent(this.textContent);
+            });
+            suggestionsBox.appendChild(div);
+          });
+          suggestionsBox.style.display = 'block';
+        });
+    } else {
+      suggestionsBox.style.display = 'none';
+    }
+  });
+
+  // Hide suggestions when clicking outside
+  document.addEventListener('click', function(e) {
+    if (!suggestionsBox.contains(e.target) && e.target !== searchInput) {
+      suggestionsBox.style.display = 'none';
+    }
+  });
+
+  // Press Enter to go to the first suggestion
+  searchInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      const firstSuggestion = suggestionsBox.querySelector('.list-group-item');
+      if (firstSuggestion) {
+        window.location.href = '/questions/chapter/' + encodeURIComponent(firstSuggestion.textContent);
+      }
+    }
+  });
+</script>
 {% endblock %}

@@ -982,8 +982,6 @@ def import_questions_json():
     print_colored(f"[✓] Import complete: {added} added, {updated} updated, {skipped} skipped.", COLORS.GREEN)
 
 # ---------- Chapter browsing ----------
-# ---------- Chapter browsing ----------
-
 def get_distinct_chapters():
     """Return a list of distinct chapter strings from the questions table."""
     conn = get_connection()
@@ -1010,3 +1008,17 @@ def get_questions_by_chapter(chapter_code):
     cursor.close()
     conn.close()
     return rows
+
+def get_distinct_chapters_like(search_term):
+    """Return distinct chapter strings that contain the search term."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    like = f"%{search_term}%"
+    cursor.execute(
+        "SELECT DISTINCT chapter FROM questions WHERE chapter LIKE %s ORDER BY chapter LIMIT 10",
+        (like,)
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [row[0] for row in rows]

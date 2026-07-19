@@ -607,5 +607,15 @@ def questions_by_chapter(chapter_code):
                            grouped=grouped,
                            chapter_code=chapter_code)
 
+@app.route('/question/chapter/suggestions')
+def chapter_suggestions():
+    """Return JSON suggestions for chapter autocomplete."""
+    query = request.args.get('q', '').strip()
+    if len(query) < 2:
+        return jsonify([])
+    from .question_bank import get_distinct_chapters_like
+    suggestions = get_distinct_chapters_like(query)
+    return jsonify(suggestions)
+
 def run_web_server(host='127.0.0.1', port=5000):
     app.run(host=host, port=port, debug=False, threaded=True)
