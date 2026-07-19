@@ -53,16 +53,16 @@ def create_question_table():
     print_colored("[✓] Question table ready.", COLORS.GREEN)
 
 def add_question(date, institution, subject, paper, group, marks, chapter,
-                 question_number, nepali, english, level):
+                 question_number, nepali, english, level, notes=None):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(f"""
         INSERT INTO {TABLE_NAME}
         (question_date, institution, subject, paper, `group`, marks, chapter,
-         question_number, nepali_transcription, english_transcription, level)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+         question_number, nepali_transcription, english_transcription, level, notes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (date, institution, subject, paper, group, marks, chapter,
-          question_number, nepali, english, level))
+          question_number, nepali, english, level, notes))
     conn.commit()
     new_id = cursor.lastrowid
     cursor.close()
@@ -197,8 +197,12 @@ def _display_single_question(q):
 
     q_no = q.get('question_number', '')
     nepali = q.get('nepali_transcription', '')
+    if q.get('notes'):
+            print(f"    {color_text('📝 Note:', COLORS.YELLOW)} {q['notes']}")
     english = q.get('english_transcription', '')
     marks = q.get('marks', '')
+    if q.get('notes'):
+        print(f"    {color_text('📝 Note:', COLORS.YELLOW)} {q['notes']}")
 
     print("\n" + "─" * 70)
     line = f"  {color_text(f'Q.No. {q_no}.', COLORS.CYAN, bold=True)}"
@@ -384,11 +388,11 @@ def question_bank_menu():
         print("  5. Advanced search (multiple fields)")
         print("  6. Update question")
         print("  7. Delete question")
-        print(" 10. Import/Export (CSV, JSON, TXT)")
+        print("  8. Import/Export (CSV, JSON, TXT)")
         print("  0. Return to main menu")
         print("═" * 50)
 
-        choice = input(color_text("Choose an option (0-10): ", COLORS.MAGENTA)).strip()
+        choice = input(color_text("Choose an option (0-8): ", COLORS.MAGENTA)).strip()
 
         if choice == '1':
             add_question_interactive()
@@ -404,7 +408,7 @@ def question_bank_menu():
             update_question_interactive()
         elif choice == '7':
             delete_question_interactive()
-        elif choice == '10':
+        elif choice == '8':
             import_export_submenu()
         elif choice == '0':
             print_colored("Returning to main menu.", COLORS.YELLOW)
@@ -433,17 +437,27 @@ def add_question_interactive():
     subject = _prompt_field("Subject: ")
     paper = _prompt_field("Paper: ")
     group = _prompt_field("Group: ")
-    marks = _prompt_field("Marks (numeric): ")
-    if marks and marks.isdigit():
-        marks = int(marks)
-    else:
-        marks = None
+
+    # Marks with validation
+    marks = None
+    while True:
+        marks_raw = input(color_text("Marks (numeric, press Enter to skip): ", COLORS.MAGENTA)).strip()
+        if marks_raw == '':
+            break
+        if marks_raw.isdigit():
+            marks = int(marks_raw)
+            break
+        else:
+            print_colored("[!] Marks must be a number. Please try again.", COLORS.YELLOW)
 
     chapter = _prompt_field("Chapter: ")
     question_number = _prompt_field("Question Number: ")
     nepali = _prompt_field("Nepali Transcription: ")
     english = _prompt_field("English Transcription: ")
     level = _prompt_field("Level: ")
+    notes = input(color_text("Notes (optional, press Enter to skip): ", COLORS.MAGENTA)).strip()
+    if not notes:
+        notes = None
 
     qid = add_question(date, institution, subject, paper, group, marks,
                        chapter, question_number, nepali, english, level)
@@ -547,31 +561,89 @@ def update_question_interactive():
         print_colored("[!] Question not found.", COLORS.RED)
         return
 
-    print("\nCurrent values:")
-    for key, val in row.items():
-        if key not in ('id', 'created_at', 'updated_at'):
-            print(f"  {key:20}: {val}")
+    # Define fields in a specific order
+    fields = [
+        'question_date',
+        'institution',
+        'subject',
+        'paper',
+        'group',
+        'marks',
+        'chapter',
+        'question_number',
+        'nepali_transcription',
+        'english_transcription',
+        'level',
+        'notes'
+    ]
 
-    print("\nEnter new values (press Enter to keep current):")
     updates = {}
-    for key in ['question_date', 'institution', 'subject', 'paper', 'group', 'marks', 'chapter',
-                'question_number', 'nepali_transcription', 'english_transcription', 'level']:
-        current = row.get(key, '')
-        new_val = input(color_text(f"{key} [{current}]: ", COLORS.MAGENTA)).strip()
-        if new_val:
-            if key == 'marks' and new_val.isdigit():
-                updates[key] = int(new_val)
+
+    while True:
+        print("\n" + "═" * 50)
+        print_colored("  UPDATE QUESTION", COLORS.CYAN, bold=True)
+        print("═" * 50)
+
+        # Show current values with numbers
+        for i, field in enumerate(fields, 1):
+            val = row.get(field)
+            if val is None or val == '':
+                display_val = "None"
             else:
-                updates[key] = new_val
+                # Truncate long text for display
+                display_val = str(val)
+                if len(display_val) > 60:
+                    display_val = display_val[:57] + "..."
+            print(f"  {i:2}. {field:22}: {display_val}")
 
-    if not updates:
-        print_colored("[i] No changes made.", COLORS.YELLOW)
-        return
+        print("\n" + "─" * 50)
+        print("  Enter the number of the field to edit, or 0 to save and exit.")
+        print("  0. " + color_text("Save changes and exit", COLORS.GREEN))
+        print("─" * 50)
 
-    if update_question(int(qid), **updates):
-        print_colored("[✓] Question updated.", COLORS.GREEN)
-    else:
-        print_colored("[!] Update failed.", COLORS.RED)
+        choice = input(color_text("Choose field (0-12): ", COLORS.MAGENTA)).strip()
+
+        if choice == '0':
+            if not updates:
+                print_colored("[i] No changes made.", COLORS.YELLOW)
+                return
+            if update_question(int(qid), **updates):
+                print_colored("[✓] Question updated successfully.", COLORS.GREEN)
+            else:
+                print_colored("[!] Update failed.", COLORS.RED)
+            return
+
+        if not choice.isdigit():
+            print_colored("[!] Please enter a number.", COLORS.RED)
+            continue
+
+        idx = int(choice)
+        if idx < 1 or idx > len(fields):
+            print_colored(f"[!] Please enter a number between 1 and {len(fields)}.", COLORS.RED)
+            continue
+
+        field = fields[idx - 1]
+        current = row.get(field, '')
+
+        # Special handling for marks
+        if field == 'marks':
+            new_val = input(color_text(f"New value for {field} [{current}]: ", COLORS.MAGENTA)).strip()
+            if new_val == '':
+                continue
+            if not new_val.isdigit():
+                print_colored("[!] Marks must be a number. Keeping current value.", COLORS.YELLOW)
+                continue
+            updates[field] = int(new_val)
+            row[field] = int(new_val)  # Update display
+            print_colored(f"[✓] {field} will be updated to {new_val}", COLORS.GREEN)
+
+        else:
+            new_val = input(color_text(f"New value for {field} [{current}]: ", COLORS.MAGENTA)).strip()
+            if new_val == '':
+                continue
+            updates[field] = new_val
+            row[field] = new_val  # Update display
+            print_colored(f"[✓] {field} will be updated to: {new_val}", COLORS.GREEN)
 
 def delete_question_interactive():
     qid = input(color_text("Enter question ID to delete: ", COLORS.MAGENTA)).strip()
@@ -908,3 +980,33 @@ def import_questions_json():
     cursor.close()
     conn.close()
     print_colored(f"[✓] Import complete: {added} added, {updated} updated, {skipped} skipped.", COLORS.GREEN)
+
+# ---------- Chapter browsing ----------
+# ---------- Chapter browsing ----------
+
+def get_distinct_chapters():
+    """Return a list of distinct chapter strings from the questions table."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"SELECT DISTINCT chapter FROM {TABLE_NAME} WHERE chapter IS NOT NULL AND chapter != '' ORDER BY chapter")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [row[0] for row in rows]
+
+def get_questions_by_chapter(chapter_code):
+    """
+    Return all questions that contain the given chapter code.
+    We use LIKE so that 'P3-B2.3' matches 'ICT (P3-B2.3)'.
+    """
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(f"""
+        SELECT * FROM {TABLE_NAME}
+        WHERE chapter LIKE %s
+        ORDER BY question_number
+    """, (f"%{chapter_code}%",))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows

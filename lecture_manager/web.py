@@ -571,5 +571,41 @@ def question_suggestions():
     suggestions = sorted(suggestions_set, key=relevance_score)[:10]
     return jsonify(suggestions)
 
+@app.route('/questions/browse')
+def browse_chapters():
+    """List all chapters with question counts."""
+    from .question_bank import get_distinct_chapters, get_questions_by_chapter
+    chapters = get_distinct_chapters()
+    chapter_data = []
+    for ch in chapters:
+        qs = get_questions_by_chapter(ch)
+        chapter_data.append({
+            'name': ch,
+            'count': len(qs),
+            'subject': qs[0]['subject'] if qs else '',
+            'paper': qs[0]['paper'] if qs else '',
+            'group': qs[0]['group'] if qs else '',
+        })
+    return render_template('browse_chapters.html', chapters=chapter_data)
+
+@app.route('/questions/chapter/<path:chapter_code>')
+def questions_by_chapter(chapter_code):
+    """Show all questions for a specific chapter."""
+    from .question_bank import get_questions_by_chapter
+    questions = get_questions_by_chapter(chapter_code)
+    if not questions:
+        flash('No questions found for this chapter.', 'warning')
+        return redirect(url_for('browse_chapters'))
+    # Group by subject -> group
+    grouped = {}
+    for q in questions:
+        subject = q.get('subject', 'Unknown')
+        group = q.get('group', 'General')
+        grouped.setdefault(subject, {}).setdefault(group, []).append(q)
+    return render_template('questions_by_chapter.html',
+                           questions=questions,
+                           grouped=grouped,
+                           chapter_code=chapter_code)
+
 def run_web_server(host='127.0.0.1', port=5000):
     app.run(host=host, port=port, debug=False, threaded=True)

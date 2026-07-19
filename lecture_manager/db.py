@@ -245,6 +245,10 @@ def migrate_table():
             print_colored("[✓] Added 'client_secrets' column to oauth_credentials.", COLORS.GREEN)
     from .question_bank import create_question_table
     create_question_table()
+    cursor.execute("SHOW COLUMNS FROM questions LIKE 'notes'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE questions ADD COLUMN notes TEXT NULL")
+        print_colored("[✓] Added 'notes' column to questions table.", COLORS.GREEN)
     cursor.close()
     conn.close()
 

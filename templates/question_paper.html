@@ -7,13 +7,15 @@
       <div class="card-header bg-dark text-white text-center py-4">
         <h1 class="display-5 fw-bold">{{ institution|upper }}</h1>
         <h3 class="mt-2">{{ level }}</h3>
-        <h4 class="mt-1 text-muted">{{ date }}</h4>
+        <h4 class="mt-1 text-muted">
+          {% if date %}<i class="bi bi-calendar"></i> Exam Date: {{ date }}{% else %}Exam Date: <span class="text-warning">(not specified)</span>{% endif %}
+        </h4>
         {% if paper %}
           <span class="badge bg-info text-dark mt-2 px-3 py-2">{{ paper }}</span>
         {% endif %}
         <hr class="my-3 border-light">
         <p class="mb-0 small">
-          <i class="bi bi-clock"></i> Exam Date: {{ date }}
+          <i class="bi bi-clock"></i> Exam Date: {{ date if date else 'N/A' }}
           {% if paper %} | <i class="bi bi-file-text"></i> {{ paper }}{% endif %}
         </p>
       </div>
@@ -40,6 +42,11 @@
                 <ul class="list-unstyled ps-3">
                   {% for q in qs|sort(attribute='question_number') %}
                     <li class="question-item mb-4 p-3 bg-light rounded">
+                      {% if q.notes %}
+                        <div class="mt-1 text-warning small">
+                          <i class="bi bi-pencil"></i> {{ q.notes }}
+                        </div>
+                      {% endif %}
                       <div class="d-flex align-items-start">
                         <span class="fw-bold fs-5 me-3 text-primary">{{ q.question_number }}.</span>
                         <div class="flex-grow-1">

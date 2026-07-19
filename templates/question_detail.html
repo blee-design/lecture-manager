@@ -53,11 +53,20 @@
             {% if question.english_transcription %}
               <p class="text-muted mb-0">({{ question.english_transcription }})</p>
             {% endif %}
+            {% if question.notes %}
+              <div class="mt-2 text-warning">
+                <i class="bi bi-pencil"></i> <strong>Note:</strong> {{ question.notes }}
+              </div>
+            {% endif %}
           </div>
         </div>
       </div>
       <div class="card-footer text-end">
-        <a href="{{ url_for('question_list') }}" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Back to list</a>
+        {% if back_url %}
+          <a href="{{ back_url }}" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Back</a>
+        {% else %}
+          <a href="{{ url_for('question_list') }}" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Back to list</a>
+        {% endif %}
       </div>
     </div>
   </div>
