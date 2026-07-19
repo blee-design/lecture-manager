@@ -72,7 +72,7 @@ PAPER_CONFIG = {
         "folder": "Third Paper: Research Methodologies, ICT and Banking Laws & Regulation",
         "subjects": PAPER_III_SUBJECTS
     }
-}
+    }
 
 # Keywords for detection
 PAPER_KEYWORDS = {
@@ -94,7 +94,172 @@ PAPER_KEYWORDS = {
         "research methodology", "information technology", "ict",
         "banking laws", "regulations"
     ]
-}
+    }
+
+def get_paper_breakdown():
+    """Return a breakdown of records and files per paper, excluding files outside paper folders."""
+    data = collect_tally_data()
+    records = data['records']
+    all_files = data['all_files']  # but we'll count only files in paper folders
+    correctly_placed = data['correctly_placed']
+    missing = data['missing']
+    orphan = data['orphan']
+
+    papers = ['pretest', 'paper_i', 'paper_ii', 'paper_iii']
+    breakdown = {p: {'records': 0, 'files': 0, 'correctly_placed': 0, 'missing': 0, 'orphan': 0} for p in papers}
+    breakdown['unknown'] = {'records': 0, 'files': 0, 'correctly_placed': 0, 'missing': 0, 'orphan': 0}
+
+    # Count records per paper
+    for rec in records:
+        paper = rec.get('paper')
+        if paper in breakdown:
+            breakdown[paper]['records'] += 1
+        else:
+            breakdown['unknown']['records'] += 1
+
+    # Count correctly placed per paper
+    for rec in correctly_placed:
+        paper = rec.get('paper')
+        if paper in breakdown:
+            breakdown[paper]['correctly_placed'] += 1
+        else:
+            breakdown['unknown']['correctly_placed'] += 1
+
+    # Count missing per paper
+    for rec in missing:
+        paper = rec.get('paper')
+        if paper in breakdown:
+            breakdown[paper]['missing'] += 1
+        else:
+            breakdown['unknown']['missing'] += 1
+
+    # Count orphan files per paper (by folder path)
+    for fp in orphan:
+        found = False
+        for paper_key, config in PAPER_CONFIG.items():
+            folder = config['folder']
+            if folder in fp:
+                breakdown[paper_key]['orphan'] += 1
+                found = True
+                break
+        if not found:
+            breakdown['unknown']['orphan'] += 1
+
+    # Count total video files per paper (only in paper folders)
+    for paper_key, config in PAPER_CONFIG.items():
+        folder = config['folder']
+        full_path = os.path.join(ROOT_DIR, folder)
+        count = 0
+        if os.path.exists(full_path):
+            for root, _, files in os.walk(full_path):
+                for f in files:
+                    if f.lower().endswith(('.mp4', '.mkv', '.webm', '.avi', '.mov')):
+                        count += 1
+        breakdown[paper_key]['files'] = count
+
+    # Unknown files: 0 (we don't count files outside paper folders)
+    breakdown['unknown']['files'] = 0
+
+    return breakdown
+
+def show_paper_breakdown():
+    """Display a formatted paper breakdown with fixed column alignment."""
+    breakdown = get_paper_breakdown()
+
+    paper_names = {
+        'pretest': 'Pretest Officer',
+        'paper_i': 'Paper I (Economics)',
+        'paper_ii': 'Paper II (Management)',
+        'paper_iii': 'Paper III (Research, ICT, Banking)',
+        'unknown': 'Unknown (no paper)'
+    }
+
+    # Build data rows
+    rows = []
+    for paper_key, data in breakdown.items():
+        name = paper_names.get(paper_key, paper_key)
+        rows.append({
+            'name': name,
+            'records': data['records'],
+            'files': data['files'],
+            'matched': data['correctly_placed'],
+            'missing': data['missing'],
+            'orphan': data['orphan']
+        })
+
+    # Determine column widths (max of header and data)
+    width_name = max(max(len(row['name']) for row in rows), len('Paper'))
+    width_records = max(max(len(str(row['records'])) for row in rows), len('Records'))
+    width_files = max(max(len(str(row['files'])) for row in rows), len('Files'))
+    width_matched = max(max(len(str(row['matched'])) for row in rows), len('Matched'))
+    width_missing = max(max(len(str(row['missing'])) for row in rows), len('Missing'))
+    width_orphan = max(max(len(str(row['orphan'])) for row in rows), len('Orphan'))
+
+    # Column spacing (constant gap between columns)
+    SEP = 4  # spaces between columns
+
+    # Calculate total width for the separator line
+    total_width = (width_name + SEP) + (width_records + SEP) + (width_files + SEP) + (width_matched + SEP) + (width_missing + SEP) + width_orphan + 2  # leading spaces
+
+    print("\n" + "═" * total_width)
+    print_colored("  📊 PAPER BREAKDOWN", COLORS.CYAN, bold=True)
+    print("═" * total_width)
+
+    # Header
+    header = (f"  {'Paper':<{width_name}}" + " " * SEP +
+              f"{'Records':>{width_records}}" + " " * SEP +
+              f"{'Files':>{width_files}}" + " " * SEP +
+              f"{'Matched':>{width_matched}}" + " " * SEP +
+              f"{'Missing':>{width_missing}}" + " " * SEP +
+              f"{'Orphan':>{width_orphan}}")
+    print(header)
+    print("─" * total_width)
+
+    # Data rows
+    for row in rows:
+        # Colour based on missing/orphan
+        if row['missing'] == 0 and row['orphan'] == 0:
+            colour = COLORS.GREEN
+        elif row['missing'] == 0 and row['orphan'] > 0:
+            colour = COLORS.YELLOW
+        else:
+            colour = COLORS.RED
+
+        line = (f"  {color_text(row['name'][:width_name], colour):<{width_name}}" + " " * SEP +
+                f"{row['records']:>{width_records}}" + " " * SEP +
+                f"{row['files']:>{width_files}}" + " " * SEP +
+                f"{row['matched']:>{width_matched}}" + " " * SEP +
+                f"{row['missing']:>{width_missing}}" + " " * SEP +
+                f"{row['orphan']:>{width_orphan}}")
+        print(line)
+
+    print("═" * total_width)
+
+    # Totals
+    total_records = sum(row['records'] for row in rows)
+    total_files = sum(row['files'] for row in rows)
+    total_matched = sum(row['matched'] for row in rows)
+    total_missing = sum(row['missing'] for row in rows)
+    total_orphan = sum(row['orphan'] for row in rows)
+
+    total_line = (f"  {'TOTAL':<{width_name}}" + " " * SEP +
+                  f"{total_records:>{width_records}}" + " " * SEP +
+                  f"{total_files:>{width_files}}" + " " * SEP +
+                  f"{total_matched:>{width_matched}}" + " " * SEP +
+                  f"{total_missing:>{width_missing}}" + " " * SEP +
+                  f"{total_orphan:>{width_orphan}}")
+    print(total_line)
+    print("═" * total_width)
+
+    # Discrepancy note
+    if total_files != total_records:
+        diff = abs(total_files - total_records)
+        print_colored(f"[i] There are {diff} more {'files' if total_files > total_records else 'records'} than {'records' if total_files > total_records else 'files'}. Run Option 19 (Tally) to investigate.", COLORS.YELLOW)
+    elif total_missing == 0 and total_orphan == 0:
+        print_colored("✅ All records have matching files in the right place.", COLORS.GREEN)
+    else:
+        print_colored("[i] Check missing/orphan counts for details.", COLORS.BLUE)
+    print()
 
 def collect_facebook_tally_data():
     facebook_dir = os.path.join(ROOT_DIR, 'facebook')

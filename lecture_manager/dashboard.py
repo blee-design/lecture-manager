@@ -6,7 +6,7 @@ import glob
 from datetime import datetime
 from collections import Counter
 from .db import get_connection, TABLE_NAME
-from .file_manager import ROOT_DIR, collect_tally_data, PAPER_CONFIG
+from .file_manager import ROOT_DIR, collect_tally_data, PAPER_CONFIG, show_paper_breakdown
 from .utils import print_colored, color_text, COLORS
 
 def get_storage_usage(path):
@@ -91,7 +91,7 @@ def get_subject_counts(limit=5):
     return rows
 
 def show_dashboard():
-    """Display a beautiful terminal dashboard with library statistics."""
+    """Display a beautiful terminal dashboard with library statistics and paper breakdown."""
     print("\n" + "═" * 60)
     print_colored("  📊 LECTURE LIBRARY DASHBOARD", COLORS.CYAN, bold=True)
     print("═" * 60)
@@ -142,7 +142,7 @@ def show_dashboard():
     if missing == 0 and mismatched == 0 and unresolved == 0:
         print_colored("\n  ✅ Library is perfectly synced! All records have files in the right place.", COLORS.GREEN)
     else:
-        print_colored("\n  ⚠️ Some issues detected – run option 20 (Tally) to investigate and fix.", COLORS.YELLOW)
+        print_colored("\n  ⚠️ Some issues detected – run option 19 (Tally) to investigate and fix.", COLORS.YELLOW)
 
     # ----- Paper storage breakdown -----
     if paper_sizes:
@@ -197,11 +197,7 @@ def show_dashboard():
             bar = "█" * bar_len
             print(f"  {subject[:25]:<25} {bar} {count}")
 
-    print("\n" + "═" * 60)
-    print_colored("  Dashboard generated at " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"), COLORS.BLUE)
-    print("═" * 60 + "\n")
-
-        # ---- Facebook stats ----
+    # ----- Facebook stats -----
     from .file_manager import collect_facebook_tally_data
     fb_tally = collect_facebook_tally_data()
     if fb_tally['total_entries'] > 0 or fb_tally['orphan'] or fb_tally['missing']:
@@ -216,3 +212,12 @@ def show_dashboard():
             print_colored(f"  🗑️ Orphan       : {len(fb_tally['orphan'])} files", COLORS.YELLOW)
         if not fb_tally['missing'] and not fb_tally['orphan']:
             print_colored("  ✅ All Facebook entries are synced!", COLORS.GREEN)
+
+    # ===== NEW: PAPER BREAKDOWN =====
+    # This will print the same table as Option 33.
+    show_paper_breakdown()
+
+    # ----- Final footer -----
+    print("\n" + "═" * 60)
+    print_colored("  Dashboard generated at " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"), COLORS.BLUE)
+    print("═" * 60 + "\n")

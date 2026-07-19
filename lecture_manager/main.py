@@ -14,8 +14,9 @@ from .file_manager import (
     move_video_interactive,
     delete_video_to_trash, restore_from_trash, empty_trash,
     tally_db_with_files, scan_duplicates, resolve_duplicates, backfill_hashes, play_video,
-    backfill_hash_naming   # <-- new
+    backfill_hash_naming, show_paper_breakdown
 )
+
 # NEW: import web server runner
 from .web import run_web_server
 from .utils import print_colored, color_text, COLORS
