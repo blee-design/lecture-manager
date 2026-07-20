@@ -53,7 +53,43 @@ def create_question_table():
     print_colored("[✓] Question table ready.", COLORS.GREEN)
 
 def add_question(date, institution, subject, paper, group, marks, chapter,
-                 question_number, nepali, english, level, notes=None):
+                 question_number, nepali, english, level, notes=None,
+                 force=False):
+    """
+    Add a new question, unless a duplicate exists (date + institution + level + question_number).
+    If force=True, skip duplicate check and insert anyway.
+    Returns the new ID or existing ID if duplicate.
+    """
+    if not force:
+        existing = check_duplicate(date, institution, level, question_number)
+        if existing:
+            print_colored(f"[!] Duplicate found! Question already exists with ID: {existing}", COLORS.YELLOW)
+            overwrite = input(color_text("Overwrite existing question? (y/n): ", COLORS.MAGENTA)).strip().lower()
+            if overwrite == 'y':
+                # Update existing question
+                updates = {
+                    'subject': subject,
+                    'paper': paper,
+                    'group': group,
+                    'marks': marks,
+                    'chapter': chapter,
+                    'nepali_transcription': nepali,
+                    'english_transcription': english,
+                    'notes': notes
+                }
+                # Remove None values
+                updates = {k: v for k, v in updates.items() if v is not None}
+                if update_question(existing, **updates):
+                    print_colored(f"[✓] Question {existing} updated.", COLORS.GREEN)
+                    return existing
+                else:
+                    print_colored("[!] Update failed.", COLORS.RED)
+                    return None
+            else:
+                print_colored("[i] Keeping existing question. No changes made.", COLORS.YELLOW)
+                return existing
+
+    # No duplicate, or force=True – insert new
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(f"""
@@ -67,6 +103,7 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
     new_id = cursor.lastrowid
     cursor.close()
     conn.close()
+    print_colored(f"[✓] Question added with ID: {new_id}", COLORS.GREEN)
     return new_id
 
 def get_question_by_id(qid):
@@ -78,7 +115,7 @@ def get_question_by_id(qid):
     conn.close()
     return row
 
-def get_questions_by_criteria(date=None, institution=None, level=None, paper=None, group=None, subject=None, question_number=None):
+def get_questions_by_criteria(date=None, institution=None, level=None, paper=None, group=None, subject=None, question_number=None, chapter=None):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     conditions = []
@@ -104,6 +141,9 @@ def get_questions_by_criteria(date=None, institution=None, level=None, paper=Non
     if question_number:
         conditions.append("question_number LIKE %s")
         params.append(f"%{question_number}%")
+    if chapter:
+        conditions.append("chapter LIKE %s")
+        params.append(f"%{chapter}%")
 
     sql = f"SELECT * FROM {TABLE_NAME}"
     if conditions:
@@ -153,15 +193,23 @@ def update_question(qid, **kwargs):
                 fields.append(f"{key} = %s")
             values.append(val)
     if not fields:
-        return False
+        return 'no_fields'
     values.append(qid)
     sql = f"UPDATE {TABLE_NAME} SET {', '.join(fields)} WHERE id = %s"
-    cursor.execute(sql, values)
-    conn.commit()
-    affected = cursor.rowcount
-    cursor.close()
-    conn.close()
-    return affected > 0
+    try:
+        cursor.execute(sql, values)
+        conn.commit()
+        affected = cursor.rowcount
+        cursor.close()
+        conn.close()
+        if affected > 0:
+            return 'updated'
+        else:
+            return 'no_change'
+    except Exception as e:
+        cursor.close()
+        conn.close()
+        return f'error: {e}'
 
 def delete_question(qid):
     conn = get_connection()
@@ -173,8 +221,31 @@ def delete_question(qid):
     conn.close()
     return affected > 0
 
-# ---------- Display helpers ----------
+def check_duplicate(date, institution, level, question_number, exclude_id=None):
+    """
+    Check if a question already exists with the same date, institution, level, and question number.
+    Returns the existing question ID if found, else None.
+    """
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    sql = """
+        SELECT id FROM questions
+        WHERE question_date = %s
+        AND institution = %s
+        AND level = %s
+        AND question_number = %s
+    """
+    params = [date, institution, level, question_number]
+    if exclude_id:
+        sql += " AND id != %s"
+        params.append(exclude_id)
+    cursor.execute(sql, params)
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return row['id'] if row else None
 
+# ---------- Display helpers ----------
 def _display_single_question(q):
     print("\n" + "═" * 70)
     print_colored("  QUESTION DETAILS", COLORS.CYAN, bold=True)
@@ -197,12 +268,9 @@ def _display_single_question(q):
 
     q_no = q.get('question_number', '')
     nepali = q.get('nepali_transcription', '')
-    if q.get('notes'):
-            print(f"    {color_text('📝 Note:', COLORS.YELLOW)} {q['notes']}")
     english = q.get('english_transcription', '')
     marks = q.get('marks', '')
-    if q.get('notes'):
-        print(f"    {color_text('📝 Note:', COLORS.YELLOW)} {q['notes']}")
+    notes = q.get('notes')
 
     print("\n" + "─" * 70)
     line = f"  {color_text(f'Q.No. {q_no}.', COLORS.CYAN, bold=True)}"
@@ -210,10 +278,15 @@ def _display_single_question(q):
         line += f" {color_text(f'[{marks} marks]', COLORS.YELLOW)}"
     print(line)
 
-    if nepali:
-        print(f"    {color_text('नेपाली:', COLORS.MAGENTA)} {nepali}")
+    # ---- Combined question text ----
+    question_text = nepali
     if english:
-        print(f"    {color_text('English:', COLORS.BLUE)} {english}")
+        question_text += f" ({english})"
+    print(f"    {question_text}")
+
+    if notes:
+        print(f"    {color_text('📝 Note:', COLORS.YELLOW)} {notes}")
+
     print("─" * 70)
 
 def _display_paper(questions):
@@ -250,6 +323,7 @@ def _display_paper(questions):
                 english = q.get('english_transcription', '')
                 marks = q.get('marks', '')
                 chapter = q.get('chapter', '')
+                notes = q.get('notes')
 
                 line = f"      {color_text(f'Q.No. {q_no}.', COLORS.CYAN, bold=True)}"
                 if marks and str(marks).isdigit():
@@ -259,14 +333,17 @@ def _display_paper(questions):
                 if chapter:
                     print(f"        {color_text('Chapter:', COLORS.GREEN)} {chapter}")
 
-                if nepali:
-                    print(f"        नेपाली: {nepali}")
+                # ---- Combined question (Nepali + English) ----
+                question_text = nepali
                 if english:
-                    print(f"        English: {english}")
+                    question_text += f" ({english})"
+                print(f"        {question_text}")
+
+                if notes:
+                    print(f"        {color_text('📝 Note:', COLORS.YELLOW)} {notes}")
                 print()
 
 # ---------- Quick parser ----------
-
 def parse_quick_input(text):
     parts = text.strip().split()
     if len(parts) < 3:
@@ -459,9 +536,12 @@ def add_question_interactive():
     if not notes:
         notes = None
 
+    force = input(color_text("Force add even if duplicate? (y/n, default n): ", COLORS.MAGENTA)).strip().lower() == 'y'
+
     qid = add_question(date, institution, subject, paper, group, marks,
-                       chapter, question_number, nepali, english, level)
-    print_colored(f"[✓] Question added with ID: {qid}", COLORS.GREEN)
+                       chapter, question_number, nepali, english, level, notes, force)
+    if qid:
+        print_colored(f"[✓] Question processed with ID: {qid}", COLORS.GREEN)
 
 def view_all_questions_interactive():
     print("\nSort by:")
@@ -523,33 +603,95 @@ def advanced_search_interactive():
     print("\n" + "═" * 50)
     print_colored("  ADVANCED SEARCH", COLORS.CYAN, bold=True)
     print("═" * 50)
-    print("Enter any combination of filters (leave blank for none).\n")
+    print("Set search criteria by choosing a field number, then enter the value.")
+    print("Leave value blank to clear that criterion.")
+    print("After setting criteria, choose '9. Search' to run the search.\n")
 
-    date = _prompt_field("Date (YYYY-MM-DD): ")
-    institution = _prompt_field("Institution (keyword): ")
-    level = _prompt_field("Level (keyword): ")
-    paper = _prompt_field("Paper (keyword): ")
-    group = _prompt_field("Group: ")
-    subject = _prompt_field("Subject (keyword): ")
-    question_number = _prompt_field("Question Number: ")
+    fields = ['date', 'institution', 'level', 'paper', 'group', 'subject', 'question_number', 'chapter']
+    display_names = {
+        'date': 'question_date',
+        'institution': 'institution',
+        'level': 'level',
+        'paper': 'paper',
+        'group': 'group',
+        'subject': 'subject',
+        'question_number': 'question_number',
+        'chapter': 'chapter'
+    }
+    criteria = {f: '' for f in fields}
 
-    results = get_questions_by_criteria(date=date, institution=institution,
-                                        level=level, paper=paper, group=group,
-                                        subject=subject, question_number=question_number)
-    if not results:
-        print_colored("[i] No matches.", COLORS.YELLOW)
-        return
+    while True:
+        # Show current criteria
+        print("─" * 50)
+        print_colored("  CURRENT CRITERIA", COLORS.YELLOW, bold=True)
+        for i, field in enumerate(fields, 1):
+            display_name = display_names[field]
+            val = criteria[field]
+            if not val:
+                display = color_text("(not set)", COLORS.RED)
+            else:
+                display_val = str(val)
+                if len(display_val) > 30:
+                    display_val = display_val[:27] + "..."
+                display = color_text(display_val, COLORS.GREEN)
+            print(f"  {i:2}. {display_name:18}: {display}")
+        print("─" * 50)
+        print("  9. " + color_text("Search with current criteria", COLORS.CYAN, bold=True))
+        print("  0. " + color_text("Return to Question Bank menu", COLORS.YELLOW))
+        choice = input(color_text("\nChoose a field to edit (1-8), 9 to search, or 0 to return: ", COLORS.MAGENTA)).strip()
 
-    print(f"\n--- SEARCH RESULTS ({len(results)} matches) ---")
-    for r in results:
-        print(f"  {r['id']:3} | {r['question_date']} | {r['institution']:15} | {r['subject']:20} | {r['paper']:10} | {r['level']:10} | Q{r['question_number']}")
+        if choice == '9':
+            kwargs = {}
+            for field in fields:
+                val = criteria[field].strip()
+                if val:
+                    kwargs[field] = val
+            results = get_questions_by_criteria(**kwargs)
+            if not results:
+                print_colored("[i] No matches found.", COLORS.YELLOW)
+                continue
 
-    if len(results) > 1:
-        choice = input(color_text("\nEnter ID to view details, or press Enter: ", COLORS.MAGENTA)).strip()
-        if choice.isdigit():
-            q = get_question_by_id(int(choice))
-            if q:
-                _display_single_question(q)
+            # ---- IMPROVED DISPLAY ----
+            if len(results) == 1:
+                # Single match → show full question automatically
+                _display_single_question(results[0])
+            else:
+                # Multiple matches → show summary with a snippet
+                print(f"\n--- SEARCH RESULTS ({len(results)} matches) ---")
+                for r in results:
+                    # Build a snippet: use Nepali first, else English
+                    nepali = r.get('nepali_transcription', '')
+                    english = r.get('english_transcription', '')
+                    snippet = nepali
+                    if english:
+                        snippet += f" ({english})"
+                    if len(snippet) > 60:
+                        snippet = snippet[:57] + "..."
+                    print(f"  {r['id']:3} | {r['question_date']} | {r['institution'][:20]:20} | {r['subject'][:20]:20} | {r['chapter'][:15]:15} | Q{r['question_number']}")
+                    print(f"      {snippet}")
+                print(f"  Total: {len(results)} matches.")
+                choice_id = input(color_text("\nEnter ID to view full details, or press Enter to continue: ", COLORS.MAGENTA)).strip()
+                if choice_id.isdigit():
+                    q = get_question_by_id(int(choice_id))
+                    if q:
+                        _display_single_question(q)
+            # After displaying, loop back to criteria editing
+            continue
+
+        elif choice == '0':
+            break
+
+        elif choice.isdigit() and 1 <= int(choice) <= len(fields):
+            idx = int(choice) - 1
+            field = fields[idx]
+            current = criteria[field]
+            display_name = display_names[field]
+            new_val = input(color_text(f"Value for {display_name} [{current}]: ", COLORS.MAGENTA)).strip()
+            criteria[field] = new_val
+            print_colored(f"[✓] {display_name} set to: {new_val if new_val else '(cleared)'}", COLORS.GREEN)
+            continue
+        else:
+            print_colored("[!] Invalid option.", COLORS.RED)
 
 def update_question_interactive():
     qid = input(color_text("Enter question ID to update: ", COLORS.MAGENTA)).strip()
@@ -678,8 +820,8 @@ def export_questions_csv():
         filename += '.csv'
 
     fieldnames = ['id', 'question_date', 'institution', 'subject', 'paper', 'group',
-                  'marks', 'chapter', 'question_number', 'nepali_transcription',
-                  'english_transcription', 'level', 'created_at', 'updated_at']
+              'marks', 'chapter', 'question_number', 'nepali_transcription',
+              'english_transcription', 'level', 'created_at', 'updated_at', 'notes']
     try:
         with open(filename, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -706,8 +848,8 @@ def import_questions_csv():
         return
 
     print(f"Found {len(rows)} rows. How to handle duplicates?")
-    print("  1. Skip duplicates (by id if present, else all)")
-    print("  2. Overwrite existing (by id)")
+    print("  1. Skip duplicates (by id or by (date + institution + level + question_number))")
+    print("  2. Overwrite existing (by id or by duplicate key)")
     print("  3. Abort on any duplicate")
     choice = input(color_text("Choose (1-3): ", COLORS.MAGENTA)).strip()
     if choice not in ('1', '2', '3'):
@@ -732,24 +874,36 @@ def import_questions_csv():
         else:
             qid = None
 
-        exists = False
+        date = row.get('question_date')
+        institution = row.get('institution')
+        level = row.get('level')
+        question_number = row.get('question_number')
+
+        exists_id = False
         if qid:
             cursor.execute(f"SELECT id FROM {TABLE_NAME} WHERE id = %s", (qid,))
-            exists = cursor.fetchone() is not None
+            exists_id = cursor.fetchone() is not None
 
-        if exists:
+        exists_dup = False
+        dup_id = None
+        if date and institution and level and question_number:
+            dup_id = check_duplicate(date, institution, level, question_number, exclude_id=qid if qid else None)
+            exists_dup = dup_id is not None
+
+        if exists_id or exists_dup:
             if choice == '1':
                 skipped += 1
                 continue
             elif choice == '2':
+                target_id = qid if exists_id else dup_id
                 set_clause = ", ".join([f"{f} = %s" for f in escaped_fields])
                 values = [row.get(f) or None for f in fields]
-                values.append(qid)
+                values.append(target_id)
                 cursor.execute(f"UPDATE {TABLE_NAME} SET {set_clause} WHERE id = %s", values)
                 updated += 1
                 continue
             else:
-                print_colored(f"[!] Duplicate id {qid}, aborting.", COLORS.RED)
+                print_colored(f"[!] Duplicate found, aborting.", COLORS.RED)
                 conn.rollback()
                 cursor.close()
                 conn.close()
@@ -767,16 +921,13 @@ def import_questions_csv():
     print_colored(f"[✓] Import complete: {added} added, {updated} updated, {skipped} skipped.", COLORS.GREEN)
 
 # ---------- Import from Text File ----------
-
 def import_questions_txt():
     print("\n" + "═" * 50)
-    print_colored("  IMPORT FROM TEXT FILE", COLORS.CYAN, bold=True)
+    print_colored("  IMPORT FROM TEXT FILE (Smart)", COLORS.CYAN, bold=True)
     print("═" * 50)
-    print("The file should contain question blocks separated by '---'.")
-    print("Each block has key: value pairs (one per line).")
-    print("Required keys: Date, Institution, Level, Subject, Question Number.")
-    print("Optional: Paper, Group, Marks, Chapter, Nepali, English.")
-    print("Lines starting with '#' are ignored.\n")
+    print("Supports both full (all fields repeated) and context‑aware formats.")
+    print("Context lines (Date, Institution, Level, Paper, Group, etc.)")
+    print("apply to all following question blocks until changed.\n")
 
     filename = input(color_text("Enter Text filename (e.g., questions.txt): ", COLORS.MAGENTA)).strip()
     if not filename or not os.path.exists(filename):
@@ -790,25 +941,23 @@ def import_questions_txt():
         print_colored(f"[!] Failed to read file: {e}", COLORS.RED)
         return
 
-    blocks = re.split(r'\n---+\s*\n', content)
-    if not blocks:
-        print_colored("[i] No question blocks found (separate with '---').", COLORS.YELLOW)
+    # Split on lines that are exactly "---"
+    raw_blocks = re.split(r'\n---+\s*\n', content)
+    if not raw_blocks:
+        print_colored("[i] No blocks found.", COLORS.YELLOW)
         return
 
-    print_colored(f"[i] Found {len(blocks)} block(s). Parsing...", COLORS.BLUE)
+    # Remove empty blocks
+    raw_blocks = [b.strip() for b in raw_blocks if b.strip()]
 
-    conn = get_connection()
-    cursor = conn.cursor()
-    added = 0
-    skipped = 0
+    # ----- Parser state -----
+    context = {}
+    questions = []
 
-    for block in blocks:
-        block = block.strip()
-        if not block:
-            continue
-
-        q_data = {}
-        for line in block.split('\n'):
+    for block in raw_blocks:
+        lines = block.split('\n')
+        block_data = {}
+        for line in lines:
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
@@ -819,46 +968,124 @@ def import_questions_txt():
             val = val.strip()
             if key == 'marks' and val.isdigit():
                 val = int(val)
-            q_data[key] = val
+            block_data[key] = val
 
-        date = q_data.get('date')
-        institution = q_data.get('institution')
-        level = q_data.get('level')
-        subject = q_data.get('subject')
-        question_number = q_data.get('question_number')
-
-        if not all([date, institution, level, subject, question_number]):
-            print_colored("[!] Skipping block: missing one of: Date, Institution, Level, Subject, Question Number.", COLORS.YELLOW)
-            skipped += 1
+        # ---- Determine if this block is a question or a context update ----
+        if 'question_number' not in block_data:
+            # No question number → treat as context update
+            context.update(block_data)
             continue
 
-        paper = q_data.get('paper')
-        group = q_data.get('group')
-        marks = q_data.get('marks')
-        chapter = q_data.get('chapter')
-        nepali = q_data.get('nepali')
-        english = q_data.get('english')
+        # It is a question block – merge with current context
+        # (block overrides context)
+        merged = context.copy()
+        merged.update(block_data)
 
-        try:
-            cursor.execute(f"""
-                INSERT INTO {TABLE_NAME}
-                (question_date, institution, subject, paper, `group`, marks, chapter,
-                 question_number, nepali_transcription, english_transcription, level)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (date, institution, subject, paper, group, marks, chapter,
-                  question_number, nepali, english, level))
-            added += 1
-        except Exception as e:
-            print_colored(f"[!] Failed to insert question '{question_number}': {e}", COLORS.RED)
-            skipped += 1
+        # Validate required fields
+        required = ('date', 'institution', 'level', 'question_number')
+        missing = [r for r in required if r not in merged]
+        if missing:
+            print_colored(f"[!] Skipping block: missing {', '.join(missing)}", COLORS.YELLOW)
+            continue
+
+        # Build DB record
+        db_q = {
+            'question_date': merged.get('date'),
+            'institution': merged.get('institution'),
+            'level': merged.get('level'),
+            'subject': merged.get('subject'),
+            'paper': merged.get('paper'),
+            'group': merged.get('group'),
+            'marks': merged.get('marks'),
+            'chapter': merged.get('chapter'),
+            'question_number': merged.get('question_number'),
+            'nepali_transcription': merged.get('nepali'),
+            'english_transcription': merged.get('english'),
+            'notes': merged.get('notes') or merged.get('note')
+        }
+        questions.append(db_q)
+
+    if not questions:
+        print_colored("[i] No valid question blocks found.", COLORS.YELLOW)
+        return
+
+    print_colored(f"[i] Found {len(questions)} valid question(s).", COLORS.BLUE)
+
+    # ----- Duplicate handling -----
+    print(f"Found {len(questions)} questions. How to handle duplicates?")
+    print("  1. Skip duplicates (keep existing)")
+    print("  2. Overwrite existing records (update all fields)")
+    print("  3. Abort on any duplicate")
+    choice = input(color_text("Choose (1-3): ", COLORS.MAGENTA)).strip()
+    if choice not in ('1', '2', '3'):
+        print_colored("[!] Invalid choice. Aborting.", COLORS.RED)
+        return
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    added = 0
+    updated = 0
+    no_change = 0
+    skipped = 0
+
+    for q in questions:
+        date = q.get('question_date')
+        institution = q.get('institution')
+        level = q.get('level')
+        question_number = q.get('question_number')
+
+        dup_id = check_duplicate(date, institution, level, question_number)
+
+        if dup_id:
+            if choice == '1':
+                skipped += 1
+                continue
+            elif choice == '2':
+                updates = {k: v for k, v in q.items() if v is not None and k != 'question_date'}
+                if not updates:
+                    print_colored(f"[!] No fields to update for question {question_number} (ID: {dup_id}).", COLORS.YELLOW)
+                    skipped += 1
+                    continue
+                status = update_question(dup_id, **updates)
+                if status == 'updated':
+                    updated += 1
+                    print(f"  Updated Q{question_number} (ID: {dup_id})")
+                elif status == 'no_change':
+                    no_change += 1
+                    print(f"  Q{question_number} (ID: {dup_id}) already up-to-date.")
+                elif status.startswith('error:'):
+                    print_colored(f"[!] Error updating Q{question_number} (ID: {dup_id}): {status}", COLORS.RED)
+                    skipped += 1
+                else:
+                    print_colored(f"[!] Unexpected status: {status}", COLORS.RED)
+                    skipped += 1
+                continue
+            else:  # abort
+                print_colored(f"[!] Duplicate found for question {question_number} (ID: {dup_id}). Aborting.", COLORS.RED)
+                conn.rollback()
+                cursor.close()
+                conn.close()
+                return
+        else:
+            # Insert new question
+            fields = [k for k, v in q.items() if v is not None]
+            values = [v for v in q.values() if v is not None]
+            escaped_fields = [f"`{f}`" if f == 'group' else f for f in fields]
+            placeholders = ','.join(['%s'] * len(fields))
+            sql = f"INSERT INTO {TABLE_NAME} ({', '.join(escaped_fields)}) VALUES ({placeholders})"
+            try:
+                cursor.execute(sql, values)
+                added += 1
+            except Exception as e:
+                print_colored(f"[!] Failed to insert question '{question_number}': {e}", COLORS.RED)
+                skipped += 1
 
     conn.commit()
     cursor.close()
     conn.close()
-    print_colored(f"\n[✓] Import complete: {added} added, {skipped} skipped.", COLORS.GREEN)
+    print_colored(f"\n[✓] Import complete: {added} added, {updated} updated, {no_change} unchanged, {skipped} skipped.", COLORS.GREEN)
 
 # ---------- NEW: Export to JSON ----------
-
 def export_questions_json():
     rows = get_all_questions()
     if not rows:
@@ -888,7 +1115,6 @@ def export_questions_json():
         print_colored(f"[!] Export failed: {e}", COLORS.RED)
 
 # ---------- NEW: Import from JSON ----------
-
 def import_questions_json():
     print("\n" + "═" * 50)
     print_colored("  IMPORT FROM JSON", COLORS.CYAN, bold=True)
@@ -917,8 +1143,8 @@ def import_questions_json():
         return
 
     print(f"Found {len(rows)} questions. How to handle duplicates?")
-    print("  1. Skip duplicates (by id if present, else all)")
-    print("  2. Overwrite existing (by id)")
+    print("  1. Skip duplicates (by id or by (date + institution + level + question_number))")
+    print("  2. Overwrite existing (by id or by duplicate key)")
     print("  3. Abort on any duplicate")
     choice = input(color_text("Choose (1-3): ", COLORS.MAGENTA)).strip()
     if choice not in ('1', '2', '3'):
@@ -944,26 +1170,40 @@ def import_questions_json():
         else:
             qid = None
 
-        exists = False
+        # Extract key fields for duplicate detection
+        date = obj.get('question_date')
+        institution = obj.get('institution')
+        level = obj.get('level')
+        question_number = obj.get('question_number')
+
+        # Check by id first, then by duplicate key
+        exists_id = False
         if qid:
             cursor.execute(f"SELECT id FROM {TABLE_NAME} WHERE id = %s", (qid,))
-            exists = cursor.fetchone() is not None
+            exists_id = cursor.fetchone() is not None
 
-        if exists:
+        exists_dup = False
+        dup_id = None
+        if date and institution and level and question_number:
+            dup_id = check_duplicate(date, institution, level, question_number, exclude_id=qid if qid else None)
+            exists_dup = dup_id is not None
+
+        if exists_id or exists_dup:
             if choice == '1':
                 skipped += 1
                 continue
             elif choice == '2':
+                # Update the record (use the existing id)
+                target_id = qid if exists_id else dup_id
                 set_clause = ", ".join([f"{f} = %s" for f in escaped_fields])
                 values = [obj.get(f) for f in fields]
-                # If a field is missing, use None
                 values = [v if v is not None else None for v in values]
-                values.append(qid)
+                values.append(target_id)
                 cursor.execute(f"UPDATE {TABLE_NAME} SET {set_clause} WHERE id = %s", values)
                 updated += 1
                 continue
-            else:
-                print_colored(f"[!] Duplicate id {qid}, aborting.", COLORS.RED)
+            else:  # abort
+                print_colored(f"[!] Duplicate found, aborting.", COLORS.RED)
                 conn.rollback()
                 cursor.close()
                 conn.close()
