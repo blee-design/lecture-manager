@@ -541,34 +541,27 @@ def question_paper():
 
 @app.route('/question/suggestions')
 def question_suggestions():
-    """Return JSON suggestions for autocomplete, ranked by relevance."""
     query = request.args.get('q', '').strip()
+    field = request.args.get('field', '')
     if len(query) < 2:
         return jsonify([])
 
+    if field:
+        from .question_bank import get_distinct_values
+        values = get_distinct_values(field, query)
+        return jsonify(values)
+
+    # fallback for main search (unchanged)
     rows = get_all_questions(search=query)
     suggestions_set = set()
     for row in rows:
         if row.get('question_date'):
             suggestions_set.add(str(row['question_date']))
-        for field in ['institution', 'subject', 'paper', 'level', 'chapter', 'question_number']:
-            val = row.get(field)
+        for f in ['institution', 'subject', 'paper', 'level', 'chapter', 'question_number']:
+            val = row.get(f)
             if val:
                 suggestions_set.add(str(val))
-
-    query_lower = query.lower()
-
-    # Rank: exact/startswith first, then contains, then others (if any)
-    def relevance_score(s):
-        s_lower = s.lower()
-        if s_lower.startswith(query_lower):
-            return (0, s_lower)          # first priority
-        elif query_lower in s_lower:
-            return (1, s_lower)          # second priority
-        else:
-            return (2, s_lower)          # last (shouldn't happen often)
-
-    suggestions = sorted(suggestions_set, key=relevance_score)[:10]
+    suggestions = sorted(suggestions_set, key=lambda s: s.lower())[:10]
     return jsonify(suggestions)
 
 @app.route('/questions/browse')

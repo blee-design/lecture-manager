@@ -14,7 +14,7 @@ import csv
 import json
 import re
 import shutil
-from datetime import datetime
+from datetime import date, datetime
 from collections import defaultdict
 from .db import get_connection
 from .utils import print_colored, color_text, COLORS, clean_field
@@ -51,6 +51,17 @@ def create_question_table():
     cursor.close()
     conn.close()
     print_colored("[✓] Question table ready.", COLORS.GREEN)
+
+def normalize_question_number(qno):
+    """Convert to zero‑padded two‑digit string (e.g., 1 → '01', 10 → '10')."""
+    if qno is None:
+        return None
+    try:
+        # If it's a number or numeric string, pad to 2 digits
+        return f"{int(qno):02d}"
+    except (ValueError, TypeError):
+        # If it's already a string like '01', keep as is (but ensure it's stripped)
+        return str(qno).strip().zfill(2)
 
 def add_question(date, institution, subject, paper, group, marks, chapter,
                  question_number, nepali, english, level, notes=None,
@@ -266,7 +277,7 @@ def _display_single_question(q):
     if chapter:
         print(f"  Chapter: {color_text(chapter, COLORS.GREEN)}")
 
-    q_no = q.get('question_number', '')
+    q_no = normalize_question_number(q.get('question_number'))
     nepali = q.get('nepali_transcription', '')
     english = q.get('english_transcription', '')
     marks = q.get('marks', '')
@@ -318,7 +329,7 @@ def _display_paper(questions):
         for subj, qs in sorted(subjects.items()):
             print_colored(f"    Subject: {subj}", COLORS.CYAN)
             for q in sorted(qs, key=lambda x: x.get('question_number', '')):
-                q_no = q.get('question_number', '')
+                q_no = normalize_question_number(q.get('question_number'))
                 nepali = q.get('nepali_transcription', '')
                 english = q.get('english_transcription', '')
                 marks = q.get('marks', '')
@@ -379,70 +390,124 @@ def quick_lookup_interactive():
     print("  2081-01-25 NRB Officer         -> shows whole paper")
     print("  2081-01-25 NRB Officer 12      -> shows question 12 only")
     print("(You can also just type a keyword for a full-text search.)")
+    print("Type '0' or 'exit' to return to the Question Bank menu.")
     print("═" * 50)
 
-    raw = input(color_text("> ", COLORS.MAGENTA)).strip()
-    if not raw:
-        return
+    current_results = None
+    current_query = None
 
-    date, inst, level, q_no = parse_quick_input(raw)
-
-    if date and inst:
-        if q_no:
-            results = get_questions_by_criteria(date=date, institution=inst, level=level, question_number=q_no)
-            if not results:
-                print_colored("[i] No matching question found.", COLORS.YELLOW)
-            elif len(results) == 1:
-                _display_single_question(results[0])
-            else:
-                print_colored(f"[i] Found {len(results)} questions. Showing all:", COLORS.BLUE)
-                _display_paper(results)
+    while True:
+        if current_results is None:
+            raw = input(color_text("> ", COLORS.MAGENTA)).strip()
         else:
-            results = get_questions_by_criteria(date=date, institution=inst, level=level)
-            if not results:
-                print_colored("[i] No questions found for this paper.", COLORS.YELLOW)
+            # We're still in the context of a search
+            raw = input(color_text(f"({len(current_results)} results) > ", COLORS.MAGENTA)).strip()
+
+        if not raw:
+            continue
+
+        # --- Exit commands ---
+        if raw.lower() in ('0', 'exit', 'quit'):
+            print_colored("Returning to Question Bank menu.", COLORS.YELLOW)
+            break
+
+        # --- Back to list / new search ---
+        if raw.lower() in ('b', 'back'):
+            current_results = None
+            current_query = None
+            continue
+
+        # --- If we have current results, check if user typed a number to view details ---
+        if current_results is not None and raw.isdigit():
+            qid = int(raw)
+            # Find the question in current results
+            q = next((r for r in current_results if r['id'] == qid), None)
+            if q:
+                _display_single_question(q)
+                print()
+                continue
             else:
-                _display_paper(results)
-    else:
-        rows = get_all_questions(search=raw)
-        if not rows:
+                print_colored("[!] ID not found in current results.", COLORS.YELLOW)
+                continue
+
+        # --- Parse and search ---
+        date, inst, level, q_no = parse_quick_input(raw)
+
+        if date and inst:
+            if q_no:
+                results = get_questions_by_criteria(date=date, institution=inst, level=level, question_number=q_no)
+                if not results:
+                    print_colored("[i] No matching question found.", COLORS.YELLOW)
+                    continue
+                elif len(results) == 1:
+                    _display_single_question(results[0])
+                    print()
+                    continue
+                else:
+                    print_colored(f"[i] Found {len(results)} questions. Showing all:", COLORS.BLUE)
+                    _display_paper(results)
+                    current_results = None  # paper view doesn't keep sticky state
+                    continue
+            else:
+                results = get_questions_by_criteria(date=date, institution=inst, level=level)
+                if not results:
+                    print_colored("[i] No questions found for this paper.", COLORS.YELLOW)
+                    continue
+                else:
+                    _display_paper(results)
+                    current_results = None  # paper view doesn't keep sticky state
+                    continue
+
+        # --- Full-text search ---
+        results = get_all_questions(search=raw)
+        if not results:
             print_colored("[i] No matches.", COLORS.YELLOW)
-            return
-        print(f"\n--- SEARCH RESULTS ({len(rows)} matches) ---")
-        for r in rows:
-            print(f"  {r['id']:3} | {r['question_date']} | {r['institution']:15} | {r['subject']:20} | {r['level']:10} | Q{r['question_number']}")
-        if len(rows) > 1:
-            choice = input(color_text("\nEnter ID to view details, or press Enter to continue: ", COLORS.MAGENTA)).strip()
-            if choice.isdigit():
-                q = get_question_by_id(int(choice))
-                if q:
-                    _display_single_question(q)
+            current_results = None
+            current_query = None
+            continue
+
+        # Store results for sticky browsing
+        current_results = results
+        current_query = raw
+
+        # Display results with numbering
+        print(f"\n--- SEARCH RESULTS ({len(results)} matches) ---")
+        for i, r in enumerate(results, 1):
+            print(f"  {i:2}. [{r['id']:3}] | {r['question_date']} | {r['institution'][:20]:20} | {r['subject'][:25]:25} | {r['level'][:12]:12} | Q{r['question_number']}")
+
+        print("\n  Options:")
+        print("  • Enter ID number (e.g., 29) to view details")
+        print("  • Type 'b' or 'back' to clear this search")
+        print("  • Type '0' or 'exit' to return to menu")
+        print("  • Type a new search to start fresh")
 
 def import_export_submenu():
-    """Sub‑menu for all import/export operations."""
     while True:
         print("\n" + "─" * 40)
         print_colored("  IMPORT / EXPORT", COLORS.CYAN, bold=True)
         print("─" * 40)
         print("  1. Export to CSV")
         print("  2. Export to JSON")
-        print("  3. Import from CSV")
-        print("  4. Import from JSON")
-        print("  5. Import from Text File (.txt)")
+        print("  3. Export to TXT")          # new
+        print("  4. Import from CSV")
+        print("  5. Import from JSON")
+        print("  6. Import from TXT")
         print("  0. Return to Question Bank menu")
         print("─" * 40)
 
-        choice = input(color_text("Choose an option (0-5): ", COLORS.MAGENTA)).strip()
+        choice = input(color_text("Choose an option (0-6): ", COLORS.MAGENTA)).strip()
 
         if choice == '1':
             export_questions_csv()
         elif choice == '2':
             export_questions_json()
         elif choice == '3':
-            import_questions_csv()
+            export_questions_txt()   # new
         elif choice == '4':
-            import_questions_json()
+            import_questions_csv()
         elif choice == '5':
+            import_questions_json()
+        elif choice == '6':
             import_questions_txt()
         elif choice == '0':
             print_colored("Returning to Question Bank menu.", COLORS.YELLOW)
@@ -552,29 +617,59 @@ def view_all_questions_interactive():
     print("  5. Level")
     sort_choice = input(color_text("Choose (1-5, default 1): ", COLORS.MAGENTA)).strip()
     sort_map = {
-        '1': 'question_date',
-        '2': 'subject',
-        '3': 'institution',
-        '4': 'paper',
-        '5': 'level'
+        '1': ('question_date', 'Date'),
+        '2': ('subject', 'Subject'),
+        '3': ('institution', 'Institution'),
+        '4': ('paper', 'Paper'),
+        '5': ('level', 'Level')
     }
-    sort_by = sort_map.get(sort_choice, 'question_date')
+    col, display_name = sort_map.get(sort_choice, ('question_date', 'Date'))
 
     order = input(color_text("Order (a=ascending, d=descending, default d): ", COLORS.MAGENTA)).strip().lower()
     if order == 'a':
-        order = 'ASC'
+        order_sql = 'ASC'
+        arrow = '▲'
     else:
-        order = 'DESC'
+        order_sql = 'DESC'
+        arrow = '▼'
 
-    rows = get_all_questions(sort_by=sort_by, order=order)
+    rows = get_all_questions(sort_by=col, order=order_sql)
     if not rows:
         print_colored("[i] No questions found.", COLORS.YELLOW)
         return
 
-    print(f"\n--- ALL QUESTIONS (sorted by {sort_by} {order}) ---")
-    for r in rows:
-        print(f"  {r['id']:3} | {r['question_date']} | {r['institution']:15} | {r['subject']:20} | {r['paper']:10} | {r['level']:10} | Q{r['question_number']}")
-    print(f"  Total: {len(rows)} questions.")
+    # Print header with active sort column highlighted
+    sort_desc = f"{display_name} {arrow}"
+    print(f"\n--- ALL QUESTIONS (sorted by {color_text(sort_desc, COLORS.CYAN, bold=True)}) ---")
+
+    # For each row, print with a bracket showing the sort column's value
+    for row in rows:
+        # Get the value of the sort column
+        val = row.get(col)
+        # Format date if applicable
+        if col == 'question_date' and isinstance(val, (date, datetime)):
+            val = val.strftime('%Y-%m-%d')
+        elif val is None:
+            val = ''
+
+        bracket_val = color_text(f"[{val}] ", COLORS.CYAN, bold=True)
+
+        # Build the rest of the line (id, date, institution, subject, paper, level, question number)
+        # Use fixed widths or simple concatenation
+        id_str = f"{row['id']:3}"
+        date_str = row.get('question_date', '')
+        if isinstance(date_str, (date, datetime)):
+            date_str = date_str.strftime('%Y-%m-%d')
+        inst = row.get('institution', '')[:25]
+        subj = row.get('subject', '')[:25]
+        paper = row.get('paper', '')[:15]
+        level = row.get('level', '')[:12]
+        qno = row.get('question_number', '')
+
+        # Print the line
+        print(f"{bracket_val}{id_str} | {date_str} | {inst:<25} | {subj:<25} | {paper:<15} | {level:<12} | Q{qno}")
+
+    print(f"\n  Total: {len(rows)} questions.")
 
 def view_whole_paper_interactive():
     print("\n" + "═" * 50)
@@ -807,35 +902,60 @@ def delete_question_interactive():
         print_colored("Cancelled.", COLORS.YELLOW)
 
 # ---------- Export / Import (CSV) ----------
-
 def export_questions_csv():
+    """Export all questions to CSV (without internal IDs)."""
+    print("\n" + "═" * 50)
+    print_colored("  EXPORT QUESTIONS TO CSV", COLORS.CYAN, bold=True)
+    print("═" * 50)
+
     rows = get_all_questions()
     if not rows:
         print_colored("[i] No questions to export.", COLORS.YELLOW)
         return
+
     filename = input(color_text("Enter CSV filename (default: questions_export.csv): ", COLORS.MAGENTA)).strip()
     if not filename:
         filename = "questions_export.csv"
     if not filename.endswith('.csv'):
         filename += '.csv'
 
-    fieldnames = ['id', 'question_date', 'institution', 'subject', 'paper', 'group',
-              'marks', 'chapter', 'question_number', 'nepali_transcription',
-              'english_transcription', 'level', 'created_at', 'updated_at', 'notes']
+    # Define columns to export (excluding id, created_at, updated_at)
+    export_fields = ['question_date', 'institution', 'subject', 'paper', 'group',
+                     'marks', 'chapter', 'question_number', 'nepali_transcription',
+                     'english_transcription', 'level', 'notes']
+
+    # Prepare data
+    data = []
+    for row in rows:
+        out_row = {}
+        for f in export_fields:
+            val = row.get(f)
+            if isinstance(val, (datetime, date)):
+                val = str(val)
+            out_row[f] = val
+        data.append(out_row)
+
     try:
         with open(filename, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer = csv.DictWriter(f, fieldnames=export_fields)
             writer.writeheader()
-            writer.writerows(rows)
-        print_colored(f"[✓] Exported {len(rows)} questions to {filename}", COLORS.GREEN)
+            writer.writerows(data)
+        print_colored(f"[✓] Exported {len(data)} questions to {filename}", COLORS.GREEN)
+        print_colored(f"[i] File size: {os.path.getsize(filename) / 1024:.2f} KB", COLORS.BLUE)
     except Exception as e:
         print_colored(f"[!] Export failed: {e}", COLORS.RED)
 
 def import_questions_csv():
+    """Import questions from a CSV file (id column is ignored if present)."""
+    print("\n" + "═" * 50)
+    print_colored("  IMPORT QUESTIONS FROM CSV", COLORS.CYAN, bold=True)
+    print("═" * 50)
+
     filename = input(color_text("Enter CSV filename: ", COLORS.MAGENTA)).strip()
     if not filename or not os.path.exists(filename):
         print_colored("[!] File not found.", COLORS.RED)
         return
+
     try:
         with open(filename, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
@@ -847,63 +967,78 @@ def import_questions_csv():
         print_colored("[i] No data found.", COLORS.YELLOW)
         return
 
-    print(f"Found {len(rows)} rows. How to handle duplicates?")
-    print("  1. Skip duplicates (by id or by (date + institution + level + question_number))")
-    print("  2. Overwrite existing (by id or by duplicate key)")
+    # Normalize question numbers and ignore id
+    for row in rows:
+        row.pop('id', None)
+        if 'question_number' in row and row['question_number']:
+            row['question_number'] = normalize_question_number(row['question_number'])
+        # Convert marks to int if present
+        if 'marks' in row and row['marks'] and row['marks'].isdigit():
+            row['marks'] = int(row['marks'])
+
+    print(f"\n[i] Found {len(rows)} questions in the CSV file.")
+    print("How to handle duplicates?")
+    print("  1. Skip duplicates (keep existing)")
+    print("  2. Overwrite existing (by duplicate key)")
     print("  3. Abort on any duplicate")
     choice = input(color_text("Choose (1-3): ", COLORS.MAGENTA)).strip()
     if choice not in ('1', '2', '3'):
-        print_colored("[!] Invalid choice.", COLORS.RED)
+        print_colored("[!] Invalid choice. Aborting.", COLORS.RED)
         return
 
     conn = get_connection()
     cursor = conn.cursor()
     added = 0
     updated = 0
+    no_change = 0
     skipped = 0
 
     fields = ['question_date', 'institution', 'subject', 'paper', 'group',
               'marks', 'chapter', 'question_number', 'nepali_transcription',
-              'english_transcription', 'level']
+              'english_transcription', 'level', 'notes']
     escaped_fields = [f"`{f}`" if f == 'group' else f for f in fields]
 
-    for row in rows:
-        qid = row.get('id')
-        if qid and qid.isdigit():
-            qid = int(qid)
-        else:
-            qid = None
-
+    total = len(rows)
+    for idx, row in enumerate(rows, 1):
+        print(f"  Processing {idx}/{total}: Q{row.get('question_number', '?')} ...", end="\r")
         date = row.get('question_date')
         institution = row.get('institution')
         level = row.get('level')
         question_number = row.get('question_number')
 
-        exists_id = False
-        if qid:
-            cursor.execute(f"SELECT id FROM {TABLE_NAME} WHERE id = %s", (qid,))
-            exists_id = cursor.fetchone() is not None
-
-        exists_dup = False
         dup_id = None
         if date and institution and level and question_number:
-            dup_id = check_duplicate(date, institution, level, question_number, exclude_id=qid if qid else None)
-            exists_dup = dup_id is not None
+            dup_id = check_duplicate(date, institution, level, question_number)
 
-        if exists_id or exists_dup:
+        if dup_id:
             if choice == '1':
                 skipped += 1
+                print(f"  [{idx}/{total}] Skipped Q{question_number} (ID: {dup_id})     ")
                 continue
             elif choice == '2':
-                target_id = qid if exists_id else dup_id
-                set_clause = ", ".join([f"{f} = %s" for f in escaped_fields])
-                values = [row.get(f) or None for f in fields]
-                values.append(target_id)
-                cursor.execute(f"UPDATE {TABLE_NAME} SET {set_clause} WHERE id = %s", values)
-                updated += 1
+                updates = {}
+                for f in fields:
+                    val = row.get(f)
+                    if val is not None and val != '':
+                        updates[f] = val
+                if not updates:
+                    print(f"  [{idx}/{total}] Q{question_number} – no fields to update, skipping.")
+                    skipped += 1
+                    continue
+
+                status = update_question(dup_id, **updates)
+                if status == 'updated':
+                    updated += 1
+                    print(f"  [{idx}/{total}] Updated Q{question_number} (ID: {dup_id})     ")
+                elif status == 'no_change':
+                    no_change += 1
+                    print(f"  [{idx}/{total}] Q{question_number} already up-to-date.")
+                else:
+                    print_colored(f"  [{idx}/{total}] Error updating Q{question_number}: {status}", COLORS.RED)
+                    skipped += 1
                 continue
-            else:
-                print_colored(f"[!] Duplicate found, aborting.", COLORS.RED)
+            else:  # abort
+                print_colored(f"\n[!] Duplicate found for question {question_number} (ID: {dup_id}). Aborting.", COLORS.RED)
                 conn.rollback()
                 cursor.close()
                 conn.close()
@@ -911,17 +1046,98 @@ def import_questions_csv():
         else:
             placeholders = ','.join(['%s'] * len(fields))
             cols = ','.join(escaped_fields)
-            values = [row.get(f) or None for f in fields]
-            cursor.execute(f"INSERT INTO {TABLE_NAME} ({cols}) VALUES ({placeholders})", values)
-            added += 1
+            values = [row.get(f) for f in fields]
+            values = [v if v is not None else None for v in values]
+            try:
+                cursor.execute(f"INSERT INTO {TABLE_NAME} ({cols}) VALUES ({placeholders})", values)
+                new_id = cursor.lastrowid
+                added += 1
+                print(f"  [{idx}/{total}] Added Q{question_number} (ID: {new_id})     ")
+            except Exception as e:
+                print_colored(f"  [{idx}/{total}] Failed to insert Q{question_number}: {e}", COLORS.RED)
+                skipped += 1
 
     conn.commit()
     cursor.close()
     conn.close()
-    print_colored(f"[✓] Import complete: {added} added, {updated} updated, {skipped} skipped.", COLORS.GREEN)
+    print(f"\n[✓] Import complete: {added} added, {updated} updated, {no_change} unchanged, {skipped} skipped.")
+
+def export_questions_txt():
+    """Export all questions to a human‑readable TXT file (suitable for import later)."""
+    print("\n" + "═" * 50)
+    print_colored("  EXPORT QUESTIONS TO TXT", COLORS.CYAN, bold=True)
+    print("═" * 50)
+
+    rows = get_all_questions()
+    if not rows:
+        print_colored("[i] No questions to export.", COLORS.YELLOW)
+        return
+
+    filename = input(color_text("Enter TXT filename (default: questions_export.txt): ", COLORS.MAGENTA)).strip()
+    if not filename:
+        filename = "questions_export.txt"
+    if not filename.endswith('.txt'):
+        filename += '.txt'
+
+    # Order fields for readability
+    field_order = [
+        'question_date', 'institution', 'level', 'paper', 'group',
+        'subject', 'chapter', 'question_number', 'marks',
+        'nepali_transcription', 'english_transcription', 'notes'
+    ]
+
+    # Map keys to nice labels
+    labels = {
+        'question_date': 'Date',
+        'institution': 'Institution',
+        'level': 'Level',
+        'paper': 'Paper',
+        'group': 'Group',
+        'subject': 'Subject',
+        'chapter': 'Chapter',
+        'question_number': 'Question Number',
+        'marks': 'Marks',
+        'nepali_transcription': 'Nepali',
+        'english_transcription': 'English',
+        'notes': 'Notes'
+    }
+
+    try:
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write("# Exported Question Bank\n")
+            f.write(f"# Total: {len(rows)} questions\n")
+            f.write("# Each block is separated by '---'\n\n")
+
+            for row in rows:
+                # Write context fields if they are present and have changed (simplify: always write all)
+                # To make the file compact, only write non‑empty fields.
+                lines = []
+                for key in field_order:
+                    val = row.get(key)
+                    if val is not None and val != '':
+                        if key == 'marks' and val:
+                            val = str(val)
+                        elif isinstance(val, (date, datetime)):
+                            val = str(val)
+                        lines.append(f"{labels.get(key, key)}: {val}")
+
+                # Ensure question number is always present
+                if 'question_number' not in row or not row['question_number']:
+                    lines.append("Question Number: (missing)")
+
+                f.write("\n---\n")
+                f.write("\n".join(lines))
+                f.write("\n")
+            f.write("\n---\n")  # final separator
+
+        print_colored(f"[✓] Exported {len(rows)} questions to {filename}", COLORS.GREEN)
+        print_colored(f"[i] File size: {os.path.getsize(filename) / 1024:.2f} KB", COLORS.BLUE)
+    except Exception as e:
+        print_colored(f"[!] Export failed: {e}", COLORS.RED)
 
 # ---------- Import from Text File ----------
 def import_questions_txt():
+    """Import questions from a text file (smart format)."""
     print("\n" + "═" * 50)
     print_colored("  IMPORT FROM TEXT FILE (Smart)", COLORS.CYAN, bold=True)
     print("═" * 50)
@@ -943,17 +1159,14 @@ def import_questions_txt():
 
     # Split on lines that are exactly "---"
     raw_blocks = re.split(r'\n---+\s*\n', content)
+    raw_blocks = [b.strip() for b in raw_blocks if b.strip()]
+
     if not raw_blocks:
         print_colored("[i] No blocks found.", COLORS.YELLOW)
         return
 
-    # Remove empty blocks
-    raw_blocks = [b.strip() for b in raw_blocks if b.strip()]
-
-    # ----- Parser state -----
     context = {}
     questions = []
-
     for block in raw_blocks:
         lines = block.split('\n')
         block_data = {}
@@ -968,20 +1181,21 @@ def import_questions_txt():
             val = val.strip()
             if key == 'marks' and val.isdigit():
                 val = int(val)
+            # Map keys to DB column names
+            if key == 'question_number':
+                val = normalize_question_number(val)
             block_data[key] = val
 
-        # ---- Determine if this block is a question or a context update ----
+        # Check if it's a context block (no question number)
         if 'question_number' not in block_data:
-            # No question number → treat as context update
+            # Update context
             context.update(block_data)
             continue
 
-        # It is a question block – merge with current context
-        # (block overrides context)
+        # It's a question block: merge with context
         merged = context.copy()
         merged.update(block_data)
 
-        # Validate required fields
         required = ('date', 'institution', 'level', 'question_number')
         missing = [r for r in required if r not in merged]
         if missing:
@@ -1009,10 +1223,8 @@ def import_questions_txt():
         print_colored("[i] No valid question blocks found.", COLORS.YELLOW)
         return
 
-    print_colored(f"[i] Found {len(questions)} valid question(s).", COLORS.BLUE)
-
-    # ----- Duplicate handling -----
-    print(f"Found {len(questions)} questions. How to handle duplicates?")
+    print(f"\n[i] Found {len(questions)} valid question(s) in the text file.")
+    print("How to handle duplicates?")
     print("  1. Skip duplicates (keep existing)")
     print("  2. Overwrite existing records (update all fields)")
     print("  3. Abort on any duplicate")
@@ -1028,7 +1240,9 @@ def import_questions_txt():
     no_change = 0
     skipped = 0
 
-    for q in questions:
+    total = len(questions)
+    for idx, q in enumerate(questions, 1):
+        print(f"  Processing {idx}/{total}: Q{q.get('question_number', '?')} ...", end="\r")
         date = q.get('question_date')
         institution = q.get('institution')
         level = q.get('level')
@@ -1039,35 +1253,33 @@ def import_questions_txt():
         if dup_id:
             if choice == '1':
                 skipped += 1
+                print(f"  [{idx}/{total}] Skipped Q{question_number} (ID: {dup_id})     ")
                 continue
             elif choice == '2':
                 updates = {k: v for k, v in q.items() if v is not None and k != 'question_date'}
                 if not updates:
-                    print_colored(f"[!] No fields to update for question {question_number} (ID: {dup_id}).", COLORS.YELLOW)
+                    print(f"  [{idx}/{total}] Q{question_number} – no fields to update, skipping.")
                     skipped += 1
                     continue
+
                 status = update_question(dup_id, **updates)
                 if status == 'updated':
                     updated += 1
-                    print(f"  Updated Q{question_number} (ID: {dup_id})")
+                    print(f"  [{idx}/{total}] Updated Q{question_number} (ID: {dup_id})     ")
                 elif status == 'no_change':
                     no_change += 1
-                    print(f"  Q{question_number} (ID: {dup_id}) already up-to-date.")
-                elif status.startswith('error:'):
-                    print_colored(f"[!] Error updating Q{question_number} (ID: {dup_id}): {status}", COLORS.RED)
-                    skipped += 1
+                    print(f"  [{idx}/{total}] Q{question_number} already up-to-date.")
                 else:
-                    print_colored(f"[!] Unexpected status: {status}", COLORS.RED)
+                    print_colored(f"  [{idx}/{total}] Error updating Q{question_number}: {status}", COLORS.RED)
                     skipped += 1
                 continue
             else:  # abort
-                print_colored(f"[!] Duplicate found for question {question_number} (ID: {dup_id}). Aborting.", COLORS.RED)
+                print_colored(f"\n[!] Duplicate found for question {question_number} (ID: {dup_id}). Aborting.", COLORS.RED)
                 conn.rollback()
                 cursor.close()
                 conn.close()
                 return
         else:
-            # Insert new question
             fields = [k for k, v in q.items() if v is not None]
             values = [v for v in q.values() if v is not None]
             escaped_fields = [f"`{f}`" if f == 'group' else f for f in fields]
@@ -1075,18 +1287,24 @@ def import_questions_txt():
             sql = f"INSERT INTO {TABLE_NAME} ({', '.join(escaped_fields)}) VALUES ({placeholders})"
             try:
                 cursor.execute(sql, values)
+                new_id = cursor.lastrowid
                 added += 1
+                print(f"  [{idx}/{total}] Added Q{question_number} (ID: {new_id})     ")
             except Exception as e:
-                print_colored(f"[!] Failed to insert question '{question_number}': {e}", COLORS.RED)
+                print_colored(f"  [{idx}/{total}] Failed to insert Q{question_number}: {e}", COLORS.RED)
                 skipped += 1
 
     conn.commit()
     cursor.close()
     conn.close()
-    print_colored(f"\n[✓] Import complete: {added} added, {updated} updated, {no_change} unchanged, {skipped} skipped.", COLORS.GREEN)
+    print(f"\n[✓] Import complete: {added} added, {updated} updated, {no_change} unchanged, {skipped} skipped.")
 
-# ---------- NEW: Export to JSON ----------
 def export_questions_json():
+    """Export all questions to a JSON file, excluding internal IDs."""
+    print("\n" + "═" * 50)
+    print_colored("  EXPORT QUESTIONS TO JSON", COLORS.CYAN, bold=True)
+    print("═" * 50)
+
     rows = get_all_questions()
     if not rows:
         print_colored("[i] No questions to export.", COLORS.YELLOW)
@@ -1098,30 +1316,33 @@ def export_questions_json():
     if not filename.endswith('.json'):
         filename += '.json'
 
-    # Convert datetime objects to strings (if any)
+    # Remove internal fields and convert dates
+    export_data = []
     for row in rows:
-        if 'created_at' in row and row['created_at']:
-            row['created_at'] = str(row['created_at'])
-        if 'updated_at' in row and row['updated_at']:
-            row['updated_at'] = str(row['updated_at'])
-        if 'question_date' in row and row['question_date']:
-            row['question_date'] = str(row['question_date'])
+        clean_row = row.copy()
+        clean_row.pop('id', None)
+        clean_row.pop('created_at', None)
+        clean_row.pop('updated_at', None)
+        if 'question_date' in clean_row and clean_row['question_date']:
+            clean_row['question_date'] = str(clean_row['question_date'])
+        export_data.append(clean_row)
 
     try:
         with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(rows, f, indent=2, ensure_ascii=False)
-        print_colored(f"[✓] Exported {len(rows)} questions to {filename}", COLORS.GREEN)
+            json.dump(export_data, f, indent=2, ensure_ascii=False)
+        print_colored(f"[✓] Exported {len(export_data)} questions to {filename}", COLORS.GREEN)
+        print_colored(f"[i] File size: {os.path.getsize(filename) / 1024:.2f} KB", COLORS.BLUE)
     except Exception as e:
         print_colored(f"[!] Export failed: {e}", COLORS.RED)
 
-# ---------- NEW: Import from JSON ----------
 def import_questions_json():
+    """Import questions from a JSON file, ignoring any 'id' field."""
     print("\n" + "═" * 50)
-    print_colored("  IMPORT FROM JSON", COLORS.CYAN, bold=True)
+    print_colored("  IMPORT QUESTIONS FROM JSON", COLORS.CYAN, bold=True)
     print("═" * 50)
     print("The JSON file should be an array of question objects.")
-    print("Each object can have keys matching the database columns.")
-    print("If 'id' is present and matches, you can choose to update or skip.\n")
+    print("Each object can have keys matching the database columns (except 'id', 'created_at', 'updated_at').")
+    print("If a duplicate is found (same date, institution, level, question_number), you can skip, overwrite, or abort.\n")
 
     filename = input(color_text("Enter JSON filename: ", COLORS.MAGENTA)).strip()
     if not filename or not os.path.exists(filename):
@@ -1142,84 +1363,99 @@ def import_questions_json():
         print_colored("[i] No data found.", COLORS.YELLOW)
         return
 
-    print(f"Found {len(rows)} questions. How to handle duplicates?")
-    print("  1. Skip duplicates (by id or by (date + institution + level + question_number))")
-    print("  2. Overwrite existing (by id or by duplicate key)")
+    # Ignore 'id' and normalize question numbers
+    for obj in rows:
+        obj.pop('id', None)
+        if 'question_number' in obj and obj['question_number']:
+            obj['question_number'] = normalize_question_number(obj['question_number'])
+
+    print(f"\n[i] Found {len(rows)} questions in the JSON file.")
+    print("How to handle duplicates?")
+    print("  1. Skip duplicates (keep existing)")
+    print("  2. Overwrite existing (by duplicate key)")
     print("  3. Abort on any duplicate")
     choice = input(color_text("Choose (1-3): ", COLORS.MAGENTA)).strip()
     if choice not in ('1', '2', '3'):
-        print_colored("[!] Invalid choice.", COLORS.RED)
+        print_colored("[!] Invalid choice. Aborting.", COLORS.RED)
         return
 
     conn = get_connection()
     cursor = conn.cursor()
     added = 0
     updated = 0
+    no_change = 0
     skipped = 0
 
     fields = ['question_date', 'institution', 'subject', 'paper', 'group',
               'marks', 'chapter', 'question_number', 'nepali_transcription',
-              'english_transcription', 'level']
+              'english_transcription', 'level', 'notes']
     escaped_fields = [f"`{f}`" if f == 'group' else f for f in fields]
 
-    for obj in rows:
-        # Extract id if present
-        qid = obj.get('id')
-        if qid and isinstance(qid, int):
-            pass
-        else:
-            qid = None
-
-        # Extract key fields for duplicate detection
+    total = len(rows)
+    for idx, obj in enumerate(rows, 1):
+        print(f"  Processing {idx}/{total}: Q{obj.get('question_number', '?')} ...", end="\r")
         date = obj.get('question_date')
         institution = obj.get('institution')
         level = obj.get('level')
         question_number = obj.get('question_number')
 
-        # Check by id first, then by duplicate key
-        exists_id = False
-        if qid:
-            cursor.execute(f"SELECT id FROM {TABLE_NAME} WHERE id = %s", (qid,))
-            exists_id = cursor.fetchone() is not None
-
-        exists_dup = False
+        # Check for duplicate by natural key
         dup_id = None
         if date and institution and level and question_number:
-            dup_id = check_duplicate(date, institution, level, question_number, exclude_id=qid if qid else None)
-            exists_dup = dup_id is not None
+            dup_id = check_duplicate(date, institution, level, question_number)
 
-        if exists_id or exists_dup:
+        if dup_id:
             if choice == '1':
                 skipped += 1
+                print(f"  [{idx}/{total}] Skipped Q{question_number} (ID: {dup_id})     ")
                 continue
             elif choice == '2':
-                # Update the record (use the existing id)
-                target_id = qid if exists_id else dup_id
-                set_clause = ", ".join([f"{f} = %s" for f in escaped_fields])
-                values = [obj.get(f) for f in fields]
-                values = [v if v is not None else None for v in values]
-                values.append(target_id)
-                cursor.execute(f"UPDATE {TABLE_NAME} SET {set_clause} WHERE id = %s", values)
-                updated += 1
+                updates = {}
+                for f in fields:
+                    val = obj.get(f)
+                    if val is not None:
+                        updates[f] = val
+                if not updates:
+                    print(f"  [{idx}/{total}] Q{question_number} (ID: {dup_id}) – no fields to update, skipping.")
+                    skipped += 1
+                    continue
+
+                status = update_question(dup_id, **updates)
+                if status == 'updated':
+                    updated += 1
+                    print(f"  [{idx}/{total}] Updated Q{question_number} (ID: {dup_id})     ")
+                elif status == 'no_change':
+                    no_change += 1
+                    print(f"  [{idx}/{total}] Q{question_number} (ID: {dup_id}) already up-to-date.")
+                else:
+                    print_colored(f"  [{idx}/{total}] Error updating Q{question_number}: {status}", COLORS.RED)
+                    skipped += 1
                 continue
             else:  # abort
-                print_colored(f"[!] Duplicate found, aborting.", COLORS.RED)
+                print_colored(f"\n[!] Duplicate found for question {question_number} (ID: {dup_id}). Aborting.", COLORS.RED)
                 conn.rollback()
                 cursor.close()
                 conn.close()
                 return
         else:
+            # Insert new record
             placeholders = ','.join(['%s'] * len(fields))
             cols = ','.join(escaped_fields)
             values = [obj.get(f) for f in fields]
             values = [v if v is not None else None for v in values]
-            cursor.execute(f"INSERT INTO {TABLE_NAME} ({cols}) VALUES ({placeholders})", values)
-            added += 1
+            try:
+                cursor.execute(f"INSERT INTO {TABLE_NAME} ({cols}) VALUES ({placeholders})", values)
+                new_id = cursor.lastrowid
+                added += 1
+                print(f"  [{idx}/{total}] Added Q{question_number} (ID: {new_id})     ")
+            except Exception as e:
+                print_colored(f"  [{idx}/{total}] Failed to insert Q{question_number}: {e}", COLORS.RED)
+                skipped += 1
 
     conn.commit()
     cursor.close()
     conn.close()
-    print_colored(f"[✓] Import complete: {added} added, {updated} updated, {skipped} skipped.", COLORS.GREEN)
+    print(f"\n[✓] Import complete: {added} added, {updated} updated, {no_change} unchanged, {skipped} skipped.")
 
 # ---------- Chapter browsing ----------
 def get_distinct_chapters():
@@ -1231,6 +1467,30 @@ def get_distinct_chapters():
     cursor.close()
     conn.close()
     return [row[0] for row in rows]
+
+def get_distinct_values(column, search_term, limit=10):
+    """Return distinct values from a column matching a search term."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    # Use parameterised query to prevent SQL injection
+    sql = f"SELECT DISTINCT {column} FROM {TABLE_NAME} WHERE {column} LIKE %s ORDER BY {column} LIMIT %s"
+    cursor.execute(sql, (f"%{search_term}%", limit))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    result = []
+    for row in rows:
+        val = row[0]
+        if val is None:
+            continue
+        # Convert datetime/date objects to string (YYYY-MM-DD)
+        if column == 'question_date' and isinstance(val, (date, datetime)):
+            val = val.strftime('%Y-%m-%d')
+        else:
+            val = str(val)
+        result.append(val)
+    return result
 
 def get_questions_by_chapter(chapter_code):
     """

@@ -37,55 +37,52 @@
 </div>
 
 <script>
-  function setupAutocomplete(inputId, suggestionsId) {
+  function setupAutocomplete(inputId, suggestionsId, fieldName) {
     const input = document.getElementById(inputId);
     const suggestionsBox = document.getElementById(suggestionsId);
     if (!input || !suggestionsBox) return;
 
     input.addEventListener('input', function() {
-      const query = this.value.trim();
-      if (query.length < 2) {
-        suggestionsBox.style.display = 'none';
-        return;
-      }
-
-      fetch('/question/suggestions?q=' + encodeURIComponent(query))
-        .then(response => response.json())
-        .then(data => {
-          suggestionsBox.innerHTML = '';
-          if (data.length === 0) {
+        const query = this.value.trim();
+        if (query.length < 2) {
             suggestionsBox.style.display = 'none';
             return;
-          }
-          data.forEach(item => {
-            const div = document.createElement('div');
-            div.className = 'list-group-item list-group-item-action';
-            div.textContent = item;
-            div.style.cursor = 'pointer';
-            div.addEventListener('click', function() {
-              input.value = this.textContent;
-              suggestionsBox.style.display = 'none';
-              // Optionally submit the form automatically?
-              // document.getElementById('paper-form').submit();
+        }
+
+        fetch('/question/suggestions?q=' + encodeURIComponent(query) + '&field=' + encodeURIComponent(fieldName))
+            .then(response => response.json())
+            .then(data => {
+                suggestionsBox.innerHTML = '';
+                if (data.length === 0) {
+                    suggestionsBox.style.display = 'none';
+                    return;
+                }
+                data.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'list-group-item list-group-item-action';
+                    div.textContent = item;
+                    div.style.cursor = 'pointer';
+                    div.addEventListener('click', function() {
+                        input.value = this.textContent;
+                        suggestionsBox.style.display = 'none';
+                    });
+                    suggestionsBox.appendChild(div);
+                });
+                suggestionsBox.style.display = 'block';
             });
-            suggestionsBox.appendChild(div);
-          });
-          suggestionsBox.style.display = 'block';
-        });
     });
 
-    // Hide suggestions when clicking outside
     document.addEventListener('click', function(e) {
-      if (!suggestionsBox.contains(e.target) && e.target !== input) {
-        suggestionsBox.style.display = 'none';
-      }
+        if (!suggestionsBox.contains(e.target) && e.target !== input) {
+            suggestionsBox.style.display = 'none';
+        }
     });
-  }
+}
 
-  // Setup for each field
-  setupAutocomplete('date', 'suggestions-date');
-  setupAutocomplete('institution', 'suggestions-institution');
-  setupAutocomplete('level', 'suggestions-level');
-  setupAutocomplete('paper', 'suggestions-paper');
+// Setup for each field with the correct column name
+setupAutocomplete('date', 'suggestions-date', 'question_date');
+setupAutocomplete('institution', 'suggestions-institution', 'institution');
+setupAutocomplete('level', 'suggestions-level', 'level');
+setupAutocomplete('paper', 'suggestions-paper', 'paper');
 </script>
 {% endblock %}
