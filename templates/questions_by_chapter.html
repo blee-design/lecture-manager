@@ -27,10 +27,10 @@
                       </div>
                       <div class="question-text">
                         {% if q.nepali_transcription %}
-                          <span>{{ q.nepali_transcription }}</span>
+                          <span>{{ q.nepali_transcription|safe }}</span>
                         {% endif %}
                         {% if q.english_transcription %}
-                          <span class="text-muted"> ({{ q.english_transcription }})</span>
+                          <span class="text-muted"> ({{ q.english_transcription|safe }})</span>
                         {% endif %}
                       </div>
                       <div class="mt-1">

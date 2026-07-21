@@ -41,11 +41,42 @@
       {% endwith %}
       {% block content %}{% endblock %}
     </div>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <!-- Facebook SDK -->
     <div id="fb-root"></div>
     <script async defer crossorigin="anonymous"
             src="https://connect.facebook.net/en_US/sdk.js#xfbml=1&version=v22.0">
+    </script>
+
+    <!-- CSS for tables inside question text -->
+    <style>
+      .question-text table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 10px 0;
+      }
+      .question-text th, .question-text td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+      }
+      .question-text th {
+        background-color: #f2f2f2;
+      }
+    </style>
+
+    <!-- MathJax configuration (must be before loading MathJax) -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']],
+          displayMath: [['$$', '$$'], ['\\[', '\\]']]
+        },
+        svg: { fontCache: 'global' }
+      };
+    </script>
+    <script type="text/javascript" id="MathJax-script" defer
+            src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js">
     </script>
   </body>
 </html>
