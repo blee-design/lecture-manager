@@ -4,6 +4,9 @@ import re
 import sys
 import os
 import hashlib
+from bs4 import BeautifulSoup
+from tabulate import tabulate
+import html2text
 
 ROOT_DIR = os.path.expanduser("~/foxCloud/office/RootData")
 TRASH_DIR = os.path.expanduser("~/.lecture_trash")
@@ -37,6 +40,60 @@ COLOR_MAP = {
     'underline': COLORS.UNDERLINE,
     'white': COLORS.WHITE
 }
+
+def html_to_terminal(html_content):
+    if not html_content:
+        return ""
+
+    soup = BeautifulSoup(html_content, 'html.parser')
+
+    # Process tables and replace with unique markers
+    table_markers = []
+    tables = soup.find_all('table')
+
+    for idx, table in enumerate(tables):
+        rows = []
+        for tr in table.find_all('tr'):
+            row = [cell.get_text(strip=True) for cell in tr.find_all(['td', 'th'])]
+            if row:
+                rows.append(row)
+        if not rows:
+            continue
+
+        # Drop the first row if it's just column letters (A, B, C...)
+        if len(rows) >= 2 and all(len(cell) == 1 and cell.isalpha() for cell in rows[0] if cell):
+            rows = rows[1:]
+        if not rows:
+            continue
+
+        # Drop the first column (row numbers)
+        rows = [[cell for j, cell in enumerate(row) if j != 0] for row in rows]
+        if not rows:
+            continue
+
+        ascii_table = tabulate(rows[1:], headers=rows[0], tablefmt='simple')
+        # Use a marker that is unlikely to be modified
+        marker = f"____TABLE_{idx}____"
+        table_markers.append((marker, ascii_table))
+        table.replace_with(marker)
+
+    # Convert the rest of the HTML (non‑table) to plain text
+    h = html2text.HTML2Text()
+    h.body_width = 0
+    h.ignore_links = True
+    h.ignore_emphasis = False
+    h.ignore_images = True
+    h.ignore_tables = True   # we already removed table tags
+    plain_text = h.handle(str(soup))
+
+    # Replace markers with ASCII tables
+    for marker, ascii_table in table_markers:
+        # The marker may have newlines around it; we'll replace exactly
+        plain_text = plain_text.replace(marker, f"\n{ascii_table}\n")
+
+    # Clean up excessive blank lines
+    plain_text = re.sub(r'\n{3,}', '\n\n', plain_text)
+    return plain_text.strip()
 
 # This function should be placed after ROOT_DIR is defined
 def get_file_path_for_record(record):

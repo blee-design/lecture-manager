@@ -17,7 +17,7 @@ import shutil
 from datetime import date, datetime
 from collections import defaultdict
 from .db import get_connection
-from .utils import print_colored, color_text, COLORS, clean_field
+from .utils import print_colored, color_text, COLORS, clean_field, html_to_terminal
 
 TABLE_NAME = 'questions'
 
@@ -278,8 +278,9 @@ def _display_single_question(q):
         print(f"  Chapter: {color_text(chapter, COLORS.GREEN)}")
 
     q_no = normalize_question_number(q.get('question_number'))
-    nepali = q.get('nepali_transcription', '')
-    english = q.get('english_transcription', '')
+    from .utils import html_to_terminal
+    nepali = html_to_terminal(q.get('nepali_transcription', ''))
+    english = html_to_terminal(q.get('english_transcription', ''))
     marks = q.get('marks', '')
     notes = q.get('notes')
 
@@ -330,8 +331,8 @@ def _display_paper(questions):
             print_colored(f"    Subject: {subj}", COLORS.CYAN)
             for q in sorted(qs, key=lambda x: x.get('question_number', '')):
                 q_no = normalize_question_number(q.get('question_number'))
-                nepali = q.get('nepali_transcription', '')
-                english = q.get('english_transcription', '')
+                nepali = html_to_terminal(q.get('nepali_transcription', ''))
+                english = html_to_terminal(q.get('english_transcription', ''))
                 marks = q.get('marks', '')
                 chapter = q.get('chapter', '')
                 notes = q.get('notes')
