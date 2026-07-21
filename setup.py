@@ -43,8 +43,8 @@ setup(
     author="Udaya Raj Joshi",
     author_email="udayarajjoshi@gmail.com",
     url="https://github.com/blee-design/lecture-manager",
-    packages=find_packages(),
     include_package_data=True,
+    packages=find_packages(),
     install_requires=[
         # Core database and media
         "mysql-connector-python>=8.0.0",

@@ -1,0 +1,4 @@
+# File: MANIFEST.in
+
+include lecture_manager/templates/*.html
+include lecture_manager/*.py
