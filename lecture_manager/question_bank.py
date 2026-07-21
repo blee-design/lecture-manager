@@ -52,6 +52,12 @@ def create_question_table():
     conn.close()
     print_colored("[✓] Question table ready.", COLORS.GREEN)
 
+def _should_clear_english(nepali, english):
+    """Return True if english is non‑empty and identical to nepali (ignoring case/trim)."""
+    if not english or not nepali:
+        return False
+    return nepali.strip().lower() == english.strip().lower()
+
 def normalize_question_number(qno):
     """Convert to zero‑padded two‑digit string (e.g., 1 → '01', 10 → '10')."""
     if qno is None:
@@ -71,6 +77,10 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
     If force=True, skip duplicate check and insert anyway.
     Returns the new ID or existing ID if duplicate.
     """
+    # ---- Clear duplicate English before any checks ----
+    if _should_clear_english(nepali, english):
+        english = None
+
     if not force:
         existing = check_duplicate(date, institution, level, question_number)
         if existing:
@@ -85,11 +95,12 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                     'marks': marks,
                     'chapter': chapter,
                     'nepali_transcription': nepali,
-                    'english_transcription': english,
+                    'english_transcription': english,   # may be None now
                     'notes': notes
                 }
                 # Remove None values
                 updates = {k: v for k, v in updates.items() if v is not None}
+                # We need to use the generic update function
                 if update_question(existing, **updates):
                     print_colored(f"[✓] Question {existing} updated.", COLORS.GREEN)
                     return existing
@@ -192,21 +203,67 @@ def get_all_questions(sort_by='question_date', order='DESC', search=None):
     return rows
 
 def update_question(qid, **kwargs):
+    """
+    Update a question by ID.
+    Returns:
+        'updated'      – update succeeded
+        'no_change'    – no fields changed (no effect)
+        'no_fields'    – no fields provided
+        'not_found'    – question not found
+        'error: ...'   – on database error
+    """
+    # ---- First, fetch current record to compare ----
+    current = get_question_by_id(qid)
+    if not current:
+        return 'not_found'
+
+    # ---- Handle duplicate English clearing ----
+    # We need to consider three cases:
+    # 1. Both nepali and english are being updated.
+    # 2. Only nepali is updated – check if existing english matches new nepali.
+    # 3. Only english is updated – check if it matches current nepali.
+
+    nep_new = kwargs.get('nepali_transcription')
+    eng_new = kwargs.get('english_transcription')
+
+    if nep_new is not None and eng_new is not None:
+        # Both provided: compare them
+        if _should_clear_english(nep_new, eng_new):
+            kwargs['english_transcription'] = None
+    elif nep_new is not None and eng_new is None:
+        # Only Nepali changed; check against current English (if any)
+        current_eng = current.get('english_transcription')
+        if current_eng and _should_clear_english(nep_new, current_eng):
+            kwargs['english_transcription'] = None
+    elif eng_new is not None and nep_new is None:
+        # Only English changed; check against current Nepali
+        current_nep = current.get('nepali_transcription')
+        if current_nep and _should_clear_english(current_nep, eng_new):
+            kwargs['english_transcription'] = None
+    # else: neither is being updated; nothing to do.
+
+    # ---- Prepare update fields ----
     conn = get_connection()
     cursor = conn.cursor()
     fields = []
     values = []
     for key, val in kwargs.items():
         if val is not None:
+            # Properly escape 'group' column (reserved word)
             if key == 'group':
                 fields.append("`group` = %s")
             else:
                 fields.append(f"{key} = %s")
             values.append(val)
+
     if not fields:
+        cursor.close()
+        conn.close()
         return 'no_fields'
+
     values.append(qid)
     sql = f"UPDATE {TABLE_NAME} SET {', '.join(fields)} WHERE id = %s"
+
     try:
         cursor.execute(sql, values)
         conn.commit()

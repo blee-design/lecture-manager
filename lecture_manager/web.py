@@ -27,7 +27,7 @@ from .question_bank import (
 PLAYBACK_SOURCE = 'mirror_only'   # Change this to your preference
 # ==================================
 
-template_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'templates')
+template_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'templates'))
 app = Flask(__name__, template_folder=template_dir)
 app.secret_key = os.urandom(24)
 
