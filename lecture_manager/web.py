@@ -27,7 +27,8 @@ from .question_bank import (
 PLAYBACK_SOURCE = 'mirror_only'   # Change this to your preference
 # ==================================
 
-app = Flask(__name__)
+template_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'templates'))
+app = Flask(__name__, template_folder=template_dir)
 app.secret_key = os.urandom(24)
 
 def get_tally_data():

@@ -28,7 +28,7 @@ def create_question_table():
     cursor.execute(f"""
         CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
             id INT AUTO_INCREMENT PRIMARY KEY,
-            question_date DATE,
+            question_date VARCHAR(20),
             institution VARCHAR(255),
             subject VARCHAR(255),
             paper VARCHAR(100),
@@ -290,28 +290,30 @@ def delete_question(qid):
     return affected > 0
 
 def check_duplicate(date, institution, level, question_number, exclude_id=None):
-    """
-    Check if a question already exists with the same date, institution, level, and question number.
-    Returns the existing question ID if found, else None.
-    """
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
-    sql = """
-        SELECT id FROM questions
-        WHERE question_date = %s
-        AND institution = %s
-        AND level = %s
-        AND question_number = %s
-    """
-    params = [date, institution, level, question_number]
-    if exclude_id:
-        sql += " AND id != %s"
-        params.append(exclude_id)
-    cursor.execute(sql, params)
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return row['id'] if row else None
+    try:
+        sql = """
+            SELECT id FROM questions
+            WHERE question_date = %s
+            AND institution = %s
+            AND level = %s
+            AND question_number = %s
+            LIMIT 1
+        """
+        params = [date, institution, level, question_number]
+        if exclude_id:
+            sql += " AND id != %s"
+            params.append(exclude_id)
+        cursor.execute(sql, params)
+        row = cursor.fetchone()
+        # Ensure any remaining rows are consumed (though with LIMIT 1 there will be none)
+        while cursor.fetchone():
+            pass  # consume all rows
+        return row['id'] if row else None
+    finally:
+        cursor.close()
+        conn.close()
 
 # ---------- Display helpers ----------
 def _display_single_question(q):
