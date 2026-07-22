@@ -36,8 +36,8 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="lecture-manager",
-    version="2.5.0",                     # bumped version
-    description="Unified media manager for YouTube lectures and Facebook content with terminal and web interface",
+    version="2.6.0",                     # bumped version
+    description="Unified media manager for YouTube lectures, Facebook content, and offline article reading via Instapaper",
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Udaya Raj Joshi",
@@ -51,25 +51,31 @@ setup(
         "yt-dlp>=2023.0.0",
         "flask>=2.0.0",
         "browser-cookie3>=0.1.0",
-        "bgutil-ytdlp-pot-provider>=0.0.1",   # for yt-dlp challenges
+        "bgutil-ytdlp-pot-provider>=0.0.1",
         "requests>=2.25.0",
-        "gallery-dl>=1.20.0",                 # CLI tool – kept as runtime dependency
-        "ffmpeg-python>=0.2.0",               # optional, but used for metadata embedding
-        "curl-cffi>=0.5.0",                   # optional, but safe to keep
+        "gallery-dl>=1.20.0",
+        "ffmpeg-python>=0.2.0",
+        "curl-cffi>=0.5.0",
 
         # YouTube upload
         "google-api-python-client>=2.0.0",
         "google-auth-oauthlib>=0.4.0",
         "tqdm>=4.60.0",
 
-        # HTML/text processing (used in question bank & utils)
+        # HTML/text processing (question bank & article reader)
         "beautifulsoup4>=4.9.0",
         "html2text>=2020.1.16",
         "tabulate>=0.8.9",
 
-        # Instapaper
-        "readability-lxml",
-        "lxml_html_clean",
+        # Article extraction (Instapaper offline reader)
+        "readability-lxml>=0.8.1",
+        "lxml>=4.9.0",
+
+        # OAuth for Instapaper Full API
+        "requests-oauthlib>=1.3.0",
+
+        # Optional: for domain extraction in tags (if you implement auto-tagging)
+        # "tldextract>=3.0.0",
     ],
     extras_require={
         "dev": ["pytest", "black", "flake8"],
