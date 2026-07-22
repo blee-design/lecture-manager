@@ -88,6 +88,21 @@ def create_table():
     """)
     from .question_bank import create_question_table
     create_question_table()
+    # In migrate_table() – add this to create the table if missing
+    cursor.execute("SHOW TABLES LIKE 'instapaper_credentials'")
+    if not cursor.fetchone():
+        cursor.execute("""
+        CREATE TABLE instapaper_credentials (
+            id INT PRIMARY KEY DEFAULT 1,
+            consumer_key VARCHAR(255) NOT NULL,
+            consumer_secret VARCHAR(255) NOT NULL,
+            username VARCHAR(255) NOT NULL,
+            password VARCHAR(255) NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        );
+        """)
+        print_colored("[✓] Created instapaper_credentials table.", COLORS.GREEN)
     conn.commit()
     cursor.close()
     conn.close()
