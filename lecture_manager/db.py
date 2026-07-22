@@ -88,21 +88,6 @@ def create_table():
     """)
     from .question_bank import create_question_table
     create_question_table()
-    # In migrate_table() – add this to create the table if missing
-    cursor.execute("SHOW TABLES LIKE 'instapaper_credentials'")
-    if not cursor.fetchone():
-        cursor.execute("""
-        CREATE TABLE instapaper_credentials (
-            id INT PRIMARY KEY DEFAULT 1,
-            consumer_key VARCHAR(255) NOT NULL,
-            consumer_secret VARCHAR(255) NOT NULL,
-            username VARCHAR(255) NOT NULL,
-            password VARCHAR(255) NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        );
-        """)
-        print_colored("[✓] Created instapaper_credentials table.", COLORS.GREEN)
     conn.commit()
     cursor.close()
     conn.close()
@@ -264,6 +249,46 @@ def migrate_table():
     if not cursor.fetchone():
         cursor.execute("ALTER TABLE questions ADD COLUMN notes TEXT NULL")
         print_colored("[✓] Added 'notes' column to questions table.", COLORS.GREEN)
+    # In migrate_table() – add this to create the table if missing
+    # instapaper_credentials
+    cursor.execute("SHOW TABLES LIKE 'instapaper_credentials'")
+    if not cursor.fetchone():
+        cursor.execute("""
+            CREATE TABLE instapaper_credentials (
+                id INT PRIMARY KEY DEFAULT 1,
+                consumer_key VARCHAR(255) NOT NULL,
+                consumer_secret VARCHAR(255) NOT NULL,
+                username VARCHAR(255) NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            )
+        """)
+        print_colored("[✓] Created instapaper_credentials table.", COLORS.GREEN)
+
+    # instapaper_articles
+    cursor.execute("SHOW TABLES LIKE 'instapaper_articles'")
+    if not cursor.fetchone():
+        cursor.execute("""
+            CREATE TABLE instapaper_articles (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                bookmark_id VARCHAR(50) UNIQUE NOT NULL,
+                url VARCHAR(512) NOT NULL,
+                title VARCHAR(512),
+                author VARCHAR(255),
+                content LONGTEXT,
+                summary TEXT,
+                saved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            )
+        """)
+        print_colored("[✓] Created instapaper_articles table.", COLORS.GREEN)
+    # oauth token
+    cursor.execute("SHOW COLUMNS FROM instapaper_credentials LIKE 'oauth_token'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE instapaper_credentials ADD COLUMN oauth_token VARCHAR(255) NULL")
+        cursor.execute("ALTER TABLE instapaper_credentials ADD COLUMN oauth_secret VARCHAR(255) NULL")
+        print_colored("[✓] Added OAuth columns to instapaper_credentials.", COLORS.GREEN)
     cursor.close()
     conn.close()
 

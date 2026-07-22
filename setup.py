@@ -66,6 +66,10 @@ setup(
         "beautifulsoup4>=4.9.0",
         "html2text>=2020.1.16",
         "tabulate>=0.8.9",
+
+        # Instapaper
+        "readability-lxml",
+        "lxml_html_clean",
     ],
     extras_require={
         "dev": ["pytest", "black", "flake8"],

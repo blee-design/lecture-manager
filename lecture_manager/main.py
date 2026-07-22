@@ -22,7 +22,7 @@ from .web import run_web_server
 from .utils import print_colored, color_text, COLORS
 from .youtube import refresh_cookies
 from .facebook import download_facebook
-from .instapaper import add_to_instapaper, setup_credentials_interactive
+from .instapaper import add_to_instapaper, instapaper_menu
 
 def show_banner():
     width = 60
@@ -117,8 +117,7 @@ def main():
         print(" 28. " + color_text("Upload video to YouTube (unlisted)", COLORS.WHITE))
         print(" 29. " + color_text("Sync YouTube OAuth token to database", COLORS.WHITE))
         print(" 30. " + color_text("Question Bank", COLORS.WHITE))
-        print(" 31. " + color_text("Save a lecture/question to Instapaper", COLORS.WHITE))
-        print(" 32. " + color_text("Set up/re‑enter Instapaper credentials", COLORS.WHITE))
+        print(" 31. " + color_text("Instapaper", COLORS.WHITE))
         print("  0. " + color_text("Exit", COLORS.RED, bold=True))
         print("  " + "─" * 40)
         choice = input(color_text("Choose an option: ", COLORS.MAGENTA)).strip()
@@ -223,48 +222,8 @@ def main():
             from .question_bank import question_bank_menu
             question_bank_menu()
         elif choice == '31':
-            # Save a lecture/question to Instapaper
-            print("\nWhat do you want to save to Instapaper?")
-            print("  1. A YouTube lecture (by ID)")
-            print("  2. A question (by ID)")
-            sub = input(color_text("Choose (1-2): ", COLORS.MAGENTA)).strip()
-            if sub == '1':
-                vid = input(color_text("Enter Video ID, Syllabus ID, or mirror ID: ", COLORS.MAGENTA)).strip()
-                if not vid:
-                    continue
-                from .db import get_record_by_any_id
-                rec = get_record_by_any_id(vid)
-                if not rec:
-                    print_colored("[!] Record not found.", COLORS.RED)
-                    continue
-                url = f"https://youtu.be/{rec['video_id']}"
-                title = rec.get('original_filename') or rec.get('video_title') or f"Lecture {rec['syllabus_id']}"
-                tags = f"lecture,{rec.get('subject', '')}"
-                ok, msg = add_to_instapaper(url, title=title, tags=tags)
-                print_colored(msg, COLORS.GREEN if ok else COLORS.RED)
-
-            elif sub == '2':
-                qid = input(color_text("Enter question ID: ", COLORS.MAGENTA)).strip()
-                if not qid or not qid.isdigit():
-                    print_colored("[!] Invalid ID.", COLORS.RED)
-                    continue
-                from .question_bank import get_question_by_id
-                q = get_question_by_id(int(qid))
-                if not q:
-                    print_colored("[!] Question not found.", COLORS.RED)
-                    continue
-                # Build a URL to the web interface (assumes web server is running on port 5000)
-                title = f"{q['institution']} {q['level']} Q{q['question_number']} – {q['subject']}"
-                url = f"http://localhost:5000/question/{qid}"
-                tags = f"question,{q['subject']}"
-                ok, msg = add_to_instapaper(url, title=title, tags=tags)
-                print_colored(msg, COLORS.GREEN if ok else COLORS.RED)
-            else:
-                print_colored("[!] Invalid choice.", COLORS.RED)
-
-        elif choice == '32':
-            # Set up / re-enter Instapaper credentials
-            setup_credentials_interactive()
+            from .instapaper import instapaper_menu
+            instapaper_menu()
         elif choice == '0':
             print_colored("\nGoodbye! Have a great day! 👋", COLORS.CYAN)
             break

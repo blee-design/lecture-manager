@@ -60,6 +60,29 @@ def get_all_youtube_records():
     conn.close()
     return rows
 
+@app.route('/instapaper')
+def instapaper_list():
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT id, title, author, saved_at FROM instapaper_articles ORDER BY saved_at DESC")
+    articles = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return render_template('instapaper_list.html', articles=articles)
+
+@app.route('/instapaper/<int:id>')
+def instapaper_read(id):
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM instapaper_articles WHERE id = %s", (id,))
+    article = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    if not article:
+        flash('Article not found', 'danger')
+        return redirect(url_for('instapaper_list'))
+    return render_template('instapaper_read.html', article=article)
+
 @app.route('/lecture/upload/<int:id>', methods=['POST'])
 def upload_to_youtube_web(id):
     conn = get_connection()
