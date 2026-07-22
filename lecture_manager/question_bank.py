@@ -206,50 +206,38 @@ def update_question(qid, **kwargs):
     """
     Update a question by ID.
     Returns:
-        'updated'      – update succeeded
-        'no_change'    – no fields changed (no effect)
+        'updated'      – update succeeded (rows affected > 0)
+        'no_change'    – no rows affected (values identical or fields cleared due to duplicate detection)
         'no_fields'    – no fields provided
         'not_found'    – question not found
-        'error: ...'   – on database error
+        'error: <msg>' – on database error
     """
-    # ---- First, fetch current record to compare ----
     current = get_question_by_id(qid)
     if not current:
         return 'not_found'
 
-    # ---- Handle duplicate English clearing ----
-    # We need to consider three cases:
-    # 1. Both nepali and english are being updated.
-    # 2. Only nepali is updated – check if existing english matches new nepali.
-    # 3. Only english is updated – check if it matches current nepali.
+    had_fields = bool(kwargs)  # track if any fields were originally provided
 
+    # ---- Clear English if it duplicates Nepali ----
     nep_new = kwargs.get('nepali_transcription')
     eng_new = kwargs.get('english_transcription')
-
     if nep_new is not None and eng_new is not None:
-        # Both provided: compare them
         if _should_clear_english(nep_new, eng_new):
             kwargs['english_transcription'] = None
     elif nep_new is not None and eng_new is None:
-        # Only Nepali changed; check against current English (if any)
         current_eng = current.get('english_transcription')
         if current_eng and _should_clear_english(nep_new, current_eng):
             kwargs['english_transcription'] = None
     elif eng_new is not None and nep_new is None:
-        # Only English changed; check against current Nepali
         current_nep = current.get('nepali_transcription')
         if current_nep and _should_clear_english(current_nep, eng_new):
             kwargs['english_transcription'] = None
-    # else: neither is being updated; nothing to do.
 
-    # ---- Prepare update fields ----
-    conn = get_connection()
-    cursor = conn.cursor()
+    # ---- Build UPDATE statement ----
     fields = []
     values = []
     for key, val in kwargs.items():
         if val is not None:
-            # Properly escape 'group' column (reserved word)
             if key == 'group':
                 fields.append("`group` = %s")
             else:
@@ -257,13 +245,17 @@ def update_question(qid, **kwargs):
             values.append(val)
 
     if not fields:
-        cursor.close()
-        conn.close()
-        return 'no_fields'
+        # If we had fields but all were cleared (e.g., English duplicate), treat as no change
+        if had_fields:
+            return 'no_change'
+        else:
+            return 'no_fields'
 
     values.append(qid)
     sql = f"UPDATE {TABLE_NAME} SET {', '.join(fields)} WHERE id = %s"
 
+    conn = get_connection()
+    cursor = conn.cursor()
     try:
         cursor.execute(sql, values)
         conn.commit()
@@ -289,7 +281,7 @@ def delete_question(qid):
     conn.close()
     return affected > 0
 
-def check_duplicate(date, institution, level, question_number, exclude_id=None):
+def check_duplicate(date, institution, level, paper, group, question_number, exclude_id=None):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     try:
@@ -298,18 +290,19 @@ def check_duplicate(date, institution, level, question_number, exclude_id=None):
             WHERE question_date = %s
             AND institution = %s
             AND level = %s
+            AND paper = %s
+            AND `group` = %s
             AND question_number = %s
             LIMIT 1
         """
-        params = [date, institution, level, question_number]
+        params = [date, institution, level, paper, group, question_number]
         if exclude_id:
             sql += " AND id != %s"
             params.append(exclude_id)
         cursor.execute(sql, params)
         row = cursor.fetchone()
-        # Ensure any remaining rows are consumed (though with LIMIT 1 there will be none)
         while cursor.fetchone():
-            pass  # consume all rows
+            pass
         return row['id'] if row else None
     finally:
         cursor.close()
@@ -853,27 +846,17 @@ def update_question_interactive():
     if not qid or not qid.isdigit():
         print_colored("[!] Invalid ID.", COLORS.RED)
         return
+
     row = get_question_by_id(int(qid))
     if not row:
         print_colored("[!] Question not found.", COLORS.RED)
         return
 
-    # Define fields in a specific order
     fields = [
-        'question_date',
-        'institution',
-        'subject',
-        'paper',
-        'group',
-        'marks',
-        'chapter',
-        'question_number',
-        'nepali_transcription',
-        'english_transcription',
-        'level',
-        'notes'
+        'question_date', 'institution', 'subject', 'paper', 'group',
+        'marks', 'chapter', 'question_number',
+        'nepali_transcription', 'english_transcription', 'level', 'notes'
     ]
-
     updates = {}
 
     while True:
@@ -881,13 +864,11 @@ def update_question_interactive():
         print_colored("  UPDATE QUESTION", COLORS.CYAN, bold=True)
         print("═" * 50)
 
-        # Show current values with numbers
         for i, field in enumerate(fields, 1):
             val = row.get(field)
             if val is None or val == '':
                 display_val = "None"
             else:
-                # Truncate long text for display
                 display_val = str(val)
                 if len(display_val) > 60:
                     display_val = display_val[:57] + "..."
@@ -904,10 +885,16 @@ def update_question_interactive():
             if not updates:
                 print_colored("[i] No changes made.", COLORS.YELLOW)
                 return
-            if update_question(int(qid), **updates):
+
+            status = update_question(int(qid), **updates)
+            if status == 'updated':
                 print_colored("[✓] Question updated successfully.", COLORS.GREEN)
+            elif status == 'no_change':
+                print_colored("[i] No changes were made (values already the same).", COLORS.YELLOW)
+            elif status.startswith('error'):
+                print_colored(f"[!] Update failed: {status}", COLORS.RED)
             else:
-                print_colored("[!] Update failed.", COLORS.RED)
+                print_colored(f"[!] Unexpected status: {status}", COLORS.RED)
             return
 
         if not choice.isdigit():
@@ -922,25 +909,40 @@ def update_question_interactive():
         field = fields[idx - 1]
         current = row.get(field, '')
 
-        # Special handling for marks
-        if field == 'marks':
-            new_val = input(color_text(f"New value for {field} [{current}]: ", COLORS.MAGENTA)).strip()
-            if new_val == '':
-                continue
-            if not new_val.isdigit():
-                print_colored("[!] Marks must be a number. Keeping current value.", COLORS.YELLOW)
-                continue
-            updates[field] = int(new_val)
-            row[field] = int(new_val)  # Update display
-            print_colored(f"[✓] {field} will be updated to {new_val}", COLORS.GREEN)
+        # Helper: ask for new value with clear/skip semantics
+        print(f"\nCurrent value: {color_text(current if current != '' else '(empty)', COLORS.BLUE)}")
+        prompt = color_text(f"New value (press Enter to skip, or type 'clear' to empty): ", COLORS.MAGENTA)
+        raw = input(prompt).strip()
 
+        if raw == '':
+            # Skip – do nothing
+            print_colored("[i] Skipped (no change).", COLORS.YELLOW)
+            continue
+
+        if raw.lower() in ('clear', 'null', 'none'):
+            # Clear the field
+            if field == 'marks':
+                updates[field] = None
+                row[field] = None
+                print_colored("[✓] Marks will be cleared (set to NULL).", COLORS.GREEN)
+            else:
+                updates[field] = ''   # empty string
+                row[field] = ''
+                print_colored("[✓] Field will be cleared (set to empty string).", COLORS.GREEN)
+            continue
+
+        # Normal value
+        if field == 'marks':
+            if raw.isdigit():
+                updates[field] = int(raw)
+                row[field] = int(raw)
+                print_colored(f"[✓] Marks will be updated to {raw}", COLORS.GREEN)
+            else:
+                print_colored("[!] Marks must be a number. Keeping current value.", COLORS.YELLOW)
         else:
-            new_val = input(color_text(f"New value for {field} [{current}]: ", COLORS.MAGENTA)).strip()
-            if new_val == '':
-                continue
-            updates[field] = new_val
-            row[field] = new_val  # Update display
-            print_colored(f"[✓] {field} will be updated to: {new_val}", COLORS.GREEN)
+            updates[field] = raw
+            row[field] = raw
+            print_colored(f"[✓] {field} will be updated to: {raw}", COLORS.GREEN)
 
 def delete_question_interactive():
     qid = input(color_text("Enter question ID to delete: ", COLORS.MAGENTA)).strip()
@@ -1006,7 +1008,6 @@ def export_questions_csv():
         print_colored(f"[!] Export failed: {e}", COLORS.RED)
 
 def import_questions_csv():
-    """Import questions from a CSV file (id column is ignored if present)."""
     print("\n" + "═" * 50)
     print_colored("  IMPORT QUESTIONS FROM CSV", COLORS.CYAN, bold=True)
     print("═" * 50)
@@ -1027,14 +1028,17 @@ def import_questions_csv():
         print_colored("[i] No data found.", COLORS.YELLOW)
         return
 
-    # Normalize question numbers and ignore id
+    # Normalize question numbers and clean empty strings
     for row in rows:
         row.pop('id', None)
         if 'question_number' in row and row['question_number']:
             row['question_number'] = normalize_question_number(row['question_number'])
-        # Convert marks to int if present
         if 'marks' in row and row['marks'] and row['marks'].isdigit():
             row['marks'] = int(row['marks'])
+        # Convert empty strings to None for optional fields
+        for field in ['paper', 'group', 'chapter', 'notes']:
+            if field in row and row[field] == '':
+                row[field] = None
 
     print(f"\n[i] Found {len(rows)} questions in the CSV file.")
     print("How to handle duplicates?")
@@ -1064,11 +1068,14 @@ def import_questions_csv():
         date = row.get('question_date')
         institution = row.get('institution')
         level = row.get('level')
+        paper = row.get('paper')
+        group = row.get('group')
         question_number = row.get('question_number')
 
+        # ----- check duplicate using full key -----
         dup_id = None
-        if date and institution and level and question_number:
-            dup_id = check_duplicate(date, institution, level, question_number)
+        if date and institution and level and paper is not None and group is not None and question_number:
+            dup_id = check_duplicate(date, institution, level, paper, group, question_number)
 
         if dup_id:
             if choice == '1':
@@ -1306,9 +1313,11 @@ def import_questions_txt():
         date = q.get('question_date')
         institution = q.get('institution')
         level = q.get('level')
+        paper = q.get('paper')          # <-- add this
+        group = q.get('group')
         question_number = q.get('question_number')
 
-        dup_id = check_duplicate(date, institution, level, question_number)
+        dup_id = check_duplicate(date, institution, level, paper, group, question_number)
 
         if dup_id:
             if choice == '1':
@@ -1396,13 +1405,12 @@ def export_questions_json():
         print_colored(f"[!] Export failed: {e}", COLORS.RED)
 
 def import_questions_json():
-    """Import questions from a JSON file, ignoring any 'id' field."""
     print("\n" + "═" * 50)
     print_colored("  IMPORT QUESTIONS FROM JSON", COLORS.CYAN, bold=True)
     print("═" * 50)
     print("The JSON file should be an array of question objects.")
     print("Each object can have keys matching the database columns (except 'id', 'created_at', 'updated_at').")
-    print("If a duplicate is found (same date, institution, level, question_number), you can skip, overwrite, or abort.\n")
+    print("If a duplicate is found (same date, institution, level, paper, group, question_number), you can skip, overwrite, or abort.\n")
 
     filename = input(color_text("Enter JSON filename: ", COLORS.MAGENTA)).strip()
     if not filename or not os.path.exists(filename):
@@ -1423,11 +1431,15 @@ def import_questions_json():
         print_colored("[i] No data found.", COLORS.YELLOW)
         return
 
-    # Ignore 'id' and normalize question numbers
+    # Clean and normalize
     for obj in rows:
         obj.pop('id', None)
         if 'question_number' in obj and obj['question_number']:
             obj['question_number'] = normalize_question_number(obj['question_number'])
+        # Convert empty strings to None for optional fields
+        for field in ['paper', 'group', 'chapter', 'notes']:
+            if field in obj and obj[field] == '':
+                obj[field] = None
 
     print(f"\n[i] Found {len(rows)} questions in the JSON file.")
     print("How to handle duplicates?")
@@ -1457,12 +1469,14 @@ def import_questions_json():
         date = obj.get('question_date')
         institution = obj.get('institution')
         level = obj.get('level')
+        paper = obj.get('paper')
+        group = obj.get('group')
         question_number = obj.get('question_number')
 
-        # Check for duplicate by natural key
+        # ----- check duplicate using full key -----
         dup_id = None
-        if date and institution and level and question_number:
-            dup_id = check_duplicate(date, institution, level, question_number)
+        if date and institution and level and paper is not None and group is not None and question_number:
+            dup_id = check_duplicate(date, institution, level, paper, group, question_number)
 
         if dup_id:
             if choice == '1':
@@ -1498,7 +1512,6 @@ def import_questions_json():
                 conn.close()
                 return
         else:
-            # Insert new record
             placeholders = ','.join(['%s'] * len(fields))
             cols = ','.join(escaped_fields)
             values = [obj.get(f) for f in fields]

@@ -49,6 +49,7 @@ build/
 *.json
 *.txt
 *.kate-swp
+*.bak
 !requirements.txt   # keep requirements.txt if you have it
 !setup.py           # keep setup.py
 
