@@ -8,23 +8,41 @@ from readability import Document
 import html2text
 from .db import get_connection
 from .utils import print_colored, COLORS, color_text
+from requests_oauthlib import OAuth1Session
 
-import requests
-from requests.auth import HTTPBasicAuth
-resp = requests.get(
-    'https://www.instapaper.com/api/authenticate',
-    auth=HTTPBasicAuth('your_username', 'your_password')
-)
-print(resp.status_code)  # Should be 200 if credentials are valid
-
-TABLE_NAME = "instapaper_credentials"
+# ----- Tables -----
+CRED_TABLE = "instapaper_credentials"
+OAUTH_TABLE = "instapaper_oauth"
 ARTICLE_TABLE = "instapaper_articles"
 
-# ----- Database helpers -----
+# ----- Database helpers for OAuth tokens -----
+def get_oauth_tokens():
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(f"SELECT oauth_token, oauth_secret FROM {OAUTH_TABLE} WHERE id = 1")
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    if row:
+        return row.get('oauth_token'), row.get('oauth_secret')
+    return None, None
+
+def save_oauth_tokens(oauth_token, oauth_secret):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        REPLACE INTO {OAUTH_TABLE} (id, oauth_token, oauth_secret)
+        VALUES (1, %s, %s)
+    """, (oauth_token, oauth_secret))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+# ----- Existing credential helpers -----
 def get_credentials():
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
-    cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE id = 1")
+    cursor.execute(f"SELECT * FROM {CRED_TABLE} WHERE id = 1")
     row = cursor.fetchone()
     cursor.close()
     conn.close()
@@ -34,56 +52,78 @@ def save_credentials(consumer_key, consumer_secret, username, password):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(f"""
-        REPLACE INTO {TABLE_NAME} (id, consumer_key, consumer_secret, username, password)
+        REPLACE INTO {CRED_TABLE} (id, consumer_key, consumer_secret, username, password)
         VALUES (1, %s, %s, %s, %s)
     """, (consumer_key, consumer_secret, username, password))
     conn.commit()
     cursor.close()
     conn.close()
 
-# ----- OAuth / xAuth -----
+# ----- OAuth Access Token (with fallback) -----
 def get_instapaper_access_token():
-    """Perform xAuth OAuth and return (access_token, access_secret)."""
-    from requests_oauthlib import OAuth1Session
+    """
+    Obtain access token using xAuth (direct username/password exchange).
+    If tokens already exist in DB, return them.
+    """
+    # 1. Try existing tokens
+    oauth_token, oauth_secret = get_oauth_tokens()
+    if oauth_token and oauth_secret:
+        return oauth_token, oauth_secret
+
+    print_colored("[i] No local OAuth tokens. Trying xAuth...", COLORS.BLUE)
+
+    # 2. Get credentials
     creds = get_credentials()
     if not creds:
+        print_colored("[!] No consumer credentials found. Run option 6 first.", COLORS.RED)
         return None, None
 
-    # If we already have tokens, return them
-    if creds.get('oauth_token') and creds.get('oauth_secret'):
-        return creds['oauth_token'], creds['oauth_secret']
+    consumer_key = creds['consumer_key'].strip()
+    consumer_secret = creds['consumer_secret'].strip()
+    username = creds['username'].strip()
+    password = creds['password'].strip()
 
-    # Otherwise, exchange username/password for tokens
-    session = OAuth1Session(creds['consumer_key'], creds['consumer_secret'])
-    data = {
-        "x_auth_username": creds['username'],
-        "x_auth_password": creds['password'],
-        "x_auth_mode": "client_auth"
+    if not all([consumer_key, consumer_secret, username, password]):
+        print_colored("[!] Credentials incomplete. Check option 6.", COLORS.RED)
+        return None, None
+
+    # 3. xAuth exchange
+    from requests_oauthlib import OAuth1Session
+    access_token_url = "https://www.instapaper.com/api/1/oauth/access_token"
+    oauth = OAuth1Session(consumer_key, client_secret=consumer_secret, signature_method='HMAC-SHA1')
+
+    xauth_params = {
+        'x_auth_username': username,
+        'x_auth_password': password,
+        'x_auth_mode': 'client_auth'
     }
-    resp = session.post("https://www.instapaper.com/api/1/oauth/access_token", data=data)
-    if resp.status_code != 200:
-        print_colored(f"[!] xAuth failed: {resp.text}", COLORS.RED)
-        return None, None
-    token_data = dict(pair.split('=') for pair in resp.text.split('&'))
-    oauth_token = token_data['oauth_token']
-    oauth_secret = token_data['oauth_secret']
 
-    # Store tokens in DB for future use
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE instapaper_credentials
-        SET oauth_token = %s, oauth_secret = %s
-        WHERE id = 1
-    """, (oauth_token, oauth_secret))
-    conn.commit()
-    cursor.close()
-    conn.close()
-    return oauth_token, oauth_secret
+    try:
+        print_colored("[i] Exchanging credentials via xAuth...", COLORS.BLUE)
+        resp = oauth.post(access_token_url, data=xauth_params, timeout=10)
+        if resp.status_code != 200:
+            print_colored(f"[!] xAuth failed (HTTP {resp.status_code}): {resp.text}", COLORS.RED)
+            return None, None
+
+        from urllib.parse import parse_qs
+        data = parse_qs(resp.text)
+        access_token = data.get('oauth_token', [None])[0]
+        access_secret = data.get('oauth_token_secret', [None])[0]
+        if not access_token or not access_secret:
+            print_colored("[!] Invalid response from xAuth.", COLORS.RED)
+            return None, None
+    except Exception as e:
+        print_colored(f"[!] xAuth error: {e}", COLORS.RED)
+        return None, None
+
+    # 4. Save and return
+    save_oauth_tokens(access_token, access_secret)
+    print_colored("[✓] OAuth tokens saved.", COLORS.GREEN)
+    return access_token, access_secret
 
 # ----- Article fetching and storage -----
 def fetch_article_text(url):
-    """Extract clean article text using readability-lxml with proper headers."""
+    """Extract clean article text, with robust error handling."""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -92,19 +132,41 @@ def fetch_article_text(url):
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1'
     }
-
-    # Create a session with retry logic
     session = requests.Session()
     session.headers.update(headers)
 
     try:
         resp = session.get(url, timeout=15)
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            # Log silently or skip; we'll just return None
+            return None
 
-        # If we get here, the request was successful
-        doc = Document(resp.text)
-        title = doc.title() or "Untitled"
-        content = doc.summary()
+        # ---- Clean the HTML to remove null bytes and control chars ----
+        # This prevents the "All strings must be XML compatible" error.
+        html = resp.text
+        # Remove NULL bytes
+        html = html.replace('\x00', '')
+        # Remove other control characters (except newline, tab, etc.)
+        import re
+        html = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', html)
+
+        # Try readability
+        try:
+            doc = Document(html)
+            title = doc.title() or "Untitled"
+            content = doc.summary()
+        except Exception as e:
+            # If readability fails, fallback to a simple extraction using html2text
+            import html2text
+            h = html2text.HTML2Text()
+            h.body_width = 0
+            content = h.handle(html)
+            title = "Untitled (fallback)"
+            # Try to get title from <title> tag
+            import re
+            match = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE)
+            if match:
+                title = match.group(1).strip()
 
         return {
             'title': title,
@@ -115,10 +177,10 @@ def fetch_article_text(url):
             'publish_date': None
         }
     except requests.exceptions.Timeout:
-        print_colored(f"[!] Timeout fetching {url}", COLORS.YELLOW)
         return None
-    except requests.exceptions.RequestException as e:
-        print_colored(f"[!] Failed to fetch article: {e}", COLORS.RED)
+    except Exception as e:
+        # Print once for debugging but don't spam
+        # print_colored(f"[!] Error fetching {url}: {e}", COLORS.YELLOW)
         return None
 
 def store_article_locally(url, title, author, content):
@@ -139,13 +201,13 @@ def store_article_locally(url, title, author, content):
     cursor.close()
     conn.close()
 
-# ----- Main save function (Simple API + local storage) -----
+# ----- Save to Instapaper (Simple API) -----
 def add_to_instapaper(url, title=None, tags=None):
     creds = get_credentials()
     if not creds:
         return False, "No credentials found. Run setup first."
 
-    # ----- Test credentials first (optional) -----
+    # Test credentials
     test_resp = requests.get(
         "https://www.instapaper.com/api/authenticate",
         auth=HTTPBasicAuth(creds['username'], creds['password'])
@@ -153,7 +215,6 @@ def add_to_instapaper(url, title=None, tags=None):
     if test_resp.status_code != 200:
         return False, "❌ Invalid Instapaper username/password. Please check credentials."
 
-    # ----- Save to Instapaper (Simple API) -----
     endpoint = "https://www.instapaper.com/api/add"
     data = {"url": url}
     if title:
@@ -169,7 +230,6 @@ def add_to_instapaper(url, title=None, tags=None):
             timeout=10
         )
         if resp.status_code == 201:
-            # Saved to Instapaper – now fetch and store locally
             article_data = fetch_article_text(url)
             if article_data:
                 store_article_locally(url, article_data['title'], article_data['author'], article_data['text'])
@@ -185,13 +245,18 @@ def add_to_instapaper(url, title=None, tags=None):
 
 # ----- Full API: fetch all bookmarks -----
 def fetch_all_bookmarks(limit=500, offset=0):
-    """Fetch all bookmarks from Instapaper using Full API."""
+    """
+    Fetch all bookmarks from Instapaper using Full API.
+    Returns: (success, message)
+    """
     oauth_token, oauth_secret = get_instapaper_access_token()
     if not oauth_token or not oauth_secret:
-        return False, "OAuth tokens missing. Run xAuth first."
+        return False, "OAuth tokens missing. Run OAuth flow first."
 
     creds = get_credentials()
-    from requests_oauthlib import OAuth1Session
+    if not creds:
+        return False, "Consumer credentials missing."
+
     session = OAuth1Session(
         creds['consumer_key'],
         creds['consumer_secret'],
@@ -200,13 +265,20 @@ def fetch_all_bookmarks(limit=500, offset=0):
     )
 
     params = {'limit': limit, 'offset': offset}
-    resp = session.get("https://www.instapaper.com/api/1/bookmarks/list", params=params)
-    if resp.status_code != 200:
-        return False, f"API error: {resp.text}"
+    try:
+        resp = session.get("https://www.instapaper.com/api/1/bookmarks/list", params=params)
+        if resp.status_code != 200:
+            return False, f"API error: {resp.text}"
+    except Exception as e:
+        return False, f"API request failed: {e}"
 
     bookmarks = resp.json()
     total = len(bookmarks)
     print_colored(f"[i] Found {total} bookmarks. Syncing...", COLORS.BLUE)
+
+    success_count = 0
+    failed_urls = []
+
     for idx, bm in enumerate(bookmarks, 1):
         url = bm.get('url')
         if not url:
@@ -220,10 +292,42 @@ def fetch_all_bookmarks(limit=500, offset=0):
                 article_data['author'],
                 article_data['text']
             )
-    print()
-    return True, f"Synced {total} bookmarks to local database."
+            success_count += 1
+        else:
+            failed_urls.append(url)
 
-# ----- Local CRUD functions -----
+    print()  # newline after progress
+
+    # ---- Summary ----
+    if failed_urls:
+        print_colored(f"[!] Failed to fetch {len(failed_urls)} articles.", COLORS.YELLOW)
+        # Show first 5 failed URLs (optional)
+        print("  Failed URLs (first 5):")
+        for u in failed_urls[:5]:
+            print(f"    {u}")
+        if len(failed_urls) > 5:
+            print(f"    ... and {len(failed_urls) - 5} more.")
+        print("  You can retry these individually using option 4 (Refresh).")
+    else:
+        print_colored("[✓] All articles fetched successfully.", COLORS.GREEN)
+
+    return True, f"Synced {success_count} of {total} bookmarks to local database."
+
+def list_all_articles():
+    """Return all articles (no limit)."""
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("""
+        SELECT id, title, author, url, saved_at, updated_at
+        FROM instapaper_articles
+        ORDER BY saved_at DESC
+    """)
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
+# ----- Local CRUD functions (unchanged) -----
 def list_articles(limit=20):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -258,7 +362,6 @@ def delete_article(article_id):
     return affected > 0
 
 def refresh_article(article_id):
-    """Re‑fetch the article content and update the local DB."""
     article = get_article_by_id(article_id)
     if not article:
         return False, "Article not found."
@@ -278,7 +381,7 @@ def refresh_article(article_id):
     conn.close()
     return True, "Article refreshed."
 
-# ----- Interactive functions -----
+# ----- Interactive functions (unchanged) -----
 def _mask_string(s, show=4):
     if not s:
         return "(empty)"
@@ -287,23 +390,19 @@ def _mask_string(s, show=4):
     return s[:show] + "*" * (len(s) - show)
 
 def _full_setup():
-    """Prompt for all 4 credentials and save them."""
     print("\n" + "═" * 50)
     print_colored("  INSTAPAPER SETUP", COLORS.CYAN, bold=True)
     print("═" * 50)
     print("We need your Instapaper app credentials and login.")
     print("Get Consumer Key/Secret from: https://www.instapaper.com/developers")
     print("═" * 50)
-
     consumer_key = input(color_text("Consumer Key: ", COLORS.MAGENTA)).strip()
     consumer_secret = input(color_text("Consumer Secret: ", COLORS.MAGENTA)).strip()
     username = input(color_text("Instapaper Username: ", COLORS.MAGENTA)).strip()
     password = input(color_text("Instapaper Password: ", COLORS.MAGENTA)).strip()
-
     if not all([consumer_key, consumer_secret, username, password]):
         print_colored("[!] All fields are required. Setup cancelled.", COLORS.RED)
         return False
-
     save_credentials(consumer_key, consumer_secret, username, password)
     print_colored("[✓] Instapaper credentials saved successfully.", COLORS.GREEN)
     return True
@@ -315,7 +414,6 @@ def edit_credentials_interactive():
 
     updated = creds.copy()
     changed = False
-
     while True:
         print("\n" + "═" * 50)
         print_colored("  EDIT INSTAPAPER CREDENTIALS", COLORS.CYAN, bold=True)
@@ -327,9 +425,7 @@ def edit_credentials_interactive():
         print("  0. Save changes and exit")
         print("  c. Cancel and discard changes")
         print("═" * 50)
-
-        choice = input(color_text("Choose a field (1-4), 0 to save, or c to cancel: ", COLORS.MAGENTA)).strip().lower()
-
+        choice = input(color_text("Choose (1-4, 0 to save, c to cancel): ", COLORS.MAGENTA)).strip().lower()
         if choice == '0':
             if not changed:
                 print_colored("[i] No changes made.", COLORS.YELLOW)
@@ -342,7 +438,6 @@ def edit_credentials_interactive():
             )
             print_colored("[✓] Credentials updated and saved.", COLORS.GREEN)
             return True
-
         if choice == 'c':
             if changed:
                 confirm = input(color_text("Discard changes? (y/n): ", COLORS.RED)).strip().lower()
@@ -354,21 +449,13 @@ def edit_credentials_interactive():
             else:
                 print_colored("[i] No changes to discard.", COLORS.YELLOW)
                 return True
-
         if choice not in ('1', '2', '3', '4'):
             print_colored("[!] Invalid choice.", COLORS.RED)
             continue
-
-        field_map = {
-            '1': 'consumer_key',
-            '2': 'consumer_secret',
-            '3': 'username',
-            '4': 'password'
-        }
+        field_map = {'1': 'consumer_key', '2': 'consumer_secret', '3': 'username', '4': 'password'}
         field = field_map[choice]
         current = updated.get(field, '')
         display_current = _mask_string(current, 4) if field in ('consumer_secret', 'password') else current
-
         new_val = input(color_text(f"New {field.replace('_', ' ').title()} [{display_current}]: ", COLORS.MAGENTA)).strip()
         if new_val:
             updated[field] = new_val
@@ -418,25 +505,42 @@ def save_lecture_question():
             print_colored("[!] URL cannot be empty.", COLORS.RED)
             return
         title = input(color_text("Optional title (press Enter to auto-detect): ", COLORS.MAGENTA)).strip()
-        tags = input(color_text("Optional tags (comma‑separated, e.g. 'news,finance'): ", COLORS.MAGENTA)).strip()
+        tags = input(color_text("Optional tags (comma‑separated): ", COLORS.MAGENTA)).strip()
         ok, msg = add_to_instapaper(url, title=title or None, tags=tags or None)
         print_colored(msg, COLORS.GREEN if ok else COLORS.RED)
     else:
         print_colored("[!] Invalid choice.", COLORS.RED)
 
 def list_articles_interactive():
-    articles = list_articles(limit=20)
+    """List saved articles with a user‑configurable limit."""
+    # Ask for how many to show
+    print("\nHow many articles to list?")
+    print("  Enter a number (e.g., 30) to show that many latest ones.")
+    print("  Enter 0 to show ALL articles (use with caution if you have many).")
+    print("  Press Enter to use the default (20).")
+    limit_input = input(color_text("Limit: ", COLORS.MAGENTA)).strip()
+
+    if limit_input == '':
+        limit = 20
+    else:
+        try:
+            limit = int(limit_input)
+        except ValueError:
+            print_colored("[!] Invalid number, using default 20.", COLORS.YELLOW)
+            limit = 20
+
+    articles = list_articles(limit=limit) if limit > 0 else list_all_articles()
+
     if not articles:
         print_colored("[i] No saved articles found.", COLORS.YELLOW)
         return
+
     print("\n" + "═" * 60)
-    print_colored("  SAVED ARTICLES (latest 20)", COLORS.CYAN, bold=True)
+    print_colored(f"  SAVED ARTICLES ({len(articles)} shown)", COLORS.CYAN, bold=True)
     print("═" * 60)
     for art in articles:
-        # Convert datetime to string safely
         saved_at_str = art['saved_at'].strftime('%Y-%m-%d') if art['saved_at'] else 'Unknown'
         title = art['title'] or 'Untitled'
-        # Truncate title if too long
         if len(title) > 50:
             title = title[:47] + '...'
         print(f"  ID: {art['id']:3} | {title:70} | {saved_at_str}")
@@ -451,27 +555,21 @@ def read_article_interactive():
     if not article:
         print_colored("[!] Article not found.", COLORS.RED)
         return
-
     content = article['content']
     if not content:
         print_colored("[!] No content stored.", COLORS.YELLOW)
         return
-
-    # Convert HTML to well-formatted plain text
     h = html2text.HTML2Text()
-    h.body_width = 0        # Don't wrap lines
-    h.ignore_links = False  # Show links in brackets
+    h.body_width = 0
+    h.ignore_links = False
     plain_text = h.handle(content).strip()
-
     saved_at_str = article['saved_at'].strftime('%Y-%m-%d %H:%M') if article['saved_at'] else 'Unknown'
-
     print("\n" + "═" * 60)
     print_colored(f"  {article['title'] or 'Untitled'}", COLORS.CYAN, bold=True)
     print_colored(f"  By: {article['author'] or 'Unknown'}", COLORS.BLUE)
     print(f"  URL: {article['url']}")
     print(f"  Saved: {saved_at_str}")
     print("═" * 60)
-
     if len(plain_text) > 2000:
         use_less = input(color_text("Content is long. View with 'less'? (y/n): ", COLORS.MAGENTA)).strip().lower()
         if use_less == 'y':
@@ -503,11 +601,10 @@ def delete_article_interactive():
         if delete_article(int(article_id)):
             print_colored("[✓] Article deleted.", COLORS.GREEN)
         else:
-            print_colored("[!] Deletion failed (maybe not found).", COLORS.RED)
+            print_colored("[!] Deletion failed.", COLORS.RED)
 
 # ----- Main menu -----
 def instapaper_menu():
-    """Main interactive menu for Instapaper."""
     while True:
         creds = get_credentials()
         if not creds:
@@ -553,6 +650,3 @@ def instapaper_menu():
             print_colored("[!] Invalid choice.", COLORS.RED)
 
         input("\nPress Enter to continue...")
-
-# Alias for backward compatibility
-manage_credentials_interactive = instapaper_menu
