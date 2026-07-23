@@ -42,7 +42,7 @@ help:
 
 backup: $(BACKUP_DIR)
 	@echo "Creating backup of $(PROJECT_NAME)..."
-	tar -czf $(BACKUP_FILE) $(EXCLUDE) .
+	tar -cJf $(BACKUP_FILE) $(EXCLUDE) .
 	@echo "Backup created: $(BACKUP_FILE)"
 
 $(BACKUP_DIR):
