@@ -36,7 +36,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="lecture-manager",
-    version="2.6.0",                     # bumped version
+    version="2.6.0.1",                     # bumped version
     description="Unified media manager for YouTube lectures, Facebook content, and offline article reading via Instapaper",
     long_description=long_description,
     long_description_content_type="text/markdown",
