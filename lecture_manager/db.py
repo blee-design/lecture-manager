@@ -88,6 +88,40 @@ def create_table():
     """)
     from .question_bank import create_question_table
     create_question_table()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS pomodoro_settings (
+        id INT PRIMARY KEY DEFAULT 1,
+        work_min INT NOT NULL DEFAULT 25,
+        short_break_min INT NOT NULL DEFAULT 5,
+        long_break_min INT NOT NULL DEFAULT 15,
+        cycles_before_long INT NOT NULL DEFAULT 4,
+        daily_goal INT NOT NULL DEFAULT 12,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS pomodoro_tasks (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        task_text VARCHAR(255) NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS pomodoro_log (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        phase ENUM('work', 'short_break', 'long_break') NOT NULL,
+        duration_min INT NOT NULL,
+        notes TEXT
+    );
+    """)
+    # Insert default settings if they don't exist
+    cursor.execute("INSERT IGNORE INTO pomodoro_settings (id) VALUES (1)")
+    # Add subject column to pomodoro_log if missing
+    cursor.execute("SHOW COLUMNS FROM pomodoro_log LIKE 'subject'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE pomodoro_log ADD COLUMN subject VARCHAR(255) NULL")
+        print_colored("[✓] Added 'subject' column to pomodoro_log.", COLORS.GREEN)
     conn.commit()
     cursor.close()
     conn.close()

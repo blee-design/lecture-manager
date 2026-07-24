@@ -2,6 +2,7 @@
 
 import readline
 import sys
+import tkinter as tk
 from .config import load_or_create_config, edit_config
 from .db import create_table, migrate_table
 from .crud import (
@@ -118,6 +119,7 @@ def main():
         print(" 29. " + color_text("Sync YouTube OAuth token to database", COLORS.WHITE))
         print(" 30. " + color_text("Question Bank", COLORS.WHITE))
         print(" 31. " + color_text("Instapaper", COLORS.WHITE))
+        print(" 32. " + color_text("Pomodoro Timer", COLORS.WHITE))
         print("  0. " + color_text("Exit", COLORS.RED, bold=True))
         print("  " + "─" * 40)
         choice = input(color_text("Choose an option: ", COLORS.MAGENTA)).strip()
@@ -224,6 +226,13 @@ def main():
         elif choice == '31':
             from .instapaper import instapaper_menu
             instapaper_menu()
+        elif choice == '32':
+            import subprocess
+            import sys
+            subprocess.Popen([sys.executable, "-m", "lecture_manager.pomodoro"])
+            print_colored("[✓] Pomodoro timer launched in a separate window.", COLORS.GREEN)
+            print_colored("[i] You can now continue using the CLI while the timer runs.", COLORS.BLUE)
+            # input("Press Enter to continue...")
         elif choice == '0':
             print_colored("\nGoodbye! Have a great day! 👋", COLORS.CYAN)
             break
