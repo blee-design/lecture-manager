@@ -115,6 +115,19 @@ def create_table():
         notes TEXT
     );
     """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS pomodoro_state (
+        id INT PRIMARY KEY DEFAULT 1,
+        current_phase ENUM('work','short_break','long_break') NOT NULL,
+        remaining_seconds INT NOT NULL,
+        notes TEXT,
+        subject VARCHAR(255),
+        cycles_completed INT DEFAULT 0,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    );
+    """)
+    # Insert a dummy row if not exists (for easier update)
+    cursor.execute("INSERT IGNORE INTO pomodoro_state (id, current_phase, remaining_seconds) VALUES (1, 'work', 0)")
     # Insert default settings if they don't exist
     cursor.execute("INSERT IGNORE INTO pomodoro_settings (id) VALUES (1)")
     # Add subject column to pomodoro_log if missing
@@ -331,6 +344,22 @@ def migrate_table():
         );
         """)
         print_colored("[✓] Created 'instapaper_oauth' table.", COLORS.GREEN)
+    # Ensure pomodoro_state table exists
+    cursor.execute("SHOW TABLES LIKE 'pomodoro_state'")
+    if not cursor.fetchone():
+        cursor.execute("""
+        CREATE TABLE pomodoro_state (
+            id INT PRIMARY KEY DEFAULT 1,
+            current_phase ENUM('work','short_break','long_break') NOT NULL,
+            remaining_seconds INT NOT NULL,
+            notes TEXT,
+            subject VARCHAR(255),
+            cycles_completed INT DEFAULT 0,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        );
+        """)
+        cursor.execute("INSERT INTO pomodoro_state (id, current_phase, remaining_seconds) VALUES (1, 'work', 0)")
+        print_colored("[✓] Created pomodoro_state table.", COLORS.GREEN)
     cursor.close()
     conn.close()
 

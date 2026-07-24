@@ -2,7 +2,7 @@
 
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
-from datetime import datetime
+from datetime import datetime, timedelta
 from .db import get_connection
 
 class PomodoroApp:
@@ -26,12 +26,18 @@ class PomodoroApp:
         self.sound_func = self._beep
 
         self.build_scrollable_ui()
+
+        # ---- Restore saved state if any ----
+        self.restore_state_if_any()
+
         self.update_display()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
+        # ---- Periodic state save (every 5 seconds) ----
+        self.schedule_state_save()
+
     # ---------- Scrollable UI with full mouse‑wheel support ----------
     def build_scrollable_ui(self):
-        # Create canvas and scrollbar
         self.canvas = tk.Canvas(self.root, borderwidth=0)
         scrollbar = ttk.Scrollbar(self.root, orient=tk.VERTICAL, command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=scrollbar.set)
@@ -39,38 +45,31 @@ class PomodoroApp:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Main frame inside canvas
         self.main_frame = ttk.Frame(self.canvas, padding="10")
         self.canvas.create_window((0, 0), window=self.main_frame, anchor=tk.NW)
 
-        # Update scroll region when frame changes size
         def configure_canvas(event):
             self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         self.main_frame.bind("<Configure>", configure_canvas)
 
-        # ---- Mouse wheel bindings (now on root window) ----
         def on_mousewheel(event):
-            if event.num == 4:      # Linux scroll up
+            if event.num == 4:
                 self.canvas.yview_scroll(-1, "units")
-            elif event.num == 5:    # Linux scroll down
+            elif event.num == 5:
                 self.canvas.yview_scroll(1, "units")
-            elif event.delta:       # Windows / macOS
+            elif event.delta:
                 self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-        # Bind to the root window – captures all wheel events inside this window
         self.root.bind("<MouseWheel>", on_mousewheel)
         self.root.bind("<Button-4>", on_mousewheel)
         self.root.bind("<Button-5>", on_mousewheel)
 
-        # Build UI inside main_frame
         self.build_ui(self.main_frame)
 
-    # ---------- UI building (receives parent frame) ----------
     def build_ui(self, parent):
         parent.columnconfigure(0, weight=1)
         parent.columnconfigure(1, weight=1)
 
-        # ---- Row 0: Timer (left) and Settings (right) ----
         timer_frame = ttk.LabelFrame(parent, text="Timer", padding="10")
         timer_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
 
@@ -93,7 +92,6 @@ class PomodoroApp:
         self.progress_label.pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(progress_frame, text="📊 Today's Summary", command=self.show_today_summary).pack(side=tk.LEFT)
 
-        # ---- Settings (right) ----
         settings_frame = ttk.LabelFrame(parent, text="Settings", padding="10")
         settings_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
 
@@ -119,14 +117,12 @@ class PomodoroApp:
 
         ttk.Button(settings_frame, text="Save Settings", command=self.save_settings).grid(row=5, column=0, columnspan=2, pady=10)
 
-        # ---- Row 1: Subject / Topic ----
         subject_frame = ttk.LabelFrame(parent, text="Subject / Topic", padding="5")
         subject_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=5, pady=2)
         self.subject_entry = ttk.Entry(subject_frame)
         self.subject_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5)
         subject_frame.columnconfigure(0, weight=1)
 
-        # ---- Row 2: Notes ----
         notes_frame = ttk.LabelFrame(parent, text="Notes for this session", padding="10")
         notes_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
         self.notes_text = scrolledtext.ScrolledText(notes_frame, height=6, wrap=tk.WORD)
@@ -134,7 +130,6 @@ class PomodoroApp:
         notes_frame.columnconfigure(0, weight=1)
         notes_frame.rowconfigure(0, weight=1)
 
-        # ---- Row 3: Log and Tasks ----
         log_frame = ttk.LabelFrame(parent, text="Study Log", padding="10")
         log_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
         self.log_text = scrolledtext.ScrolledText(log_frame, height=8, wrap=tk.WORD, state=tk.DISABLED)
@@ -169,7 +164,107 @@ class PomodoroApp:
         self.refresh_log()
         self.update_progress()
 
-    # ---------- Database helpers ----------
+    # ---------- State persistence ----------
+    def save_state(self):
+        """Save current session state to DB."""
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                REPLACE INTO pomodoro_state
+                (id, current_phase, remaining_seconds, notes, subject, cycles_completed, updated_at)
+                VALUES (1, %s, %s, %s, %s, %s, NOW())
+            """, (
+                self.current_phase,
+                self.remaining_seconds,
+                self.notes_text.get("1.0", tk.END).strip(),
+                self.subject_entry.get().strip(),
+                self.cycles_completed
+            ))
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            # Silently ignore DB errors during save
+            pass
+
+    def clear_state(self):
+        """Clear saved state (set remaining_seconds to 0)."""
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE pomodoro_state
+                SET remaining_seconds = 0, updated_at = NOW()
+                WHERE id = 1
+            """)
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
+
+    def load_state(self):
+        """Load saved state from DB. Returns dict or None."""
+        try:
+            conn = get_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT * FROM pomodoro_state WHERE id = 1")
+            row = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            if row and row['remaining_seconds'] > 0:
+                # Check if state is recent (within 2 hours)
+                updated = row['updated_at']
+                if updated and (datetime.now() - updated).total_seconds() < 7200:
+                    return row
+            return None
+        except Exception:
+            return None
+
+    def restore_state_if_any(self):
+        """Check for saved state and ask to resume."""
+        state = self.load_state()
+        if not state:
+            return
+
+        msg = (f"Resume previous session?\n\n"
+               f"Phase: {state['current_phase'].capitalize()}\n"
+               f"Remaining: {state['remaining_seconds']//60}m {state['remaining_seconds']%60}s\n"
+               f"Subject: {state.get('subject', '') or '(none)'}\n"
+               f"Cycles completed: {state['cycles_completed']}\n\n"
+               f"Notes: {state.get('notes', '')[:100]}...")
+        answer = messagebox.askyesno("Resume Session", msg)
+        if answer:
+            # Restore all fields
+            self.current_phase = state['current_phase']
+            self.remaining_seconds = state['remaining_seconds']
+            self.cycles_completed = state['cycles_completed']
+            self.subject_entry.delete(0, tk.END)
+            self.subject_entry.insert(0, state.get('subject', ''))
+            self.notes_text.delete("1.0", tk.END)
+            self.notes_text.insert("1.0", state.get('notes', ''))
+            self.phase_label.config(text=self.current_phase.capitalize())
+            self.update_display()
+
+            # Set as paused so Start resumes from saved time
+            self.paused = True
+            self.timer_running = False
+            self.start_btn.config(state=tk.NORMAL)
+            self.pause_btn.config(state=tk.NORMAL, text="Resume")
+
+            messagebox.showinfo("Restored", "Session restored. Click Start to resume.")
+        else:
+            # Discard saved state
+            self.clear_state()
+
+    def schedule_state_save(self):
+        """Save state every 5 seconds if timer is running or paused."""
+        if self.timer_running or self.paused:
+            self.save_state()
+        self.root.after(5000, self.schedule_state_save)
+
+    # ---------- Database helpers (unchanged) ----------
     def load_config(self):
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
@@ -331,7 +426,7 @@ class PomodoroApp:
 
         ttk.Button(summary_win, text="Close", command=summary_win.destroy).pack(pady=5)
 
-    # ---------- Timer logic ----------
+    # ---------- Timer logic (with state updates) ----------
     def start_timer(self):
         if self.timer_running and not self.paused:
             return
@@ -341,6 +436,7 @@ class PomodoroApp:
             self.start_btn.config(state=tk.DISABLED)
             self.timer_running = True
             self.update_timer()
+            self.save_state()
             return
 
         if self.current_phase == "work":
@@ -357,6 +453,7 @@ class PomodoroApp:
         self.pause_btn.config(state=tk.NORMAL, text="Pause")
         self.update_display()
         self.update_timer()
+        self.save_state()
 
     def update_timer(self):
         if not self.timer_running or self.paused:
@@ -373,10 +470,19 @@ class PomodoroApp:
             self.paused = True
             self.pause_btn.config(text="Resume")
             self.start_btn.config(state=tk.NORMAL)
+            self.save_state()
         elif self.paused:
             pass
 
     def reset_timer(self):
+        # Ask for confirmation before resetting
+        if self.timer_running or self.paused:
+            confirm = messagebox.askyesno("Reset Timer",
+                                        "Are you sure you want to reset?\n\n"
+                                        "This will discard the current session progress.")
+            if not confirm:
+                return
+
         self.timer_running = False
         self.paused = False
         self.start_btn.config(state=tk.NORMAL)
@@ -385,6 +491,7 @@ class PomodoroApp:
         self.remaining_seconds = self.config["work_min"] * 60
         self.phase_label.config(text="Work")
         self.update_display()
+        self.clear_state()
 
     def timer_complete(self):
         self.timer_running = False
@@ -412,6 +519,13 @@ class PomodoroApp:
             self.remaining_seconds = self.config["work_min"] * 60
 
         self.update_display()
+        # Clear state after a work session completes (so we don't restore old state)
+        if self.current_phase == "work":
+            self.clear_state()
+        else:
+            # For break, keep state so we can resume break if closed
+            self.save_state()
+
         messagebox.showinfo("Pomodoro", f"{self.current_phase.capitalize()} phase completed!")
 
     def update_display(self):
@@ -505,6 +619,11 @@ class PomodoroApp:
             print('\a')
 
     def on_close(self):
+        # Save current state before closing (if timer is running or paused)
+        if self.timer_running or self.paused:
+            self.save_state()
+        else:
+            self.clear_state()
         self.save_config(self.config)
         self.save_tasks(self.tasks)
         self.root.destroy()
