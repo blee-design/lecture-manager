@@ -360,6 +360,7 @@ def migrate_table():
         """)
         cursor.execute("INSERT INTO pomodoro_state (id, current_phase, remaining_seconds) VALUES (1, 'work', 0)")
         print_colored("[✓] Created pomodoro_state table.", COLORS.GREEN)
+        print_colored("[✓] Created pomodoro_state table.", COLORS.GREEN)
     cursor.close()
     conn.close()
 
