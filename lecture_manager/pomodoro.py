@@ -1,5 +1,9 @@
 # File: pomodoro.py
 
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from datetime import datetime, timedelta
+import calendar
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext, simpledialog
 from datetime import datetime
@@ -88,6 +92,13 @@ class PomodoroApp:
         self.progress_label = ttk.Label(progress_frame, text="Today: 0 Pomodoros")
         self.progress_label.pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(progress_frame, text="📊 Today's Summary", command=self.show_today_summary).pack(side=tk.LEFT)
+        # Replace your existing progress_frame section with this:
+        progress_frame = ttk.Frame(timer_frame)
+        progress_frame.grid(row=3, column=0, columnspan=3, pady=5, sticky=tk.W)
+        self.progress_label = ttk.Label(progress_frame, text="Today: 0 Pomodoros")
+        self.progress_label.pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(progress_frame, text="📊 Today's Summary", command=self.show_today_summary).pack(side=tk.LEFT, padx=2)
+        ttk.Button(progress_frame, text="📈 Overall Analytics", command=self.show_overall_stats).pack(side=tk.LEFT, padx=2)  # <-- NEW BUTTON
 
         # ---- Settings (right) ----
         settings_frame = ttk.LabelFrame(parent, text="Settings", padding="10")
@@ -562,7 +573,9 @@ class PomodoroApp:
     def schedule_state_save(self):
         if self.timer_running or self.paused:
             self.save_state()
-        self.root.after(5000, self.schedule_state_save)
+        # Check if the root window still exists before scheduling the next call
+        if hasattr(self, 'root') and self.root.winfo_exists():
+            self.root.after(5000, self.schedule_state_save)
 
     # ---------- Database helpers ----------
     def load_config(self):
@@ -885,6 +898,12 @@ class PomodoroApp:
             print('\a')
 
     def on_close(self):
+        # Cancel any pending "after" events to prevent the "invalid command name" error
+        try:
+            self.root.after_cancel(self.schedule_state_save)
+        except:
+            pass  # Ignore if it doesn't exist
+
         if self.remaining_seconds > 0:
             self.save_state()
         else:
@@ -895,6 +914,235 @@ class PomodoroApp:
 
     def run(self):
         self.root.mainloop()
+
+    def show_overall_stats(self):
+        """Display a dynamic, multi-tab statistical dashboard."""
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # ----- 1. Daily Trend (Last 30 days) -----
+        cursor.execute("""
+            SELECT DATE(timestamp) as date, SUM(duration_min) as total_min, COUNT(*) as sessions
+            FROM pomodoro_log
+            WHERE phase = 'work' AND timestamp >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            GROUP BY DATE(timestamp)
+            ORDER BY date
+        """)
+        trend_data = cursor.fetchall()
+        dates = [row['date'].strftime('%m-%d') for row in trend_data] if trend_data else []
+        minutes = [float(row['total_min']) for row in trend_data] if trend_data else []
+
+        # ----- 2. Subject Breakdown -----
+        cursor.execute("""
+            SELECT
+                COALESCE(subject, 'Uncategorized') as subject,
+                SUM(duration_min) as total_min,
+                COUNT(*) as sessions
+            FROM pomodoro_log
+            WHERE phase = 'work'
+            GROUP BY subject
+            ORDER BY total_min DESC
+        """)
+        subject_data = cursor.fetchall()
+        subjects = [row['subject'] for row in subject_data if row['total_min'] > 0]
+        # Ensure it's a float and greater than 0
+        subject_mins = [float(row['total_min']) for row in subject_data if row['total_min'] is not None and float(row['total_min']) > 0]
+
+        # ----- 3. Task Breakdown (Top 5) -----
+        cursor.execute("""
+            SELECT
+                COALESCE(t.task_text, 'Uncategorized Task') as task_text,
+                SUM(l.duration_min) as total_min
+            FROM pomodoro_log l
+            LEFT JOIN pomodoro_tasks t ON l.task_id = t.id
+            WHERE l.phase = 'work'
+            GROUP BY l.task_id
+            ORDER BY total_min DESC
+            LIMIT 5
+        """)
+        task_data = cursor.fetchall()
+        tasks = [row['task_text'] for row in task_data if row['total_min'] > 0]
+        task_mins = [float(row['total_min']) for row in task_data if row['total_min'] is not None and float(row['total_min']) > 0]
+
+        # ----- 4. Hourly Productivity (Time of Day) -----
+        cursor.execute("""
+            SELECT HOUR(timestamp) as hour, COUNT(*) as sessions
+            FROM pomodoro_log
+            WHERE phase = 'work'
+            GROUP BY HOUR(timestamp)
+            ORDER BY hour
+        """)
+        hourly_data = cursor.fetchall()
+        hours = [f"{row['hour']}:00" for row in hourly_data]
+        hourly_sessions = [row['sessions'] for row in hourly_data]
+
+        # ----- 5. Streak Calculation (Consecutive days with at least 1 pomodoro) -----
+        cursor.execute("""
+            SELECT DISTINCT DATE(timestamp) as date
+            FROM pomodoro_log
+            WHERE phase = 'work'
+            ORDER BY date DESC
+        """)
+        days_list = [row['date'] for row in cursor.fetchall()]
+        streak = 0
+        if days_list:
+            current = datetime.now().date()
+            # Check if today or yesterday has data, to start streak
+            if current in days_list or (current - timedelta(days=1)) in days_list:
+                streak = 1
+                check_date = current - timedelta(days=1)
+                while check_date in days_list:
+                    streak += 1
+                    check_date -= timedelta(days=1)
+            else:
+                streak = 0
+
+        # ----- 6. Total Stats Summary -----
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total_sessions,
+                SUM(duration_min) as total_minutes,
+                AVG(duration_min) as avg_session
+            FROM pomodoro_log
+            WHERE phase = 'work'
+        """)
+        totals = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        # ----- BUILD THE WINDOW -----
+        stats_win = tk.Toplevel(self.root)
+        stats_win.title("📊 Overall Study Analytics")
+        stats_win.geometry("1000x700")
+
+        # Create a Notebook (Tabbed interface)
+        notebook = ttk.Notebook(stats_win)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # --- Tab 1: Summary & Streak ---
+        tab1 = ttk.Frame(notebook)
+        notebook.add(tab1, text="🔥 Summary & Streak")
+
+        summary_text = f"""
+        🏆 CURRENT STUDY STREAK: {streak} days!
+        {'🔥 Keep going! You are on fire!' if streak >= 5 else '💪 Consistency is key. Start a new streak today!'}
+
+        📊 LIFETIME TOTALS:
+        • Total Sessions : {totals['total_sessions'] if totals else 0}
+        • Total Time     : {totals['total_minutes'] // 60}h {totals['total_minutes'] % 60}m
+        • Avg Session    : {totals['avg_session']:.0f} minutes
+        """
+
+        ttk.Label(tab1, text=summary_text, font=("Helvetica", 12), justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=20)
+
+        # Goal Progress Bar (Daily Goal)
+        goal = self.config.get("daily_goal", 12)
+        today_count = self.count_today_pomodoros()
+        progress_pct = min(100, (today_count / goal) * 100)
+
+        ttk.Label(tab1, text=f"🎯 Today's Progress: {today_count} / {goal} Pomodoros", font=("Helvetica", 11)).pack(anchor=tk.W, padx=20)
+        progress_bar = ttk.Progressbar(tab1, length=400, mode='determinate', maximum=goal, value=today_count)
+        progress_bar.pack(anchor=tk.W, padx=20, pady=10)
+        ttk.Label(tab1, text=f"{progress_pct:.0f}% Complete", font=("Helvetica", 10)).pack(anchor=tk.W, padx=20)
+
+        # --- Tab 2: Daily Trend (Bar Chart) ---
+        tab2 = ttk.Frame(notebook)
+        notebook.add(tab2, text="📈 30-Day Trend")
+        if dates:
+            fig1, ax1 = plt.subplots(figsize=(10, 4))
+            ax1.bar(dates, minutes, color='#4CAF50')
+            ax1.set_title('Daily Study Time (Last 30 Days)')
+            ax1.set_ylabel('Minutes Studied')
+            ax1.set_xlabel('Date')
+            plt.xticks(rotation=45)
+            canvas1 = FigureCanvasTkAgg(fig1, master=tab2)
+            canvas1.draw()
+            canvas1.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(tab2, text="No data available for the last 30 days.").pack(pady=50)
+
+        # --- Tab 3: Subject Breakdown (Pie Chart) ---
+        tab3 = ttk.Frame(notebook)
+        notebook.add(tab3, text="🧠 Subject Breakdown")
+        if subjects:
+            fig2, ax2 = plt.subplots(figsize=(6, 6))
+            ax2.pie(subject_mins, labels=subjects, autopct='%1.1f%%', startangle=90)
+            ax2.axis('equal')
+            ax2.set_title('Total Study Time by Subject')
+            canvas2 = FigureCanvasTkAgg(fig2, master=tab3)
+            canvas2.draw()
+            canvas2.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(tab3, text="No subject data available.").pack(pady=50)
+
+        # --- Tab 4: Top Tasks ---
+        tab4 = ttk.Frame(notebook)
+        notebook.add(tab4, text="📋 Top Tasks")
+        if tasks:
+            fig3, ax3 = plt.subplots(figsize=(8, 4))
+            ax3.barh(tasks, task_mins, color='#2196F3')
+            ax3.set_title('Top 5 Tasks (Time Spent)')
+            ax3.set_xlabel('Minutes')
+            canvas3 = FigureCanvasTkAgg(fig3, master=tab4)
+            canvas3.draw()
+            canvas3.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(tab4, text="No task data available.").pack(pady=50)
+
+        # --- Tab 5: Time of Day (Hourly Heatmap) ---
+        tab5 = ttk.Frame(notebook)
+        notebook.add(tab5, text="⏰ Peak Hours")
+        if hours:
+            fig4, ax4 = plt.subplots(figsize=(10, 4))
+            ax4.bar(hours, hourly_sessions, color='#FF9800')
+            ax4.set_title('Pomodoro Sessions by Hour of Day')
+            ax4.set_ylabel('Number of Sessions')
+            ax4.set_xlabel('Hour')
+            plt.xticks(rotation=45)
+            canvas4 = FigureCanvasTkAgg(fig4, master=tab5)
+            canvas4.draw()
+            canvas4.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(tab5, text="No hourly data available.").pack(pady=50)
+
+        # --- Tab 6: Motivation & Insights (Dynamic Text) ---
+        tab6 = ttk.Frame(notebook)
+        notebook.add(tab6, text="💡 Insights")
+
+        insights = "📌 **DYNAMIC INSIGHTS BASED ON YOUR DATA**\n\n"
+
+        # Insight 1: Best time of day
+        if hourly_sessions:
+            max_idx = hourly_sessions.index(max(hourly_sessions))
+            best_hour = hours[max_idx]
+            insights += f"🚀 Your peak productivity time is around **{best_hour}**.\n"
+            insights += f"   Schedule your hardest subjects during this hour!\n\n"
+
+        # Insight 2: Subject focus
+        if subjects and subject_mins:
+            top_subj = subjects[0]
+            pct = (subject_mins[0] / sum(subject_mins)) * 100
+            insights += f"📚 You spend {pct:.0f}% of your time on **{top_subj}**.\n"
+            if pct < 50:
+                insights += f"   You have a great balanced approach! Keep exploring other subjects.\n\n"
+            else:
+                insights += f"   Consider diversifying slightly if other subjects need attention.\n\n"
+
+        # Insight 3: Consistency
+        if totals and totals['total_sessions'] > 20:
+            avg = totals['total_minutes'] / totals['total_sessions']
+            if avg > 25:
+                insights += f"💪 Your average session is {avg:.0f} min. Excellent deep work!"
+            else:
+                insights += f"⏳ Your average session is {avg:.0f} min. Try extending them to 25-30 min for better flow."
+
+        if streak >= 5:
+            insights += f"\n🔥 **You are on a {streak}-day streak!** This is your prime time to build momentum. Don't break the chain!"
+        elif streak == 0:
+            insights += f"\n🔄 Start a new streak today! Just 1 Pomodoro is enough to get back on track."
+
+        ttk.Label(tab6, text=insights, font=("Helvetica", 11), justify=tk.LEFT, wraplength=800).pack(anchor=tk.W, padx=20, pady=20)
 
 def main():
     root = tk.Tk()
