@@ -142,7 +142,7 @@ def create_table():
 
 def migrate_table():
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(buffered=True)
 
     # Add paper column if missing
     cursor.execute("SHOW COLUMNS FROM youtube_lectures LIKE 'paper'")
