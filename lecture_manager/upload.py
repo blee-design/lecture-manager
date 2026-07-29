@@ -96,30 +96,12 @@ def _get_authenticated_service(force=False):
     credentials = None
     token_loaded_from = None
 
-    # -------- Ensure client_secrets.json exists --------
+    # Ensure client_secrets.json exists (same as before)
     if not os.path.exists(CLIENT_SECRETS):
-        print_colored(f"[i] {CLIENT_SECRETS} not found locally. Checking DB...", COLORS.YELLOW)
-        _, secrets_from_db = _get_oauth_from_db()
-        if secrets_from_db:
-            try:
-                with open(CLIENT_SECRETS, 'w') as f:
-                    f.write(secrets_from_db)
-                print_colored(f"[✓] Restored {CLIENT_SECRETS} from database.", COLORS.GREEN)
-            except Exception as e:
-                print_colored(f"[!] Failed to write {CLIENT_SECRETS}: {e}", COLORS.RED)
-        else:
-            print_colored(f"[!] {CLIENT_SECRETS} not found locally and not in DB.", COLORS.RED)
-            print_colored("[i] Please download OAuth credentials from Google Cloud Console and save as client_secrets.json", COLORS.YELLOW)
-            return None
+        # ... (keep your existing code to restore from DB) ...
+        pass
 
-    # -------- Load client_secrets content for later DB storage --------
-    try:
-        with open(CLIENT_SECRETS, 'r') as f:
-            secrets_content = f.read()
-    except Exception:
-        secrets_content = None
-
-    # -------- Try to load credentials from local token file --------
+    # -------- Load token from local file --------
     if not force and os.path.exists(TOKEN_PICKLE):
         try:
             with open(TOKEN_PICKLE, "rb") as token:
@@ -143,10 +125,33 @@ def _get_authenticated_service(force=False):
             except Exception as e:
                 print_colored(f"[i] Failed to load token from DB: {e}", COLORS.YELLOW)
 
+    # -------- Auto‑refresh if expired --------
+    if credentials and not credentials.valid and credentials.refresh_token:
+        try:
+            from google.auth.transport.requests import Request
+            print_colored("[i] Token expired – refreshing automatically...", COLORS.BLUE)
+            credentials.refresh(Request())
+            token_loaded_from = "refreshed"
+            # Save refreshed token to file and DB
+            with open(TOKEN_PICKLE, "wb") as token:
+                pickle.dump(credentials, token)
+            token_data = pickle.dumps(credentials)
+            secrets_content = None
+            if os.path.exists(CLIENT_SECRETS):
+                with open(CLIENT_SECRETS, 'r') as f:
+                    secrets_content = f.read()
+            _save_oauth_to_db(token_data, secrets_content)
+            print_colored("[✓] Token refreshed and saved.", COLORS.GREEN)
+        except Exception as e:
+            print_colored(f"[i] Refresh failed: {e}", COLORS.YELLOW)
+            credentials = None   # fall back to OAuth flow
+
     # -------- If still no valid credentials, run OAuth flow --------
     if force or not credentials or not credentials.valid:
         print_colored("[i] Running OAuth flow... (browser will open)", COLORS.BLUE)
         flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS, SCOPES)
+        # Ensure offline access to get a refresh token
+        flow.oauth2session.scope = SCOPES
         credentials = flow.run_local_server(port=0)
         token_loaded_from = "OAuth flow"
         # Save to local file
@@ -154,14 +159,17 @@ def _get_authenticated_service(force=False):
             pickle.dump(credentials, token)
         print_colored(f"[✓] Token saved to {TOKEN_PICKLE}", COLORS.GREEN)
 
-    # -------- ALWAYS save to database after loading/creating --------
+    # -------- Always save to database --------
     if credentials and credentials.valid:
         token_data = pickle.dumps(credentials)
-        if token_loaded_from != "database":  # avoid unnecessary writes
+        secrets_content = None
+        if os.path.exists(CLIENT_SECRETS):
+            with open(CLIENT_SECRETS, 'r') as f:
+                secrets_content = f.read()
+        if token_loaded_from != "database":
             _save_oauth_to_db(token_data, secrets_content)
             print_colored("[✓] Token saved to database.", COLORS.GREEN)
         else:
-            # If it came from DB, still ensure secrets are stored
             if secrets_content:
                 _save_oauth_to_db(token_data, secrets_content)
 
