@@ -246,34 +246,50 @@ def display_comparison(db_record, youtube_video):
         print_colored("  → Low confidence match (probably wrong)", COLORS.RED)
 
 def scan_and_match_youtube_videos(interactive=True):
-    """Smart match with date-aware scoring and flexible syllabus matching."""
     youtube = _get_authenticated_service(force=False)
     if not youtube:
         print_colored("[!] Authentication failed.", COLORS.RED)
         return
 
-    print_colored("[i] Fetching videos from your YouTube channel...", COLORS.BLUE)
+    print_colored("[i] Fetching your uploaded videos via playlist...", COLORS.BLUE)
+
+    # 1. Get the "uploads" playlist ID for the authenticated user
+    channels_response = youtube.channels().list(
+        part="contentDetails",
+        mine=True
+    ).execute()
+    try:
+        uploads_playlist_id = channels_response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+    except (KeyError, IndexError):
+        print_colored("[!] Could not retrieve uploads playlist ID.", COLORS.RED)
+        return
+
+    # 2. List all videos in that playlist (max 50 per page, but you can increase)
     videos = []
     next_page_token = None
     while True:
-        request = youtube.search().list(
+        request = youtube.playlistItems().list(
             part="snippet",
-            forMine=True,
-            type="video",
+            playlistId=uploads_playlist_id,
             maxResults=50,
             pageToken=next_page_token
         )
         response = request.execute()
         for item in response.get('items', []):
-            title = item['snippet']['title']
+            snippet = item['snippet']
+            title = snippet['title']
+            video_id = snippet['resourceId']['videoId']
+            published_at = snippet['publishedAt']
+            # Extract syllabus and date using your existing helper functions
             syllabus = extract_syllabus_from_title(title)
             date_match = re.search(r'(\d{4}-\d{2}-\d{2})', title)
             date = date_match.group(1) if date_match else None
+
             videos.append({
-                'id': item['id']['videoId'],
+                'id': video_id,
                 'title': title,
-                'description': item['snippet']['description'],
-                'publishedAt': item['snippet']['publishedAt'],
+                'description': snippet.get('description', ''),
+                'publishedAt': published_at,
                 'syllabus': syllabus,
                 'date': date
             })
