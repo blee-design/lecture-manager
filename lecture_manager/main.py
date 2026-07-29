@@ -120,6 +120,7 @@ def main():
         print(" 30. " + color_text("Question Bank", COLORS.WHITE))
         print(" 31. " + color_text("Instapaper", COLORS.WHITE))
         print(" 32. " + color_text("Pomodoro Timer", COLORS.WHITE))
+        print(" 33. " + color_text("Batch upload missing mirrors (fill empty mirror IDs)", COLORS.WHITE))
         print("  0. " + color_text("Exit", COLORS.RED, bold=True))
         print("  " + "─" * 40)
         choice = input(color_text("Choose an option: ", COLORS.MAGENTA)).strip()
@@ -233,6 +234,14 @@ def main():
             print_colored("[✓] Pomodoro timer launched in a separate window.", COLORS.GREEN)
             print_colored("[i] You can now continue using the CLI while the timer runs.", COLORS.BLUE)
             # input("Press Enter to continue...")
+        elif choice == '33':
+            privacy = input(color_text("Privacy (private/unlisted/public, default private): ", COLORS.MAGENTA)).strip() or "private"
+            confirm = input(color_text(f"Upload all missing mirrors with privacy={privacy}? (y/n): ", COLORS.RED)).strip().lower()
+            if confirm == 'y':
+                from .upload import batch_upload_missing_mirrors
+                batch_upload_missing_mirrors(privacy=privacy)
+            else:
+                print_colored("Cancelled.", COLORS.YELLOW)
         elif choice == '0':
             print_colored("\nGoodbye! Have a great day! 👋", COLORS.CYAN)
             break
