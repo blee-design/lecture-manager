@@ -142,30 +142,31 @@ def get_questions_by_criteria(date=None, institution=None, level=None, paper=Non
     cursor = conn.cursor(dictionary=True)
     conditions = []
     params = []
+
     if date:
         conditions.append("question_date = %s")
         params.append(date)
     if institution:
         conditions.append("institution LIKE %s")
-        params.append(f"%{institution}%")
+        params.append(f"{institution}%")          # prefix match → uses index
     if level:
         conditions.append("level LIKE %s")
-        params.append(f"%{level}%")
+        params.append(f"{level}%")
     if paper:
         conditions.append("paper LIKE %s")
-        params.append(f"%{paper}%")
+        params.append(f"{paper}%")
     if group:
         conditions.append("`group` LIKE %s")
-        params.append(f"%{group}%")
+        params.append(f"{group}%")
     if subject:
         conditions.append("subject LIKE %s")
-        params.append(f"%{subject}%")
+        params.append(f"{subject}%")
     if question_number:
         conditions.append("question_number LIKE %s")
-        params.append(f"%{question_number}%")
+        params.append(f"{question_number}%")
     if chapter:
         conditions.append("chapter LIKE %s")
-        params.append(f"%{chapter}%")
+        params.append(f"{chapter}%")
 
     sql = f"SELECT * FROM {TABLE_NAME}"
     if conditions:
@@ -180,23 +181,20 @@ def get_questions_by_criteria(date=None, institution=None, level=None, paper=Non
 def get_all_questions(sort_by='question_date', order='DESC', search=None):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
-    sql = f"SELECT * FROM {TABLE_NAME}"
-    params = []
     if search:
-        sql += """ WHERE subject LIKE %s
-                   OR institution LIKE %s
-                   OR paper LIKE %s
-                   OR `group` LIKE %s
-                   OR chapter LIKE %s
-                   OR question_number LIKE %s
-                   OR nepali_transcription LIKE %s
-                   OR english_transcription LIKE %s
-                   OR level LIKE %s
-                   OR question_date LIKE %s"""
-        like = f"%{search}%"
-        params = [like] * 10   # now 10 placeholders
-    sql += f" ORDER BY {sort_by} {order}"
-    cursor.execute(sql, params)
+        sql = """
+            SELECT *, MATCH(subject, institution, paper, `group`, chapter,
+                            nepali_transcription, english_transcription, notes)
+                   AGAINST (%s IN NATURAL LANGUAGE MODE) AS relevance
+            FROM questions
+            WHERE MATCH(subject, institution, paper, `group`, chapter,
+                        nepali_transcription, english_transcription, notes)
+                  AGAINST (%s IN NATURAL LANGUAGE MODE)
+            ORDER BY relevance DESC
+        """
+        cursor.execute(sql, (search, search))
+    else:
+        cursor.execute(f"SELECT * FROM questions ORDER BY {sort_by} {order}")
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -1542,22 +1540,18 @@ def get_distinct_chapters():
     return [row[0] for row in rows]
 
 def get_distinct_values(column, search_term, limit=10):
-    """Return distinct values from a column matching a search term."""
     conn = get_connection()
     cursor = conn.cursor()
-    # Use parameterised query to prevent SQL injection
     sql = f"SELECT DISTINCT {column} FROM {TABLE_NAME} WHERE {column} LIKE %s ORDER BY {column} LIMIT %s"
-    cursor.execute(sql, (f"%{search_term}%", limit))
+    cursor.execute(sql, (f"{search_term}%", limit))   # prefix match
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
-
     result = []
     for row in rows:
         val = row[0]
         if val is None:
             continue
-        # Convert datetime/date objects to string (YYYY-MM-DD)
         if column == 'question_date' and isinstance(val, (date, datetime)):
             val = val.strftime('%Y-%m-%d')
         else:

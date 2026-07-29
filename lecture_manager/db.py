@@ -296,9 +296,17 @@ def migrate_table():
     if not cursor.fetchone():
         cursor.execute("ALTER TABLE questions ADD COLUMN notes TEXT NULL")
         print_colored("[✓] Added 'notes' column to questions table.", COLORS.GREEN)
-    # In migrate_table() – add this to create the table if missing
-    # instapaper_credentials
-        # ---- NEW: Instapaper credentials table ----
+    # ---------- Full‑text index for question search ----------
+    cursor.execute("SHOW INDEX FROM questions WHERE Key_name = 'ft_search'")
+    if not cursor.fetchone():
+        cursor.execute("""
+            ALTER TABLE questions ADD FULLTEXT INDEX ft_search
+            (subject, institution, paper, `group`, chapter,
+            nepali_transcription, english_transcription, notes)
+        """)
+        print_colored("[✓] Added full‑text index ft_search for question search.", COLORS.GREEN)
+
+    # ---- Instapaper credentials table ----
     cursor.execute("SHOW TABLES LIKE 'instapaper_credentials'")
     if not cursor.fetchone():
         cursor.execute("""
