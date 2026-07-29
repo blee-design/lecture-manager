@@ -1,4 +1,4 @@
-# File: pomodoro.py
+# pomodoro.py – Enhanced UI with modern design (fully working)
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -9,12 +9,50 @@ from tkinter import ttk, messagebox, scrolledtext, simpledialog
 from datetime import datetime
 from .db import get_connection
 
+# ====================== STYLE CONFIGURATION ======================
+def configure_styles():
+    style = ttk.Style()
+    style.theme_use('clam')
+    bg_dark = "#1e2a3a"
+    bg_medium = "#2c3e50"
+    bg_light = "#34495e"
+    accent = "#3498db"
+    accent_light = "#5dade2"
+    fg = "#ecf0f1"
+    style.configure('.', background=bg_medium, foreground=fg, fieldbackground=bg_light)
+    style.configure('TFrame', background=bg_medium)
+    style.configure('TLabel', background=bg_medium, foreground=fg)
+    style.configure('TLabelframe', background=bg_medium, foreground=fg, bordercolor=accent)
+    style.configure('TLabelframe.Label', background=bg_medium, foreground=fg)
+    style.configure('TButton', background=accent, foreground='white', bordercolor=accent, focuscolor='none', borderwidth=0)
+    style.map('TButton', background=[('active', accent_light)])
+    style.configure('TEntry', fieldbackground=bg_light, foreground=fg, insertcolor=fg)
+    style.theme_use('clam')
+    style.configure('TCombobox',
+                    fieldbackground='#34495e',   # dark entry background
+                    foreground='white',          # white text
+                    background='#2c3e50',        # dropdown background
+                    arrowcolor='white')          # arrow visible
+    style.map('TCombobox',
+            fieldbackground=[('readonly', '#34495e')])
+    # Fix dropdown listbox (popup)
+    style.configure('TCombobox.listbox',
+                    background='#2c3e50',
+                    foreground='white',
+                    selectbackground='#3498db',
+                    selectforeground='white')
+    style.configure('TCombobox.listbox', background='#2c3e50', foreground='white', selectbackground='#3498db')
+    style.configure('TProgressbar', background=accent, troughcolor=bg_light, bordercolor=bg_light)
+    style.configure('Vertical.TScrollbar', background=bg_light, troughcolor=bg_medium)
+
 class PomodoroApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Pomodoro Study Timer")
-        self.root.geometry("860x820")
-        self.root.minsize(700, 600)
+        self.root.title("🍅 Pomodoro Study Timer")
+        self.root.geometry("1000x780")
+        self.root.minsize(850, 680)
+        self.root.configure(bg="#1e2a3a")
+        configure_styles()
 
         self.config = self.load_config()
         self.tasks = self.load_tasks()
@@ -27,213 +65,190 @@ class PomodoroApp:
         self.paused = False
         self.current_phase = "work"
         self.cycles_completed = 0
+        self._after_id = None
+        self.task_var = tk.StringVar()
 
         self.sound_func = self._beep
 
-        self.build_scrollable_ui()
+        self.build_ui()
         self.restore_state_if_any()
         self.update_display()
+        self.refresh_task_list()
+        self.refresh_log()
+        self.update_progress()
+        self.update_task_combo()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.schedule_state_save()
 
-    # ---------- Scrollable UI ----------
-    def build_scrollable_ui(self):
-        self.canvas = tk.Canvas(self.root, borderwidth=0)
-        scrollbar = ttk.Scrollbar(self.root, orient=tk.VERTICAL, command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=scrollbar.set)
+    # ---------- UI Construction ----------
+    def build_ui(self):
+        main = ttk.Frame(self.root, padding="10")
+        main.pack(fill=tk.BOTH, expand=True)
+        main.columnconfigure(0, weight=3)
+        main.columnconfigure(1, weight=2)
+        main.rowconfigure(0, weight=1)
+        main.rowconfigure(1, weight=1)
 
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # ----- LEFT COLUMN -----
+        left = ttk.Frame(main, padding="5")
+        left.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        left.rowconfigure(0, weight=1)   # timer
+        left.rowconfigure(1, weight=0)   # subject
+        left.rowconfigure(2, weight=0)   # task combo
+        left.rowconfigure(3, weight=2)   # notes
+        left.columnconfigure(0, weight=1)
 
-        self.main_frame = ttk.Frame(self.canvas, padding="10")
-        self.canvas.create_window((0, 0), window=self.main_frame, anchor=tk.NW)
+        # -- Timer Frame --
+        timer_frame = ttk.LabelFrame(left, text="⏱️ Timer", padding="15")
+        timer_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        timer_frame.columnconfigure(0, weight=1)
 
-        def configure_canvas(event):
-            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        self.main_frame.bind("<Configure>", configure_canvas)
+        self.time_label = ttk.Label(timer_frame, font=("Helvetica", 56, "bold"), foreground="#3498db")
+        self.time_label.grid(row=0, column=0, pady=10)
 
-        def on_mousewheel(event):
-            if event.num == 4:
-                self.canvas.yview_scroll(-1, "units")
-            elif event.num == 5:
-                self.canvas.yview_scroll(1, "units")
-            elif event.delta:
-                self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self.progress_bar = ttk.Progressbar(timer_frame, orient=tk.HORIZONTAL, length=300, mode='determinate')
+        self.progress_bar.grid(row=1, column=0, pady=5, sticky=tk.W+tk.E)
 
-        self.root.bind("<MouseWheel>", on_mousewheel)
-        self.root.bind("<Button-4>", on_mousewheel)
-        self.root.bind("<Button-5>", on_mousewheel)
+        self.phase_label = ttk.Label(timer_frame, font=("Helvetica", 14), foreground="#ecf0f1")
+        self.phase_label.grid(row=2, column=0, pady=5)
 
-        self.build_ui(self.main_frame)
-
-    def build_ui(self, parent):
-        parent.columnconfigure(0, weight=1)
-        parent.columnconfigure(1, weight=1)
-
-        # ---- Timer (left) ----
-        timer_frame = ttk.LabelFrame(parent, text="Timer", padding="10")
-        timer_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
-
-        self.time_label = ttk.Label(timer_frame, font=("Helvetica", 48), text="25:00")
-        self.time_label.grid(row=0, column=0, columnspan=3, pady=10)
-
-        self.phase_label = ttk.Label(timer_frame, font=("Helvetica", 14), text="Work")
-        self.phase_label.grid(row=1, column=0, columnspan=3, pady=5)
-
-        self.start_btn = ttk.Button(timer_frame, text="Start", command=self.start_timer)
-        self.start_btn.grid(row=2, column=0, padx=5, pady=5)
-        self.pause_btn = ttk.Button(timer_frame, text="Pause", command=self.pause_timer, state=tk.DISABLED)
-        self.pause_btn.grid(row=2, column=1, padx=5, pady=5)
-        self.reset_btn = ttk.Button(timer_frame, text="Reset", command=self.reset_timer)
-        self.reset_btn.grid(row=2, column=2, padx=5, pady=5)
+        ctrl_frame = ttk.Frame(timer_frame)
+        ctrl_frame.grid(row=3, column=0, pady=10)
+        self.start_btn = ttk.Button(ctrl_frame, text="▶ Start", command=self.start_timer)
+        self.start_btn.grid(row=0, column=0, padx=5)
+        self.pause_btn = ttk.Button(ctrl_frame, text="⏸ Pause", command=self.pause_timer, state=tk.DISABLED)
+        self.pause_btn.grid(row=0, column=1, padx=5)
+        self.reset_btn = ttk.Button(ctrl_frame, text="⟳ Reset", command=self.reset_timer)
+        self.reset_btn.grid(row=0, column=2, padx=5)
 
         progress_frame = ttk.Frame(timer_frame)
-        progress_frame.grid(row=3, column=0, columnspan=3, pady=5, sticky=tk.W)
-        self.progress_label = ttk.Label(progress_frame, text="Today: 0 Pomodoros")
-        self.progress_label.pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(progress_frame, text="📊 Today's Summary", command=self.show_today_summary).pack(side=tk.LEFT)
-        # Replace your existing progress_frame section with this:
-        progress_frame = ttk.Frame(timer_frame)
-        progress_frame.grid(row=3, column=0, columnspan=3, pady=5, sticky=tk.W)
-        self.progress_label = ttk.Label(progress_frame, text="Today: 0 Pomodoros")
-        self.progress_label.pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(progress_frame, text="📊 Today's Summary", command=self.show_today_summary).pack(side=tk.LEFT, padx=2)
-        ttk.Button(progress_frame, text="📈 Overall Analytics", command=self.show_overall_stats).pack(side=tk.LEFT, padx=2)  # <-- NEW BUTTON
+        progress_frame.grid(row=4, column=0, pady=5, sticky=tk.W+tk.E)
+        self.progress_label = ttk.Label(progress_frame, text="Today: 0 / 12 Pomodoros")
+        self.progress_label.pack(side=tk.LEFT, padx=5)
+        self.daily_bar = ttk.Progressbar(progress_frame, orient=tk.HORIZONTAL, length=200, mode='determinate', maximum=self.config["daily_goal"])
+        self.daily_bar.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+        ttk.Button(progress_frame, text="📊 Summary", command=self.show_today_summary).pack(side=tk.LEFT, padx=5)
+        ttk.Button(progress_frame, text="📈 Analytics", command=self.show_overall_stats).pack(side=tk.LEFT, padx=5)
 
-        # ---- Settings (right) ----
-        settings_frame = ttk.LabelFrame(parent, text="Settings", padding="10")
-        settings_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
-
-        ttk.Label(settings_frame, text="Work (min):").grid(row=0, column=0, sticky=tk.W, pady=2)
-        self.work_var = tk.StringVar(value=str(self.config["work_min"]))
-        ttk.Entry(settings_frame, textvariable=self.work_var, width=6).grid(row=0, column=1, sticky=tk.W, pady=2)
-
-        ttk.Label(settings_frame, text="Short Break (min):").grid(row=1, column=0, sticky=tk.W, pady=2)
-        self.short_var = tk.StringVar(value=str(self.config["short_break_min"]))
-        ttk.Entry(settings_frame, textvariable=self.short_var, width=6).grid(row=1, column=1, sticky=tk.W, pady=2)
-
-        ttk.Label(settings_frame, text="Long Break (min):").grid(row=2, column=0, sticky=tk.W, pady=2)
-        self.long_var = tk.StringVar(value=str(self.config["long_break_min"]))
-        ttk.Entry(settings_frame, textvariable=self.long_var, width=6).grid(row=2, column=1, sticky=tk.W, pady=2)
-
-        ttk.Label(settings_frame, text="Cycles before long:").grid(row=3, column=0, sticky=tk.W, pady=2)
-        self.cycles_var = tk.StringVar(value=str(self.config["cycles_before_long"]))
-        ttk.Entry(settings_frame, textvariable=self.cycles_var, width=6).grid(row=3, column=1, sticky=tk.W, pady=2)
-
-        ttk.Label(settings_frame, text="Daily goal (pomodoros):").grid(row=4, column=0, sticky=tk.W, pady=2)
-        self.goal_var = tk.StringVar(value=str(self.config["daily_goal"]))
-        ttk.Entry(settings_frame, textvariable=self.goal_var, width=6).grid(row=4, column=1, sticky=tk.W, pady=2)
-
-        ttk.Button(settings_frame, text="Save Settings", command=self.save_settings).grid(row=5, column=0, columnspan=2, pady=10)
-
-        # ---- Subject ----
-        subject_frame = ttk.LabelFrame(parent, text="Subject (broad category)", padding="5")
-        subject_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=5, pady=2)
-        self.subject_entry = ttk.Entry(subject_frame)
-        self.subject_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5)
+        # -- Subject --
+        subject_frame = ttk.LabelFrame(left, text="📌 Subject", padding="10")
+        subject_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=5)
+        self.subject_entry = ttk.Entry(subject_frame, font=("Helvetica", 11))
+        self.subject_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
         subject_frame.columnconfigure(0, weight=1)
 
-        # ---- Task Selection ----
-        task_frame = ttk.LabelFrame(parent, text="Current Task (select from list)", padding="5")
-        task_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=5, pady=2)
-        self.task_var = tk.StringVar()
-        self.task_combo = ttk.Combobox(task_frame, textvariable=self.task_var, state="readonly", width=60)
-        self.task_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5)
-        task_frame.columnconfigure(0, weight=1)
+        # -- Task Selection (combo) --
+        task_select_frame = ttk.LabelFrame(left, text="🎯 Current Task", padding="10")
+        task_select_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=5)
+        task_select_frame.columnconfigure(0, weight=1)
 
-        # ---- Notes ----
-        notes_frame = ttk.LabelFrame(parent, text="Notes for this session", padding="10")
-        notes_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
-        self.notes_text = scrolledtext.ScrolledText(notes_frame, height=6, wrap=tk.WORD)
-        self.notes_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.task_combo = ttk.Combobox(task_select_frame, textvariable=self.task_var, state="readonly", width=50)
+        # Force dropdown listbox colors
+        self.root.option_add('*TCombobox*Listbox.background', '#2c3e50')
+        self.root.option_add('*TCombobox*Listbox.foreground', 'white')
+        self.task_combo['foreground'] = 'white'
+        self.task_combo['background'] = '#34495e'
+        self.task_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
+
+
+        # -- Notes --
+        notes_frame = ttk.LabelFrame(left, text="📝 Notes for this session", padding="10")
+        notes_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         notes_frame.columnconfigure(0, weight=1)
         notes_frame.rowconfigure(0, weight=1)
+        self.notes_text = scrolledtext.ScrolledText(notes_frame, height=4, wrap=tk.WORD, bg="#2c3e50", fg="#ecf0f1", insertbackground="#ecf0f1")
+        self.notes_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        # ---- Study Log (left) and Task List (right) ----
-        log_frame = ttk.LabelFrame(parent, text="Study Log", padding="10")
-        log_frame.grid(row=4, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=10, wrap=tk.WORD, state=tk.DISABLED)
-        self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
+        # ----- RIGHT COLUMN -----
+        right = ttk.Frame(main, padding="5")
+        right.grid(row=0, column=1, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+        right.rowconfigure(0, weight=1)
+        right.rowconfigure(1, weight=2)
+        right.rowconfigure(2, weight=1)
+        right.columnconfigure(0, weight=1)
 
-        # ---- Task List with priorities ----
-        tasks_frame = ttk.LabelFrame(parent, text="Task List (To-Do)", padding="10")
-        tasks_frame.grid(row=4, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
+        # -- Settings --
+        settings_frame = ttk.LabelFrame(right, text="⚙️ Settings", padding="10")
+        settings_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        settings_frame.columnconfigure(0, weight=1)
+
+        row = 0
+        ttk.Label(settings_frame, text="Work (min):").grid(row=row, column=0, sticky=tk.W, pady=2)
+        self.work_var = tk.StringVar(value=str(self.config["work_min"]))
+        ttk.Entry(settings_frame, textvariable=self.work_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
+        row += 1
+        ttk.Label(settings_frame, text="Short break (min):").grid(row=row, column=0, sticky=tk.W, pady=2)
+        self.short_var = tk.StringVar(value=str(self.config["short_break_min"]))
+        ttk.Entry(settings_frame, textvariable=self.short_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
+        row += 1
+        ttk.Label(settings_frame, text="Long break (min):").grid(row=row, column=0, sticky=tk.W, pady=2)
+        self.long_var = tk.StringVar(value=str(self.config["long_break_min"]))
+        ttk.Entry(settings_frame, textvariable=self.long_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
+        row += 1
+        ttk.Label(settings_frame, text="Cycles before long:").grid(row=row, column=0, sticky=tk.W, pady=2)
+        self.cycles_var = tk.StringVar(value=str(self.config["cycles_before_long"]))
+        ttk.Entry(settings_frame, textvariable=self.cycles_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
+        row += 1
+        ttk.Label(settings_frame, text="Daily goal:").grid(row=row, column=0, sticky=tk.W, pady=2)
+        self.goal_var = tk.StringVar(value=str(self.config["daily_goal"]))
+        ttk.Entry(settings_frame, textvariable=self.goal_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
+        row += 1
+        ttk.Button(settings_frame, text="💾 Save Settings", command=self.save_settings).grid(row=row, column=0, columnspan=2, pady=10)
+
+        # -- Task List --
+        tasks_frame = ttk.LabelFrame(right, text="📋 Task List", padding="10")
+        tasks_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         tasks_frame.columnconfigure(0, weight=1)
-        tasks_frame.rowconfigure(2, weight=1)  # listbox row expands
+        tasks_frame.rowconfigure(1, weight=1)
 
-        # Controls row
-        control_frame = ttk.Frame(tasks_frame)
-        control_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
-        ttk.Label(control_frame, text="New Task:").pack(side=tk.LEFT, padx=(0,5))
-        self.task_entry = ttk.Entry(control_frame, width=20)
-        self.task_entry.pack(side=tk.LEFT, padx=(0,5), fill=tk.X, expand=True)
-        ttk.Button(control_frame, text="Add", command=self.add_task).pack(side=tk.LEFT, padx=2)
-        ttk.Button(control_frame, text="Bulk Add", command=self.bulk_add_tasks).pack(side=tk.LEFT, padx=2)
+        add_frame = ttk.Frame(tasks_frame)
+        add_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
+        self.task_entry = ttk.Entry(add_frame, width=20)
+        self.task_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,5))
+        ttk.Button(add_frame, text="➕ Add", command=self.add_task).pack(side=tk.LEFT, padx=2)
+        ttk.Button(add_frame, text="📋 Bulk", command=self.bulk_add_tasks).pack(side=tk.LEFT, padx=2)
 
-        # Priority selection for new task
         priority_frame = ttk.Frame(tasks_frame)
         priority_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
         ttk.Label(priority_frame, text="Priority:").pack(side=tk.LEFT, padx=(0,5))
         self.priority_var = tk.StringVar(value="3")
-        priority_spin = ttk.Spinbox(priority_frame, from_=0, to=9, textvariable=self.priority_var, width=5)
-        priority_spin.pack(side=tk.LEFT, padx=(0,10))
-        ttk.Label(priority_frame, text="(1=Highest, 9=High, 0=Lowest)").pack(side=tk.LEFT)
+        ttk.Spinbox(priority_frame, from_=0, to=9, textvariable=self.priority_var, width=5).pack(side=tk.LEFT, padx=(0,10))
+        ttk.Label(priority_frame, text="(1=highest, 9=high, 0=lowest)", font=("Helvetica", 8)).pack(side=tk.LEFT)
 
-        # Listbox with scrollbar
         listbox_frame = ttk.Frame(tasks_frame)
         listbox_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         listbox_frame.columnconfigure(0, weight=1)
         listbox_frame.rowconfigure(0, weight=1)
 
-        self.task_listbox = tk.Listbox(listbox_frame, height=8, selectmode=tk.SINGLE)
+        self.task_listbox = tk.Listbox(listbox_frame, height=8, bg="#2c3e50", fg="#ecf0f1", selectbackground="#3498db", selectforeground="white")
         self.task_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         scrollbar2 = ttk.Scrollbar(listbox_frame, orient=tk.VERTICAL, command=self.task_listbox.yview)
         scrollbar2.grid(row=0, column=1, sticky=(tk.N, tk.S))
         self.task_listbox.config(yscrollcommand=scrollbar2.set)
         self.task_listbox.bind('<<ListboxSelect>>', self.on_task_select)
-        # Right-click context menu
-        self.task_menu = tk.Menu(self.task_listbox, tearoff=0)
-        self.task_menu.add_command(label="Set Priority", command=self.set_priority)
-        self.task_menu.add_command(label="Toggle Complete", command=self.toggle_complete)
-        self.task_menu.add_separator()
-        self.task_menu.add_command(label="Delete", command=self.remove_task)
-        self.task_listbox.bind("<Button-3>", self.show_context_menu)
 
-        # Buttons row
-        btn_frame = ttk.Frame(tasks_frame)
-        btn_frame.grid(row=3, column=0, pady=5, sticky=tk.W)
-        ttk.Button(btn_frame, text="Remove Selected", command=self.remove_task).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="Toggle Complete", command=self.toggle_complete).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="Set Priority", command=self.set_priority).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="Clear All", command=self.clear_all_tasks).pack(side=tk.LEFT, padx=2)
+        task_btn_frame = ttk.Frame(tasks_frame)
+        task_btn_frame.grid(row=3, column=0, pady=5, sticky=tk.W)
+        ttk.Button(task_btn_frame, text="🗑 Remove", command=self.remove_task).pack(side=tk.LEFT, padx=2)
+        ttk.Button(task_btn_frame, text="✅ Toggle Done", command=self.toggle_complete).pack(side=tk.LEFT, padx=2)
+        ttk.Button(task_btn_frame, text="🔢 Set Priority", command=self.set_priority).pack(side=tk.LEFT, padx=2)
+        ttk.Button(task_btn_frame, text="🗑 Clear All", command=self.clear_all_tasks).pack(side=tk.LEFT, padx=2)
         self.show_completed_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(btn_frame, text="Show completed", variable=self.show_completed_var, command=self.refresh_task_list).pack(side=tk.LEFT, padx=10)
+        ttk.Checkbutton(task_btn_frame, text="Show completed", variable=self.show_completed_var, command=self.refresh_task_list).pack(side=tk.LEFT, padx=10)
 
-        # Load initial data
-        self.refresh_task_list()
-        self.refresh_log()
-        self.update_progress()
-        self.update_task_combo()
+        # -- Study Log --
+        log_frame = ttk.LabelFrame(right, text="📜 Study Log", padding="10")
+        log_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
 
-    def select_all(self, event):
-        widget = self.root.focus_get()
-        # If widget is a ScrolledText, get its internal Text widget
-        if hasattr(widget, 'text') and isinstance(widget.text, tk.Text):
-            widget = widget.text
-        if isinstance(widget, (tk.Entry, ttk.Entry, tk.Text)):
-            widget.select_range(0, tk.END)
-            widget.icursor(tk.END)
-            return "break"
-        return None
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=8, wrap=tk.WORD, state=tk.DISABLED, bg="#2c3e50", fg="#ecf0f1")
+        self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-   # ---------- Task Management ----------
+    # ---------- TASK MANAGEMENT (unchanged from original) ----------
     def load_tasks(self):
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
-        # Priority: 1 = highest, then 9, then 0
-        # Sort by priority ASC so 1 comes first, then 9, then 0
         cursor.execute("SELECT id, task_text, priority, completed FROM pomodoro_tasks ORDER BY "
                        "CASE priority WHEN 1 THEN 0 WHEN 0 THEN 2 ELSE 1 END, priority")
         rows = cursor.fetchall()
@@ -274,7 +289,6 @@ class PomodoroApp:
         self.update_task_combo()
 
     def bulk_add_tasks(self):
-        """Open a window to add multiple tasks at once."""
         bulk_win = tk.Toplevel(self.root)
         bulk_win.title("Bulk Add Tasks")
         bulk_win.geometry("400x350")
@@ -286,7 +300,6 @@ class PomodoroApp:
         text_area = scrolledtext.ScrolledText(bulk_win, height=10, wrap=tk.WORD)
         text_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        # Priority selector for bulk
         bulk_priority_frame = ttk.Frame(bulk_win)
         bulk_priority_frame.pack(pady=5)
         ttk.Label(bulk_priority_frame, text="Priority for all:").pack(side=tk.LEFT, padx=5)
@@ -424,7 +437,6 @@ class PomodoroApp:
             if not show_completed and task['completed']:
                 continue
             priority = task['priority']
-            # Color mapping: 1=red, 2-3=orange, 4-6=yellow, 7-9=green, 0=gray
             if priority == 1:
                 icon = '🔴'
             elif priority in (2, 3):
@@ -433,7 +445,7 @@ class PomodoroApp:
                 icon = '🟨'
             elif priority in (7, 8, 9):
                 icon = '🟩'
-            else:  # priority == 0
+            else:
                 icon = '⬜'
             label = f"[P{priority}] {icon} {task['task_text']}"
             if task['completed']:
@@ -485,99 +497,7 @@ class PomodoroApp:
             return self.combo_label_to_id[label]
         return None
 
-    # ---------- State persistence ----------
-    def save_state(self):
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                REPLACE INTO pomodoro_state
-                (id, current_phase, remaining_seconds, notes, subject, cycles_completed, updated_at)
-                VALUES (1, %s, %s, %s, %s, %s, NOW())
-            """, (
-                self.current_phase,
-                self.remaining_seconds,
-                self.notes_text.get("1.0", tk.END).strip(),
-                self.subject_entry.get().strip(),
-                self.cycles_completed
-            ))
-            conn.commit()
-            cursor.close()
-            conn.close()
-        except Exception:
-            pass
-
-    def clear_state(self):
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE pomodoro_state
-                SET remaining_seconds = 0, updated_at = NOW()
-                WHERE id = 1
-            """)
-            conn.commit()
-            cursor.close()
-            conn.close()
-        except Exception:
-            pass
-
-    def load_state(self):
-        try:
-            conn = get_connection()
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT * FROM pomodoro_state WHERE id = 1")
-            row = cursor.fetchone()
-            cursor.close()
-            conn.close()
-            if row and row['remaining_seconds'] > 0:
-                updated = row['updated_at']
-                if updated and (datetime.now() - updated).total_seconds() < 7200:
-                    return row
-            return None
-        except Exception:
-            return None
-
-    def restore_state_if_any(self):
-        state = self.load_state()
-        if not state:
-            return
-
-        msg = (f"Resume previous session?\n\n"
-               f"Phase: {state['current_phase'].capitalize()}\n"
-               f"Remaining: {state['remaining_seconds']//60}m {state['remaining_seconds']%60}s\n"
-               f"Subject: {state.get('subject', '') or '(none)'}\n"
-               f"Cycles completed: {state['cycles_completed']}\n\n"
-               f"Notes: {state.get('notes', '')[:100]}...")
-        answer = messagebox.askyesno("Resume Session", msg)
-        if answer:
-            self.current_phase = state['current_phase']
-            self.remaining_seconds = state['remaining_seconds']
-            self.cycles_completed = state['cycles_completed']
-            self.subject_entry.delete(0, tk.END)
-            self.subject_entry.insert(0, state.get('subject', ''))
-            self.notes_text.delete("1.0", tk.END)
-            self.notes_text.insert("1.0", state.get('notes', ''))
-            self.phase_label.config(text=self.current_phase.capitalize())
-            self.update_display()
-
-            self.paused = True
-            self.timer_running = False
-            self.start_btn.config(state=tk.NORMAL)
-            self.pause_btn.config(state=tk.NORMAL, text="Resume")
-
-            messagebox.showinfo("Restored", "Session restored. Click Start to resume.")
-        else:
-            self.clear_state()
-
-    def schedule_state_save(self):
-        if self.timer_running or self.paused:
-            self.save_state()
-        # Check if the root window still exists before scheduling the next call
-        if hasattr(self, 'root') and self.root.winfo_exists():
-            self.root.after(5000, self.schedule_state_save)
-
-    # ---------- Database helpers ----------
+    # ---------- DATABASE HELPERS ----------
     def load_config(self):
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
@@ -662,7 +582,7 @@ class PomodoroApp:
         conn.close()
         return count
 
-    # ---------- Today's summary ----------
+    # ---------- TODAY SUMMARY ----------
     def get_today_summary(self):
         today = datetime.now().date().isoformat()
         conn = get_connection()
@@ -725,7 +645,7 @@ class PomodoroApp:
 
         ttk.Button(summary_win, text="Close", command=summary_win.destroy).pack(pady=5)
 
-    # ---------- Timer logic ----------
+    # ---------- TIMER ----------
     def start_timer(self):
         if self.timer_running and not self.paused:
             return
@@ -815,13 +735,12 @@ class PomodoroApp:
                 self.current_phase = "short_break"
                 self.phase_label.config(text="Short Break")
                 self.remaining_seconds = self.config["short_break_min"] * 60
-        else:  # break completed
+        else:
             self.current_phase = "work"
             self.phase_label.config(text="Work")
             self.remaining_seconds = self.config["work_min"] * 60
 
         self.update_display()
-        # Save state for the new phase (break or work)
         self.save_state()
         messagebox.showinfo("Pomodoro", f"{completed_phase.capitalize()} phase completed!")
 
@@ -829,6 +748,17 @@ class PomodoroApp:
         mins = self.remaining_seconds // 60
         secs = self.remaining_seconds % 60
         self.time_label.config(text=f"{mins:02d}:{secs:02d}")
+        # Update progress bar
+        total_seconds = 0
+        if self.current_phase == "work":
+            total_seconds = self.config["work_min"] * 60
+        elif self.current_phase == "short_break":
+            total_seconds = self.config["short_break_min"] * 60
+        else:
+            total_seconds = self.config["long_break_min"] * 60
+        if total_seconds > 0:
+            progress = ((total_seconds - self.remaining_seconds) / total_seconds) * 100
+            self.progress_bar['value'] = progress
 
     def log_session(self):
         subject = self.subject_entry.get().strip()
@@ -848,8 +778,10 @@ class PomodoroApp:
     def update_progress(self):
         goal = self.config["daily_goal"]
         self.progress_label.config(text=f"Today: {self.today_count} / {goal} Pomodoros")
+        self.daily_bar['maximum'] = goal
+        self.daily_bar['value'] = self.today_count
 
-    # ---------- Settings ----------
+    # ---------- SETTINGS ----------
     def save_settings(self):
         try:
             work = int(self.work_var.get())
@@ -870,6 +802,11 @@ class PomodoroApp:
             if not self.timer_running:
                 self.remaining_seconds = work * 60
                 self.update_display()
+            self.daily_bar['maximum'] = goal
+            self.daily_bar['value'] = self.today_count
+            # ----- ADD THIS LINE -----
+            self.update_progress()
+            # ---------------------------
             messagebox.showinfo("Settings", "Settings saved successfully!")
         except:
             messagebox.showerror("Error", "Please enter valid positive integers.")
@@ -897,30 +834,102 @@ class PomodoroApp:
         except:
             print('\a')
 
-    def on_close(self):
-        # Cancel any pending "after" events to prevent the "invalid command name" error
+    # ---------- STATE PERSISTENCE ----------
+    def save_state(self):
         try:
-            self.root.after_cancel(self.schedule_state_save)
-        except:
-            pass  # Ignore if it doesn't exist
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                REPLACE INTO pomodoro_state
+                (id, current_phase, remaining_seconds, notes, subject, cycles_completed, updated_at)
+                VALUES (1, %s, %s, %s, %s, %s, NOW())
+            """, (
+                self.current_phase,
+                self.remaining_seconds,
+                self.notes_text.get("1.0", tk.END).strip(),
+                self.subject_entry.get().strip(),
+                self.cycles_completed
+            ))
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
 
-        if self.remaining_seconds > 0:
-            self.save_state()
+    def clear_state(self):
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE pomodoro_state
+                SET remaining_seconds = 0, updated_at = NOW()
+                WHERE id = 1
+            """)
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
+
+    def load_state(self):
+        try:
+            conn = get_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT * FROM pomodoro_state WHERE id = 1")
+            row = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            if row and row['remaining_seconds'] > 0:
+                updated = row['updated_at']
+                if updated and (datetime.now() - updated).total_seconds() < 7200:
+                    return row
+            return None
+        except Exception:
+            return None
+
+    def restore_state_if_any(self):
+        state = self.load_state()
+        if not state:
+            return
+
+        msg = (f"Resume previous session?\n\n"
+               f"Phase: {state['current_phase'].capitalize()}\n"
+               f"Remaining: {state['remaining_seconds']//60}m {state['remaining_seconds']%60}s\n"
+               f"Subject: {state.get('subject', '') or '(none)'}\n"
+               f"Cycles completed: {state['cycles_completed']}\n\n"
+               f"Notes: {state.get('notes', '')[:100]}...")
+        answer = messagebox.askyesno("Resume Session", msg)
+        if answer:
+            self.current_phase = state['current_phase']
+            self.remaining_seconds = state['remaining_seconds']
+            self.cycles_completed = state['cycles_completed']
+            self.subject_entry.delete(0, tk.END)
+            self.subject_entry.insert(0, state.get('subject', ''))
+            self.notes_text.delete("1.0", tk.END)
+            self.notes_text.insert("1.0", state.get('notes', ''))
+            self.phase_label.config(text=self.current_phase.capitalize())
+            self.update_display()
+
+            self.paused = True
+            self.timer_running = False
+            self.start_btn.config(state=tk.NORMAL)
+            self.pause_btn.config(state=tk.NORMAL, text="Resume")
+
+            messagebox.showinfo("Restored", "Session restored. Click Start to resume.")
         else:
             self.clear_state()
-        self.save_config(self.config)
-        self.save_tasks(self.tasks)
-        self.root.destroy()
 
-    def run(self):
-        self.root.mainloop()
+    def schedule_state_save(self):
+        if self.timer_running or self.paused:
+            self.save_state()
+        if hasattr(self, 'root') and self.root.winfo_exists():
+            self._after_id = self.root.after(5000, self.schedule_state_save)
 
+    # ---------- OVERALL STATS ----------
     def show_overall_stats(self):
-        """Display a dynamic, multi-tab statistical dashboard."""
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
 
-        # ----- 1. Daily Trend (Last 30 days) -----
         cursor.execute("""
             SELECT DATE(timestamp) as date, SUM(duration_min) as total_min, COUNT(*) as sessions
             FROM pomodoro_log
@@ -932,7 +941,6 @@ class PomodoroApp:
         dates = [row['date'].strftime('%m-%d') for row in trend_data] if trend_data else []
         minutes = [float(row['total_min']) for row in trend_data] if trend_data else []
 
-        # ----- 2. Subject Breakdown -----
         cursor.execute("""
             SELECT
                 COALESCE(subject, 'Uncategorized') as subject,
@@ -945,10 +953,8 @@ class PomodoroApp:
         """)
         subject_data = cursor.fetchall()
         subjects = [row['subject'] for row in subject_data if row['total_min'] > 0]
-        # Ensure it's a float and greater than 0
         subject_mins = [float(row['total_min']) for row in subject_data if row['total_min'] is not None and float(row['total_min']) > 0]
 
-        # ----- 3. Task Breakdown (Top 5) -----
         cursor.execute("""
             SELECT
                 COALESCE(t.task_text, 'Uncategorized Task') as task_text,
@@ -964,7 +970,6 @@ class PomodoroApp:
         tasks = [row['task_text'] for row in task_data if row['total_min'] > 0]
         task_mins = [float(row['total_min']) for row in task_data if row['total_min'] is not None and float(row['total_min']) > 0]
 
-        # ----- 4. Hourly Productivity (Time of Day) -----
         cursor.execute("""
             SELECT HOUR(timestamp) as hour, COUNT(*) as sessions
             FROM pomodoro_log
@@ -976,7 +981,6 @@ class PomodoroApp:
         hours = [f"{row['hour']}:00" for row in hourly_data]
         hourly_sessions = [row['sessions'] for row in hourly_data]
 
-        # ----- 5. Streak Calculation (Consecutive days with at least 1 pomodoro) -----
         cursor.execute("""
             SELECT DISTINCT DATE(timestamp) as date
             FROM pomodoro_log
@@ -987,7 +991,6 @@ class PomodoroApp:
         streak = 0
         if days_list:
             current = datetime.now().date()
-            # Check if today or yesterday has data, to start streak
             if current in days_list or (current - timedelta(days=1)) in days_list:
                 streak = 1
                 check_date = current - timedelta(days=1)
@@ -997,7 +1000,6 @@ class PomodoroApp:
             else:
                 streak = 0
 
-        # ----- 6. Total Stats Summary -----
         cursor.execute("""
             SELECT
                 COUNT(*) as total_sessions,
@@ -1011,16 +1013,13 @@ class PomodoroApp:
         cursor.close()
         conn.close()
 
-        # ----- BUILD THE WINDOW -----
         stats_win = tk.Toplevel(self.root)
         stats_win.title("📊 Overall Study Analytics")
         stats_win.geometry("1000x700")
 
-        # Create a Notebook (Tabbed interface)
         notebook = ttk.Notebook(stats_win)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # --- Tab 1: Summary & Streak ---
         tab1 = ttk.Frame(notebook)
         notebook.add(tab1, text="🔥 Summary & Streak")
 
@@ -1036,7 +1035,6 @@ class PomodoroApp:
 
         ttk.Label(tab1, text=summary_text, font=("Helvetica", 12), justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=20)
 
-        # Goal Progress Bar (Daily Goal)
         goal = self.config.get("daily_goal", 12)
         today_count = self.count_today_pomodoros()
         progress_pct = min(100, (today_count / goal) * 100)
@@ -1046,7 +1044,6 @@ class PomodoroApp:
         progress_bar.pack(anchor=tk.W, padx=20, pady=10)
         ttk.Label(tab1, text=f"{progress_pct:.0f}% Complete", font=("Helvetica", 10)).pack(anchor=tk.W, padx=20)
 
-        # --- Tab 2: Daily Trend (Bar Chart) ---
         tab2 = ttk.Frame(notebook)
         notebook.add(tab2, text="📈 30-Day Trend")
         if dates:
@@ -1062,7 +1059,6 @@ class PomodoroApp:
         else:
             ttk.Label(tab2, text="No data available for the last 30 days.").pack(pady=50)
 
-        # --- Tab 3: Subject Breakdown (Pie Chart) ---
         tab3 = ttk.Frame(notebook)
         notebook.add(tab3, text="🧠 Subject Breakdown")
         if subjects:
@@ -1076,7 +1072,6 @@ class PomodoroApp:
         else:
             ttk.Label(tab3, text="No subject data available.").pack(pady=50)
 
-        # --- Tab 4: Top Tasks ---
         tab4 = ttk.Frame(notebook)
         notebook.add(tab4, text="📋 Top Tasks")
         if tasks:
@@ -1090,7 +1085,6 @@ class PomodoroApp:
         else:
             ttk.Label(tab4, text="No task data available.").pack(pady=50)
 
-        # --- Tab 5: Time of Day (Hourly Heatmap) ---
         tab5 = ttk.Frame(notebook)
         notebook.add(tab5, text="⏰ Peak Hours")
         if hours:
@@ -1106,20 +1100,16 @@ class PomodoroApp:
         else:
             ttk.Label(tab5, text="No hourly data available.").pack(pady=50)
 
-        # --- Tab 6: Motivation & Insights (Dynamic Text) ---
         tab6 = ttk.Frame(notebook)
         notebook.add(tab6, text="💡 Insights")
 
         insights = "📌 **DYNAMIC INSIGHTS BASED ON YOUR DATA**\n\n"
-
-        # Insight 1: Best time of day
         if hourly_sessions:
             max_idx = hourly_sessions.index(max(hourly_sessions))
             best_hour = hours[max_idx]
             insights += f"🚀 Your peak productivity time is around **{best_hour}**.\n"
             insights += f"   Schedule your hardest subjects during this hour!\n\n"
 
-        # Insight 2: Subject focus
         if subjects and subject_mins:
             top_subj = subjects[0]
             pct = (subject_mins[0] / sum(subject_mins)) * 100
@@ -1129,7 +1119,6 @@ class PomodoroApp:
             else:
                 insights += f"   Consider diversifying slightly if other subjects need attention.\n\n"
 
-        # Insight 3: Consistency
         if totals and totals['total_sessions'] > 20:
             avg = totals['total_minutes'] / totals['total_sessions']
             if avg > 25:
@@ -1144,6 +1133,38 @@ class PomodoroApp:
 
         ttk.Label(tab6, text=insights, font=("Helvetica", 11), justify=tk.LEFT, wraplength=800).pack(anchor=tk.W, padx=20, pady=20)
 
+    # ---------- ON CLOSE (with error handling) ----------
+    def on_close(self):
+        try:
+            if hasattr(self, '_after_id') and self._after_id:
+                self.root.after_cancel(self._after_id)
+        except Exception:
+            pass
+
+        try:
+            if self.remaining_seconds > 0:
+                self.save_state()
+            else:
+                self.clear_state()
+        except Exception as e:
+            print(f"[Pomodoro] State save error: {e}")
+
+        try:
+            self.save_config(self.config)
+        except Exception as e:
+            print(f"[Pomodoro] Config save error: {e}")
+
+        try:
+            self.save_tasks(self.tasks)
+        except Exception as e:
+            print(f"[Pomodoro] Tasks save error: {e}")
+
+        self.root.destroy()
+
+    def run(self):
+        self.root.mainloop()
+
+# ---------- ENTRY POINT ----------
 def main():
     root = tk.Tk()
     app = PomodoroApp(root)
