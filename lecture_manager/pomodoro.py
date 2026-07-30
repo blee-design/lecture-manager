@@ -798,30 +798,40 @@ class PomodoroApp:
         subject_name = self.subject_var.get()
         session_type = self.type_var.get()
         subject_id = None
+
+        # Get subject_id from DB
         if subject_name:
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT id FROM subjects WHERE name = %s", (subject_name,))
-            row = cursor.fetchone()
-            if row:
-                subject_id = row[0]
-            cursor.close()
-            conn.close()
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM subjects WHERE name = %s", (subject_name,))
+                row = cursor.fetchone()
+                if row:
+                    subject_id = row[0]
+                cursor.close()
+                conn.close()
+            except Exception as e:
+                print(f"[Pomodoro ERROR] Failed to get subject_id: {e}")
 
         task_id = self.get_current_task_id()
         notes = self.notes_text.get("1.0", tk.END).strip()
         duration = self.config["work_min"]
 
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO pomodoro_log
-            (timestamp, phase, duration_min, subject, subject_id, session_type, notes, task_id)
-            VALUES (NOW(), 'work', %s, %s, %s, %s, %s, %s)
-        """, (duration, subject_name, subject_id, session_type, notes, task_id))
-        conn.commit()
-        cursor.close()
-        conn.close()
+        # Insert log
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO pomodoro_log
+                (timestamp, phase, duration_min, subject, subject_id, session_type, notes, task_id)
+                VALUES (NOW(), 'work', %s, %s, %s, %s, %s, %s)
+            """, (duration, subject_name, subject_id, session_type, notes, task_id))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print(f"[Pomodoro] ✅ Logged session: {subject_name} ({session_type})")
+        except Exception as e:
+            print(f"[Pomodoro ERROR] Failed to log session: {e}")
 
     def update_progress(self):
         goal = self.config["daily_goal"]
