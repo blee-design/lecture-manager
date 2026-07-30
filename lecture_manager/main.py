@@ -128,7 +128,7 @@ def main():
     menus = {
         '1': [
             ("➕ Add new lecture", add_lecture),
-            ("👁️ View all lectures (with sorting)", view_all),
+            ("👁️ View all lectures", view_all),
             ("🔍 View a single lecture", view_one),
             ("✏️ Update a lecture", update_lecture),
             ("🗑️ Delete a lecture", delete_lecture),
