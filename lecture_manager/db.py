@@ -126,6 +126,20 @@ def create_table():
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     );
     """)
+
+    # Inside create_table(), after the existing tables
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS subjects (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL UNIQUE,
+        paper ENUM('pretest','paper_i','paper_ii','paper_iii') NULL,
+        chapter VARCHAR(50) NULL,
+        active BOOLEAN DEFAULT TRUE,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
+
     # Insert a dummy row if not exists (for easier update)
     cursor.execute("INSERT IGNORE INTO pomodoro_state (id, current_phase, remaining_seconds) VALUES (1, 'work', 0)")
     # Insert default settings if they don't exist
@@ -369,6 +383,22 @@ def migrate_table():
         cursor.execute("INSERT INTO pomodoro_state (id, current_phase, remaining_seconds) VALUES (1, 'work', 0)")
         print_colored("[✓] Created pomodoro_state table.", COLORS.GREEN)
         print_colored("[✓] Created pomodoro_state table.", COLORS.GREEN)
+
+    # --- Add subject_id and session_type to pomodoro_log ---
+    cursor.execute("SHOW COLUMNS FROM pomodoro_log LIKE 'subject_id'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE pomodoro_log ADD COLUMN subject_id INT NULL")
+        cursor.execute("ALTER TABLE pomodoro_log ADD FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE SET NULL")
+    cursor.execute("SHOW COLUMNS FROM pomodoro_log LIKE 'session_type'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE pomodoro_log ADD COLUMN session_type ENUM('study','revision','pretest','exam') DEFAULT 'study'")
+
+    # --- Optional: add subject_goals to pomodoro_settings ---
+    cursor.execute("SHOW COLUMNS FROM pomodoro_settings LIKE 'subject_goals'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE pomodoro_settings ADD COLUMN subject_goals JSON NULL")
+        cursor.execute("ALTER TABLE pomodoro_settings ADD COLUMN revision_goals JSON NULL")
+
     cursor.close()
     conn.close()
 

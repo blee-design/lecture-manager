@@ -94,8 +94,9 @@ class PomodoroApp:
         left.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         left.rowconfigure(0, weight=1)   # timer
         left.rowconfigure(1, weight=0)   # subject
-        left.rowconfigure(2, weight=0)   # task combo
-        left.rowconfigure(3, weight=2)   # notes
+        left.rowconfigure(2, weight=0)   # session type
+        left.rowconfigure(3, weight=0)   # task combo
+        left.rowconfigure(4, weight=2)   # notes
         left.columnconfigure(0, weight=1)
 
         # -- Timer Frame --
@@ -130,36 +131,45 @@ class PomodoroApp:
         ttk.Button(progress_frame, text="📊 Summary", command=self.show_today_summary).pack(side=tk.LEFT, padx=5)
         ttk.Button(progress_frame, text="📈 Analytics", command=self.show_overall_stats).pack(side=tk.LEFT, padx=5)
 
-        # -- Subject --
+        # -- Subject (dropdown) --
         subject_frame = ttk.LabelFrame(left, text="📌 Subject", padding="10")
         subject_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=5)
-        self.subject_entry = ttk.Entry(subject_frame, font=("Helvetica", 11))
-        self.subject_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
         subject_frame.columnconfigure(0, weight=1)
+        self.subject_var = tk.StringVar()
+        self.subject_combo = ttk.Combobox(subject_frame, textvariable=self.subject_var, state="readonly")
+        self.subject_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
+        self.refresh_subject_list()   # load subjects from DB
 
-        # -- Task Selection (combo) --
+        # -- Session Type --
+        type_frame = ttk.LabelFrame(left, text="📌 Session Type", padding="10")
+        type_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=5)
+        type_frame.columnconfigure(0, weight=1)
+        self.type_var = tk.StringVar(value="study")
+        type_combo = ttk.Combobox(type_frame, textvariable=self.type_var, state="readonly",
+                                values=["study", "revision", "pretest", "exam"])
+        type_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
+
+        # -- Task Selection --
         task_select_frame = ttk.LabelFrame(left, text="🎯 Current Task", padding="10")
-        task_select_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=5)
+        task_select_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=5)
         task_select_frame.columnconfigure(0, weight=1)
 
         self.task_combo = ttk.Combobox(task_select_frame, textvariable=self.task_var, state="readonly", width=50)
-        # Force dropdown listbox colors
         self.root.option_add('*TCombobox*Listbox.background', '#2c3e50')
         self.root.option_add('*TCombobox*Listbox.foreground', 'white')
         self.task_combo['foreground'] = 'white'
         self.task_combo['background'] = '#34495e'
         self.task_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
 
-
         # -- Notes --
         notes_frame = ttk.LabelFrame(left, text="📝 Notes for this session", padding="10")
-        notes_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        notes_frame.grid(row=4, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         notes_frame.columnconfigure(0, weight=1)
         notes_frame.rowconfigure(0, weight=1)
         self.notes_text = scrolledtext.ScrolledText(notes_frame, height=4, wrap=tk.WORD, bg="#2c3e50", fg="#ecf0f1", insertbackground="#ecf0f1")
         self.notes_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        # ----- RIGHT COLUMN -----
+        # ----- RIGHT COLUMN (unchanged) -----
         right = ttk.Frame(main, padding="5")
         right.grid(row=0, column=1, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
         right.rowconfigure(0, weight=1)
@@ -454,6 +464,29 @@ class PomodoroApp:
             self.task_listbox_task_ids.append(task['id'])
         self.update_task_combo()
 
+    def refresh_subject_list(self):
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # New query: groups by paper (Pretest → Paper I → Paper II → Paper III)
+        cursor.execute("""
+            SELECT DISTINCT name
+            FROM subjects
+            WHERE active = 1
+            ORDER BY FIELD(paper, 'pretest','paper_i','paper_ii','paper_iii'), chapter, name
+        """)
+        subjects = [row[0] for row in cursor.fetchall()]
+        cursor.close()
+        conn.close()
+
+        # Optional: remove any duplicates (just in case)
+        subjects = list(dict.fromkeys(subjects))   # preserves order
+
+        # Now set the combobox values
+        self.subject_combo['values'] = subjects
+        if subjects and not self.subject_var.get():
+            self.subject_var.set(subjects[0])
+
     def update_task_combo(self):
         options = []
         for task in self.tasks:
@@ -535,8 +568,8 @@ class PomodoroApp:
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
         cursor.execute("""
-            SELECT l.id, l.timestamp, l.phase, l.duration_min, l.subject, l.notes, l.task_id,
-                   t.task_text
+            SELECT l.id, l.timestamp, l.phase, l.duration_min, l.subject, l.session_type,
+                l.notes, l.task_id, t.task_text
             FROM pomodoro_log l
             LEFT JOIN pomodoro_tasks t ON l.task_id = t.id
             ORDER BY l.id DESC
@@ -554,6 +587,7 @@ class PomodoroApp:
                 "notes": row["notes"],
                 "task_id": row.get("task_id"),
                 "task_name": row.get("task_text", "") if row.get("task_text") else None,
+                "session_type": row.get("session_type", "study")
             })
         return log
 
@@ -761,19 +795,33 @@ class PomodoroApp:
             self.progress_bar['value'] = progress
 
     def log_session(self):
-        subject = self.subject_entry.get().strip()
-        notes = self.notes_text.get("1.0", tk.END).strip()
+        subject_name = self.subject_var.get()
+        session_type = self.type_var.get()
+        subject_id = None
+        if subject_name:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM subjects WHERE name = %s", (subject_name,))
+            row = cursor.fetchone()
+            if row:
+                subject_id = row[0]
+            cursor.close()
+            conn.close()
+
         task_id = self.get_current_task_id()
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        entry = {
-            "timestamp": timestamp,
-            "phase": "work",
-            "duration_min": self.config["work_min"],
-            "subject": subject,
-            "notes": notes,
-            "task_id": task_id
-        }
-        self.add_log_entry(entry)
+        notes = self.notes_text.get("1.0", tk.END).strip()
+        duration = self.config["work_min"]
+
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO pomodoro_log
+            (timestamp, phase, duration_min, subject, subject_id, session_type, notes, task_id)
+            VALUES (NOW(), 'work', %s, %s, %s, %s, %s, %s)
+        """, (duration, subject_name, subject_id, session_type, notes, task_id))
+        conn.commit()
+        cursor.close()
+        conn.close()
 
     def update_progress(self):
         goal = self.config["daily_goal"]
@@ -904,7 +952,12 @@ class PomodoroApp:
             self.remaining_seconds = state['remaining_seconds']
             self.cycles_completed = state['cycles_completed']
             self.subject_entry.delete(0, tk.END)
-            self.subject_entry.insert(0, state.get('subject', ''))
+
+            if state.get('subject'):
+                self.subject_var.set(state['subject'])
+            else:
+                self.subject_var.set('')
+
             self.notes_text.delete("1.0", tk.END)
             self.notes_text.insert("1.0", state.get('notes', ''))
             self.phase_label.config(text=self.current_phase.capitalize())
@@ -942,13 +995,13 @@ class PomodoroApp:
         minutes = [float(row['total_min']) for row in trend_data] if trend_data else []
 
         cursor.execute("""
-            SELECT
-                COALESCE(subject, 'Uncategorized') as subject,
-                SUM(duration_min) as total_min,
-                COUNT(*) as sessions
-            FROM pomodoro_log
-            WHERE phase = 'work'
-            GROUP BY subject
+            SELECT COALESCE(s.name, 'Uncategorized') AS subject,
+                SUM(l.duration_min) AS total_min,
+                COUNT(*) AS sessions
+            FROM pomodoro_log l
+            LEFT JOIN subjects s ON l.subject_id = s.id
+            WHERE l.phase = 'work'
+            GROUP BY l.subject_id
             ORDER BY total_min DESC
         """)
         subject_data = cursor.fetchall()
