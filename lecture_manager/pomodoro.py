@@ -1,4 +1,4 @@
-# pomodoro.py – Enhanced UI with modern design (fully working)
+# pomodoro.py
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
