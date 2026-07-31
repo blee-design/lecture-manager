@@ -399,6 +399,71 @@ def migrate_table():
         cursor.execute("ALTER TABLE pomodoro_settings ADD COLUMN subject_goals JSON NULL")
         cursor.execute("ALTER TABLE pomodoro_settings ADD COLUMN revision_goals JSON NULL")
 
+    # Add weekly and monthly goal columns to pomodoro_settings
+    cursor.execute("SHOW COLUMNS FROM pomodoro_settings LIKE 'weekly_goal_hours'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE pomodoro_settings ADD COLUMN weekly_goal_hours INT NOT NULL DEFAULT 10")
+
+    cursor.execute("SHOW COLUMNS FROM pomodoro_settings LIKE 'monthly_goal_hours'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE pomodoro_settings ADD COLUMN monthly_goal_hours INT NOT NULL DEFAULT 40")
+
+    # 1. Badges table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS pomodoro_badges (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        badge_name VARCHAR(50) NOT NULL UNIQUE,
+        description VARCHAR(255),
+        icon CHAR(2)  -- emoji icon
+    );
+    """)
+
+    # 2. User badges (earned)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_badges (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        badge_name VARCHAR(50) NOT NULL,
+        earned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (badge_name) REFERENCES pomodoro_badges(badge_name) ON DELETE CASCADE
+    );
+    """)
+
+    # 3. Pauses log (for interruption tracking)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS pomodoro_pauses (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        session_id INT NOT NULL,  -- references pomodoro_log.id
+        pause_start DATETIME NOT NULL,
+        pause_end DATETIME,
+        duration_sec INT,
+        FOREIGN KEY (session_id) REFERENCES pomodoro_log(id) ON DELETE CASCADE
+    );
+    """)
+
+    # 4. Add pause_count and pause_total_sec to pomodoro_log (optional, for quick stats)
+    cursor.execute("SHOW COLUMNS FROM pomodoro_log LIKE 'pause_count'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE pomodoro_log ADD COLUMN pause_count INT DEFAULT 0")
+        cursor.execute("ALTER TABLE pomodoro_log ADD COLUMN pause_total_sec INT DEFAULT 0")
+
+    # 5. Pre‑seed badges
+    badges = [
+        ('first_pomodoro', 'Completed your first Pomodoro', '🌟'),
+        ('ten_sessions', 'Completed 10 work sessions', '🏅'),
+        ('fifty_sessions', 'Completed 50 work sessions', '🥈'),
+        ('hundred_sessions', 'Completed 100 work sessions', '🥇'),
+        ('five_day_streak', 'Studied for 5 days in a row', '🔥'),
+        ('ten_day_streak', 'Studied for 10 days in a row', '💎'),
+        ('early_bird', 'Completed a session before 8 AM', '🌅'),
+        ('night_owl', 'Completed a session after 10 PM', '🌙'),
+        ('subject_specialist', 'Spent 5+ hours on one subject', '📚'),
+        ('balanced_learner', 'Studied 3+ subjects in a week', '⚖️'),
+    ]
+    for badge_name, desc, icon in badges:
+        cursor.execute("INSERT IGNORE INTO pomodoro_badges (badge_name, description, icon) VALUES (%s, %s, %s)",
+                    (badge_name, desc, icon))
+    conn.commit()
+
     cursor.close()
     conn.close()
 

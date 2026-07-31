@@ -5,9 +5,24 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from datetime import datetime, timedelta
 import calendar
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext, simpledialog
+import random
+from tkinter import ttk, messagebox, scrolledtext, simpledialog, filedialog
 from datetime import datetime
 from .db import get_connection
+
+QUOTES = [
+    "The secret of getting ahead is getting started. – Mark Twain",
+    "Success is the sum of small efforts repeated day in and day out. – Robert Collier",
+    "It does not matter how slowly you go as long as you do not stop. – Confucius",
+    "You don’t have to be extreme, just consistent.",
+    "The best time to start was yesterday. The next best time is now.",
+    "Discipline is choosing between what you want now and what you want most.",
+    "Small daily improvements over time lead to stunning results.",
+    "Don't watch the clock; do what it does. Keep going. – Sam Levenson",
+    "The only way to do great work is to love what you do. – Steve Jobs",
+    "Success is not final, failure is not fatal: it is the courage to continue that counts. – Churchill",
+]
+
 
 # ====================== STYLE CONFIGURATION ======================
 def configure_styles():
@@ -68,9 +83,14 @@ class PomodoroApp:
         self._after_id = None
         self.task_var = tk.StringVar()
 
+        self.current_session_id = None      # will hold log ID for current work session
+        self.pauses = []                    # list of (start, end) tuples for current work session
+        self.pause_start_time = None        # used to record pause start
+
         self.sound_func = self._beep
 
         self.build_ui()
+        self.update_streak_display()
         self.restore_state_if_any()
         self.update_display()
         self.refresh_task_list()
@@ -80,10 +100,168 @@ class PomodoroApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.schedule_state_save()
 
+    def export_log_csv(self):
+        import csv
+        from tkinter import filedialog
+        filename = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")])
+        if not filename:
+            return
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT timestamp, phase, duration_min, subject, session_type, notes,
+                pause_count, pause_total_sec, task_id
+            FROM pomodoro_log
+            WHERE phase = 'work'
+            ORDER BY timestamp
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        if not rows:
+            messagebox.showinfo("No data", "No work sessions to export.")
+            return
+        with open(filename, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+            writer.writeheader()
+            writer.writerows(rows)
+        messagebox.showinfo("Export", f"Exported {len(rows)} sessions to {filename}")
+
+    def check_and_award_badges(self):
+        from .db import get_connection
+        import random
+
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # Total work sessions
+        cursor.execute("SELECT COUNT(*) as total FROM pomodoro_log WHERE phase = 'work'")
+        total_sessions = cursor.fetchone()['total']
+
+        # Days with at least one session
+        cursor.execute("SELECT COUNT(DISTINCT DATE(timestamp)) as days FROM pomodoro_log WHERE phase = 'work'")
+        days_active = cursor.fetchone()['days']
+
+        # Current streak (use your existing streak logic)
+        streak = self.get_current_streak()
+
+        # Early bird / Night owl
+        cursor.execute("SELECT COUNT(*) as early FROM pomodoro_log WHERE phase='work' AND TIME(timestamp) < '08:00:00'")
+        early_bird = cursor.fetchone()['early'] > 0
+        cursor.execute("SELECT COUNT(*) as late FROM pomodoro_log WHERE phase='work' AND TIME(timestamp) > '22:00:00'")
+        night_owl = cursor.fetchone()['late'] > 0
+
+        # Subject specialist (≥5h on one subject)
+        cursor.execute("""
+            SELECT subject, SUM(duration_min) as total FROM pomodoro_log
+            WHERE phase='work' AND subject IS NOT NULL AND subject != ''
+            GROUP BY subject HAVING total >= 300 LIMIT 1
+        """)
+        specialist = cursor.fetchone() is not None
+
+        # Balanced learner (3+ subjects this week)
+        week_start = datetime.now() - timedelta(days=datetime.now().weekday())
+        week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+        cursor.execute("""
+            SELECT COUNT(DISTINCT subject) as distinct_subjects
+            FROM pomodoro_log
+            WHERE phase='work' AND subject IS NOT NULL AND subject != ''
+            AND timestamp >= %s
+        """, (week_start,))
+        distinct = cursor.fetchone()['distinct_subjects']
+        balanced = distinct >= 3
+
+        cursor.close()
+        conn.close()
+
+        # Determine which badges to award
+        earned = []
+        if total_sessions >= 1:
+            earned.append('first_pomodoro')
+        if total_sessions >= 10:
+            earned.append('ten_sessions')
+        if total_sessions >= 50:
+            earned.append('fifty_sessions')
+        if total_sessions >= 100:
+            earned.append('hundred_sessions')
+        if streak >= 5:
+            earned.append('five_day_streak')
+        if streak >= 10:
+            earned.append('ten_day_streak')
+        if early_bird:
+            earned.append('early_bird')
+        if night_owl:
+            earned.append('night_owl')
+        if specialist:
+            earned.append('subject_specialist')
+        if balanced:
+            earned.append('balanced_learner')
+
+        # Insert into user_badges if not already present
+        conn = get_connection()
+        cursor = conn.cursor()
+        newly_earned = []
+        for b in earned:
+            cursor.execute("INSERT IGNORE INTO user_badges (badge_name) VALUES (%s)", (b,))
+            if cursor.rowcount > 0:   # if inserted, it's newly earned
+                newly_earned.append(b)
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        # Show notification for new badges
+        if newly_earned:
+            # Fetch icons and descriptions
+            conn = get_connection()
+            cursor = conn.cursor(dictionary=True)
+            placeholders = ','.join(['%s'] * len(newly_earned))
+            cursor.execute(f"SELECT badge_name, description, icon FROM pomodoro_badges WHERE badge_name IN ({placeholders})", newly_earned)
+            badge_info = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            msg = "\n".join([f"{b['icon']} {b['badge_name'].replace('_',' ').title()} – {b['description']}" for b in badge_info])
+            messagebox.showinfo("🏆 New Badge(s) Unlocked!", f"You earned:\n\n{msg}")
+
+    def _create_scrollable_container(self):
+        container = ttk.Frame(self.root)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        self.canvas = tk.Canvas(container, bg="#1e2a3a", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+
+        self.canvas.pack(side="left", fill=tk.BOTH, expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        self.scrollable_frame = ttk.Frame(self.canvas, padding="10")
+        self.canvas_window = self.canvas.create_window(
+            (0, 0), window=self.scrollable_frame, anchor="nw"
+        )
+
+        self.scrollable_frame.bind("<Configure>", self._on_frame_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+
+        self._bind_mousewheel()
+        return self.scrollable_frame
+
+    def _on_frame_configure(self, event):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event):
+        canvas_width = event.width
+        self.canvas.itemconfig(self.canvas_window, width=canvas_width)
+
+    def _bind_mousewheel(self):
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-4>", lambda e: self.canvas.yview_scroll(-1, "units"))
+        self.canvas.bind_all("<Button-5>", lambda e: self.canvas.yview_scroll(1, "units"))
+
+    def _on_mousewheel(self, event):
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
     # ---------- UI Construction ----------
     def build_ui(self):
-        main = ttk.Frame(self.root, padding="10")
-        main.pack(fill=tk.BOTH, expand=True)
+        main = self._create_scrollable_container()
         main.columnconfigure(0, weight=3)
         main.columnconfigure(1, weight=2)
         main.rowconfigure(0, weight=1)
@@ -96,7 +274,7 @@ class PomodoroApp:
         left.rowconfigure(1, weight=0)   # subject
         left.rowconfigure(2, weight=0)   # session type
         left.rowconfigure(3, weight=0)   # task combo
-        left.rowconfigure(4, weight=2)   # notes
+        left.rowconfigure(4, weight=3)   # notes # Here also can be resized default is 3
         left.columnconfigure(0, weight=1)
 
         # -- Timer Frame --
@@ -130,6 +308,26 @@ class PomodoroApp:
         self.daily_bar.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
         ttk.Button(progress_frame, text="📊 Summary", command=self.show_today_summary).pack(side=tk.LEFT, padx=5)
         ttk.Button(progress_frame, text="📈 Analytics", command=self.show_overall_stats).pack(side=tk.LEFT, padx=5)
+
+        # Weekly progress
+        weekly_frame = ttk.Frame(timer_frame)
+        weekly_frame.grid(row=5, column=0, sticky=tk.W+tk.E, pady=2)
+        self.weekly_label = ttk.Label(weekly_frame, text="Week: 0 / 10h")
+        self.weekly_label.pack(side=tk.LEFT, padx=5)
+        self.weekly_bar = ttk.Progressbar(weekly_frame, orient=tk.HORIZONTAL, length=200, mode='determinate')
+        self.weekly_bar.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+
+        # Monthly progress
+        monthly_frame = ttk.Frame(timer_frame)
+        monthly_frame.grid(row=6, column=0, sticky=tk.W+tk.E, pady=2)
+        self.monthly_label = ttk.Label(monthly_frame, text="Month: 0 / 40h")
+        self.monthly_label.pack(side=tk.LEFT, padx=5)
+        self.monthly_bar = ttk.Progressbar(monthly_frame, orient=tk.HORIZONTAL, length=200, mode='determinate')
+        self.monthly_bar.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+
+        # Streak label (after the progress bars)
+        self.streak_label = ttk.Label(timer_frame, font=("Helvetica", 12), foreground="#FFA500")
+        self.streak_label.grid(row=7, column=0, pady=5)
 
         # -- Subject (dropdown) --
         subject_frame = ttk.LabelFrame(left, text="📌 Subject", padding="10")
@@ -166,7 +364,7 @@ class PomodoroApp:
         notes_frame.grid(row=4, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         notes_frame.columnconfigure(0, weight=1)
         notes_frame.rowconfigure(0, weight=1)
-        self.notes_text = scrolledtext.ScrolledText(notes_frame, height=4, wrap=tk.WORD, bg="#2c3e50", fg="#ecf0f1", insertbackground="#ecf0f1")
+        self.notes_text = scrolledtext.ScrolledText(notes_frame, height=5, wrap=tk.WORD, bg="#2c3e50", fg="#ecf0f1", insertbackground="#ecf0f1") # Note frame size can be reduced and increased here Default is 4
         self.notes_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # ----- RIGHT COLUMN (unchanged) -----
@@ -187,22 +385,39 @@ class PomodoroApp:
         self.work_var = tk.StringVar(value=str(self.config["work_min"]))
         ttk.Entry(settings_frame, textvariable=self.work_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
         row += 1
+
         ttk.Label(settings_frame, text="Short break (min):").grid(row=row, column=0, sticky=tk.W, pady=2)
         self.short_var = tk.StringVar(value=str(self.config["short_break_min"]))
         ttk.Entry(settings_frame, textvariable=self.short_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
         row += 1
+
         ttk.Label(settings_frame, text="Long break (min):").grid(row=row, column=0, sticky=tk.W, pady=2)
         self.long_var = tk.StringVar(value=str(self.config["long_break_min"]))
         ttk.Entry(settings_frame, textvariable=self.long_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
         row += 1
+
         ttk.Label(settings_frame, text="Cycles before long:").grid(row=row, column=0, sticky=tk.W, pady=2)
         self.cycles_var = tk.StringVar(value=str(self.config["cycles_before_long"]))
         ttk.Entry(settings_frame, textvariable=self.cycles_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
         row += 1
+
         ttk.Label(settings_frame, text="Daily goal:").grid(row=row, column=0, sticky=tk.W, pady=2)
         self.goal_var = tk.StringVar(value=str(self.config["daily_goal"]))
         ttk.Entry(settings_frame, textvariable=self.goal_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
         row += 1
+
+        # --- Weekly and Monthly goals moved UP before the Save button ---
+        ttk.Label(settings_frame, text="Weekly goal (hours):").grid(row=row, column=0, sticky=tk.W, pady=2)
+        self.weekly_goal_var = tk.StringVar(value=str(self.config["weekly_goal_hours"]))
+        ttk.Entry(settings_frame, textvariable=self.weekly_goal_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
+        row += 1
+
+        ttk.Label(settings_frame, text="Monthly goal (hours):").grid(row=row, column=0, sticky=tk.W, pady=2)
+        self.monthly_goal_var = tk.StringVar(value=str(self.config["monthly_goal_hours"]))
+        ttk.Entry(settings_frame, textvariable=self.monthly_goal_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
+        row += 1
+
+        # --- Save button now at the bottom ---
         ttk.Button(settings_frame, text="💾 Save Settings", command=self.save_settings).grid(row=row, column=0, columnspan=2, pady=10)
 
         # -- Task List --
@@ -506,6 +721,32 @@ class PomodoroApp:
                 label = f"[P{task['priority']}] {task['task_text']}"
                 self.combo_label_to_id[label] = task['id']
 
+    def update_weekly_monthly_progress(self):
+        now = datetime.now()
+        week_start = now - timedelta(days=now.weekday())
+        week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT SUM(duration_min) FROM pomodoro_log WHERE phase='work' AND timestamp >= %s", (week_start,))
+        weekly = cursor.fetchone()[0] or 0
+        cursor.execute("SELECT SUM(duration_min) FROM pomodoro_log WHERE phase='work' AND timestamp >= %s", (month_start,))
+        monthly = cursor.fetchone()[0] or 0
+        cursor.close()
+        conn.close()
+
+        week_goal = self.config.get('weekly_goal_hours', 10) * 60
+        month_goal = self.config.get('monthly_goal_hours', 40) * 60
+
+        self.weekly_bar['maximum'] = week_goal
+        self.weekly_bar['value'] = min(weekly, week_goal)
+        self.weekly_label.config(text=f"Week: {weekly//60}h {weekly%60}m / {week_goal//60}h")
+
+        self.monthly_bar['maximum'] = month_goal
+        self.monthly_bar['value'] = min(monthly, month_goal)
+        self.monthly_label.config(text=f"Month: {monthly//60}h {monthly%60}m / {month_goal//60}h")
+
     def on_task_select(self, event):
         selection = self.task_listbox.curselection()
         if selection:
@@ -530,6 +771,30 @@ class PomodoroApp:
             return self.combo_label_to_id[label]
         return None
 
+    def get_current_streak(self):
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT DATE(timestamp) as date FROM pomodoro_log WHERE phase='work' ORDER BY date DESC")
+        dates = [row[0] for row in cursor.fetchall()]
+        cursor.close()
+        conn.close()
+        if not dates:
+            return 0
+        streak = 0
+        check = datetime.now().date()
+        while check in dates:
+            streak += 1
+            check -= timedelta(days=1)
+        return streak
+
+    def update_streak_display(self):
+        streak = self.get_current_streak()
+        if streak == 0:
+            msg = "Start your streak today! 🔥"
+        else:
+            msg = f"🔥 {streak}-day streak! Keep going!"
+        self.streak_label.config(text=msg)
+
     # ---------- DATABASE HELPERS ----------
     def load_config(self):
         conn = get_connection()
@@ -545,9 +810,14 @@ class PomodoroApp:
                 "long_break_min": row["long_break_min"],
                 "cycles_before_long": row["cycles_before_long"],
                 "daily_goal": row["daily_goal"],
+                "weekly_goal_hours": row.get("weekly_goal_hours", 10),   # new
+                "monthly_goal_hours": row.get("monthly_goal_hours", 40), # new
             }
-        return {"work_min":25, "short_break_min":5, "long_break_min":15,
-                "cycles_before_long":4, "daily_goal":12}
+        return {
+            "work_min":25, "short_break_min":5, "long_break_min":15,
+            "cycles_before_long":4, "daily_goal":12,
+            "weekly_goal_hours":10, "monthly_goal_hours":40
+        }
 
     def save_config(self, config):
         conn = get_connection()
@@ -555,11 +825,13 @@ class PomodoroApp:
         cursor.execute("""
             UPDATE pomodoro_settings
             SET work_min=%s, short_break_min=%s, long_break_min=%s,
-                cycles_before_long=%s, daily_goal=%s
+                cycles_before_long=%s, daily_goal=%s,
+                weekly_goal_hours=%s, monthly_goal_hours=%s
             WHERE id=1
         """, (config["work_min"], config["short_break_min"],
-              config["long_break_min"], config["cycles_before_long"],
-              config["daily_goal"]))
+            config["long_break_min"], config["cycles_before_long"],
+            config["daily_goal"], config["weekly_goal_hours"],
+            config["monthly_goal_hours"]))
         conn.commit()
         cursor.close()
         conn.close()
@@ -681,6 +953,23 @@ class PomodoroApp:
 
     # ---------- TIMER ----------
     def start_timer(self):
+        # ----- NEW WORK SESSION? -----
+        if self.current_phase == "work" and not self.timer_running and not self.paused:
+            # Insert placeholder log entry (will be updated later)
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, notes, task_id)
+                VALUES (NOW(), 'work', %s, %s, %s, %s)
+            """, (self.config["work_min"], self.subject_var.get(), self.notes_text.get("1.0", tk.END).strip(), self.get_current_task_id()))
+            conn.commit()
+            self.current_session_id = cursor.lastrowid
+            cursor.close()
+            conn.close()
+            self.pauses = []          # reset pauses for this session
+            self.pause_start_time = None
+
+        # ----- RESUME FROM PAUSE? -----
         if self.timer_running and not self.paused:
             return
         if self.paused:
@@ -692,6 +981,7 @@ class PomodoroApp:
             self.save_state()
             return
 
+        # ----- SET DURATION -----
         if self.current_phase == "work":
             minutes = self.config["work_min"]
         elif self.current_phase == "short_break":
@@ -725,9 +1015,20 @@ class PomodoroApp:
             self.paused = True
             self.pause_btn.config(text="Resume")
             self.start_btn.config(state=tk.NORMAL)
+            self.pause_start_time = datetime.now()   # record pause start
             self.save_state()
         elif self.paused:
-            pass
+            # Resuming: record pause end and duration
+            if self.pause_start_time:
+                pause_end = datetime.now()
+                duration = (pause_end - self.pause_start_time).total_seconds()
+                self.pauses.append((self.pause_start_time, pause_end, duration))
+                self.pause_start_time = None
+            self.paused = False
+            self.pause_btn.config(text="Pause")
+            self.start_btn.config(state=tk.DISABLED)
+            self.save_state()
+            self.update_timer()
 
     def reset_timer(self):
         if self.timer_running or self.paused:
@@ -756,9 +1057,18 @@ class PomodoroApp:
         completed_phase = self.current_phase
 
         if completed_phase == "work":
+            import random
+            quote = random.choice(QUOTES)
+            messagebox.showinfo("🎉 Session Complete!", f"Great work!\n\n{quote}")
+
+            # ----- UPDATE PLACEHOLDER LOG WITH PAUSES -----
+            self.finalize_session_with_pauses()   # updates the existing log entry
+
+            # ----- AWARD BADGES -----
+            self.check_and_award_badges()
+
             self.cycles_completed += 1
             self.today_count += 1
-            self.log_session()
             self.log = self.load_log()
             self.refresh_log()
             self.update_progress()
@@ -772,6 +1082,7 @@ class PomodoroApp:
                 self.phase_label.config(text="Short Break")
                 self.remaining_seconds = self.config["short_break_min"] * 60
         else:
+            # break phase completed
             self.current_phase = "work"
             self.phase_label.config(text="Work")
             self.remaining_seconds = self.config["work_min"] * 60
@@ -795,6 +1106,38 @@ class PomodoroApp:
         if total_seconds > 0:
             progress = ((total_seconds - self.remaining_seconds) / total_seconds) * 100
             self.progress_bar['value'] = progress
+
+    def finalize_session_with_pauses(self):
+        if self.current_session_id is None:
+            # fallback: log normally
+            return
+        conn = get_connection()
+        cursor = conn.cursor()
+        total_pause_sec = sum(dur for _, _, dur in self.pauses)
+        cursor.execute("""
+            UPDATE pomodoro_log
+            SET pause_count = %s, pause_total_sec = %s
+            WHERE id = %s
+        """, (len(self.pauses), total_pause_sec, self.current_session_id))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        # Insert each pause into pomodoro_pauses
+        conn = get_connection()
+        cursor = conn.cursor()
+        for start, end, dur in self.pauses:
+            cursor.execute("""
+                INSERT INTO pomodoro_pauses (session_id, pause_start, pause_end, duration_sec)
+                VALUES (%s, %s, %s, %s)
+            """, (self.current_session_id, start, end, dur))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        self.current_session_id = None
+        self.pauses = []
+        self.pause_start_time = None
 
     def log_session(self):
         subject_name = self.subject_var.get()
@@ -836,10 +1179,12 @@ class PomodoroApp:
             print(f"[Pomodoro ERROR] Failed to log session: {e}")
 
     def update_progress(self):
+        self.update_streak_display()
         goal = self.config["daily_goal"]
         self.progress_label.config(text=f"Today: {self.today_count} / {goal} Pomodoros")
         self.daily_bar['maximum'] = goal
         self.daily_bar['value'] = self.today_count
+        self.update_weekly_monthly_progress()
 
     # ---------- SETTINGS ----------
     def save_settings(self):
@@ -857,6 +1202,8 @@ class PomodoroApp:
                 "long_break_min": long_,
                 "cycles_before_long": cycles,
                 "daily_goal": goal,
+                "weekly_goal_hours": int(self.weekly_goal_var.get()),
+                "monthly_goal_hours": int(self.monthly_goal_var.get()),
             })
             self.save_config(self.config)
             if not self.timer_running:
@@ -1083,6 +1430,40 @@ class PomodoroApp:
 
         notebook = ttk.Notebook(stats_win)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        badge_tab = ttk.Frame(notebook)
+        notebook.add(badge_tab, text="🏅 Badges")
+
+        # Query badges
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT b.badge_name, b.description, b.icon, (u.id IS NOT NULL) as earned
+            FROM pomodoro_badges b
+            LEFT JOIN user_badges u ON b.badge_name = u.badge_name
+            ORDER BY b.badge_name
+        """)
+        badge_rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # Display as a grid
+        badge_frame = ttk.Frame(badge_tab, padding="10")
+        badge_frame.pack(fill=tk.BOTH, expand=True)
+        row_count = 0
+        col_count = 0
+        for b in badge_rows:
+            bg_color = "#2e7d32" if b['earned'] else "#555555"
+            fg_color = "white"
+            frame = ttk.Frame(badge_frame, relief="solid", borderwidth=1)
+            frame.grid(row=row_count, column=col_count, padx=5, pady=5, sticky="nsew")
+            ttk.Label(frame, text=b['icon'], font=("Helvetica", 24)).pack(pady=2)
+            ttk.Label(frame, text=b['badge_name'].replace('_', ' ').title(), font=("Helvetica", 10, "bold")).pack()
+            ttk.Label(frame, text=b['description'], font=("Helvetica", 8), wraplength=120).pack(pady=2)
+            col_count += 1
+            if col_count >= 4:
+                col_count = 0
+                row_count += 1
 
         tab1 = ttk.Frame(notebook)
         notebook.add(tab1, text="🔥 Summary & Streak")
