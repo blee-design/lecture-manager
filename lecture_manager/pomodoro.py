@@ -364,7 +364,7 @@ class PomodoroApp:
         notes_frame.grid(row=4, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         notes_frame.columnconfigure(0, weight=1)
         notes_frame.rowconfigure(0, weight=1)
-        self.notes_text = scrolledtext.ScrolledText(notes_frame, height=5, wrap=tk.WORD, bg="#2c3e50", fg="#ecf0f1", insertbackground="#ecf0f1") # Note frame size can be reduced and increased here Default is 4
+        self.notes_text = scrolledtext.ScrolledText(notes_frame, height=8, wrap=tk.WORD, bg="#2c3e50", fg="#ecf0f1", insertbackground="#ecf0f1") # Note frame size can be reduced and increased here Default is 4
         self.notes_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # ----- RIGHT COLUMN (unchanged) -----
