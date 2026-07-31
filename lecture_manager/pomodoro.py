@@ -709,6 +709,8 @@ class PomodoroApp:
         self.save_state()
 
     def update_timer(self):
+        if not self.root.winfo_exists():
+            return
         if not self.timer_running or self.paused:
             return
         if self.remaining_seconds <= 0:
@@ -905,7 +907,7 @@ class PomodoroApp:
                 self.current_phase,
                 self.remaining_seconds,
                 self.notes_text.get("1.0", tk.END).strip(),
-                self.subject_entry.get().strip(),
+                self.subject_var.get().strip(),
                 self.cycles_completed
             ))
             conn.commit()
@@ -961,7 +963,6 @@ class PomodoroApp:
             self.current_phase = state['current_phase']
             self.remaining_seconds = state['remaining_seconds']
             self.cycles_completed = state['cycles_completed']
-            self.subject_entry.delete(0, tk.END)
 
             if state.get('subject'):
                 self.subject_var.set(state['subject'])
@@ -1198,12 +1199,19 @@ class PomodoroApp:
 
     # ---------- ON CLOSE (with error handling) ----------
     def on_close(self):
-        try:
-            if hasattr(self, '_after_id') and self._after_id:
-                self.root.after_cancel(self._after_id)
-        except Exception:
-            pass
+        # 1. Stop the timer immediately to prevent any further updates
+        self.timer_running = False
+        self.paused = False
 
+        # 2. Cancel any scheduled "after" events
+        if hasattr(self, '_after_id') and self._after_id:
+            try:
+                self.root.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+
+        # 3. Save state (only if there is remaining time)
         try:
             if self.remaining_seconds > 0:
                 self.save_state()
@@ -1212,6 +1220,7 @@ class PomodoroApp:
         except Exception as e:
             print(f"[Pomodoro] State save error: {e}")
 
+        # 4. Save settings and tasks
         try:
             self.save_config(self.config)
         except Exception as e:
@@ -1222,6 +1231,7 @@ class PomodoroApp:
         except Exception as e:
             print(f"[Pomodoro] Tasks save error: {e}")
 
+        # 5. Destroy the window
         self.root.destroy()
 
     def run(self):
