@@ -396,6 +396,8 @@ class PomodoroApp:
         self.task_combo['background'] = '#34495e'
         self.task_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
 
+        self.task_combo.bind('<<ComboboxSelected>>', self.on_task_combo_select)
+
         # -- Notes --
         notes_frame = ttk.LabelFrame(left, text="📝 Notes for this session", padding="10")
         notes_frame.grid(row=4, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
@@ -784,15 +786,26 @@ class PomodoroApp:
         self.monthly_bar['value'] = min(monthly, month_goal)
         self.monthly_label.config(text=f"Month: {monthly//60}h {monthly%60}m / {month_goal//60}h")
 
+    def on_task_combo_select(self, event):
+        label = self.task_var.get()
+        if label and label in self.combo_label_to_id:
+            task_id = self.combo_label_to_id[label]
+            task = next((t for t in self.tasks if t['id'] == task_id), None)
+            if task:
+                self.priority_var.set(str(task['priority']))
+
     def on_task_select(self, event):
         selection = self.task_listbox.curselection()
         if selection:
             index = selection[0]
             task_id = self.task_listbox_task_ids[index]
             task = next((t for t in self.tasks if t['id'] == task_id), None)
-            if task and not task['completed']:
-                label = f"[P{task['priority']}] {task['task_text']}"
-                self.task_var.set(label)
+            if task:
+                # Update the priority spinbox to show the selected task's priority
+                self.priority_var.set(str(task['priority']))
+                if not task['completed']:
+                    label = f"[P{task['priority']}] {task['task_text']}"
+                    self.task_var.set(label)
 
     def show_context_menu(self, event):
         index = self.task_listbox.nearest(event.y)
