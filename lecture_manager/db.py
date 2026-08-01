@@ -408,6 +408,13 @@ def migrate_table():
     if not cursor.fetchone():
         cursor.execute("ALTER TABLE pomodoro_settings ADD COLUMN monthly_goal_hours INT NOT NULL DEFAULT 40")
 
+    # Add task_id column if missing
+    cursor.execute("SHOW COLUMNS FROM pomodoro_log LIKE 'task_id'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE pomodoro_log ADD COLUMN task_id INT NULL")
+        cursor.execute("ALTER TABLE pomodoro_log ADD FOREIGN KEY (task_id) REFERENCES pomodoro_tasks(id) ON DELETE SET NULL")
+        print_colored("[✓] Added 'task_id' column to pomodoro_log.", COLORS.GREEN)
+
     # 1. Badges table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS pomodoro_badges (

@@ -467,7 +467,7 @@ class PomodoroApp:
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=8, wrap=tk.WORD, state=tk.DISABLED, bg="#2c3e50", fg="#ecf0f1")
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=12, wrap=tk.WORD, state=tk.DISABLED, bg="#2c3e50", fg="#ecf0f1")
         self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
     # ---------- TASK MANAGEMENT (unchanged from original) ----------
@@ -955,18 +955,23 @@ class PomodoroApp:
     def start_timer(self):
         # ----- NEW WORK SESSION? -----
         if self.current_phase == "work" and not self.timer_running and not self.paused:
-            # Insert placeholder log entry (will be updated later)
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, notes, task_id)
-                VALUES (NOW(), 'work', %s, %s, %s, %s)
-            """, (self.config["work_min"], self.subject_var.get(), self.notes_text.get("1.0", tk.END).strip(), self.get_current_task_id()))
-            conn.commit()
-            self.current_session_id = cursor.lastrowid
-            cursor.close()
-            conn.close()
-            self.pauses = []          # reset pauses for this session
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, notes, task_id)
+                    VALUES (NOW(), 'work', %s, %s, %s, %s)
+                """, (self.config["work_min"], self.subject_var.get(), self.notes_text.get("1.0", tk.END).strip(), self.get_current_task_id()))
+                conn.commit()
+                self.current_session_id = cursor.lastrowid
+                cursor.close()
+                conn.close()
+                print(f"[DEBUG] ✅ Inserted log with ID: {self.current_session_id}")
+            except Exception as e:
+                print(f"[ERROR] Failed to insert log: {e}")
+                import traceback
+                traceback.print_exc()
+            self.pauses = []
             self.pause_start_time = None
 
         # ----- RESUME FROM PAUSE? -----
@@ -1070,6 +1075,7 @@ class PomodoroApp:
             self.cycles_completed += 1
             self.today_count += 1
             self.log = self.load_log()
+            print(f"[DEBUG] After load_log(), log length: {len(self.log)}")
             self.refresh_log()
             self.update_progress()
 
@@ -1219,6 +1225,8 @@ class PomodoroApp:
             messagebox.showerror("Error", "Please enter valid positive integers.")
 
     def refresh_log(self):
+        print(f"[DEBUG] refresh_log called. self.log length: {len(self.log)}")
+        print(f"[DEBUG] self.log content: {self.log[:2]}")
         self.log_text.config(state=tk.NORMAL)
         self.log_text.delete("1.0", tk.END)
         for entry in reversed(self.log[-50:]):
