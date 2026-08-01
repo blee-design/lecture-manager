@@ -72,6 +72,7 @@ class PomodoroApp:
         self.config = self.load_config()
         self.tasks = self.load_tasks()
         self.current_task_id = None
+
         self.log = self.load_log()
         self.today_count = self.count_today_pomodoros()
 
@@ -80,6 +81,26 @@ class PomodoroApp:
         self.paused = False
         self.current_phase = "work"
         self.cycles_completed = 0
+
+        # --- Recompute cycles_completed from logs ---
+        work_count = len([l for l in self.log if l['phase'] == 'work'])
+        if work_count != self.cycles_completed:
+            self.cycles_completed = work_count
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("UPDATE pomodoro_state SET cycles_completed = %s WHERE id = 1", (self.cycles_completed,))
+                conn.commit()
+                cursor.close()
+                conn.close()
+            except Exception:
+                pass
+        # ------------------------------------------
+
+        self._after_id = None
+        self.task_var = tk.StringVar()
+
+
         self._after_id = None
         self.task_var = tk.StringVar()
 
@@ -91,7 +112,7 @@ class PomodoroApp:
 
         self.build_ui()
         self.update_streak_display()
-        self.restore_state_if_any()
+        self.restore_state_if_any()          # Restores phase, remaining time, subject, notes, cycles_completed
         self.update_display()
         self.refresh_task_list()
         self.refresh_log()
@@ -99,6 +120,22 @@ class PomodoroApp:
         self.update_task_combo()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.schedule_state_save()
+
+        # ----- RECOMPUTE cycles_completed FROM LOGS AND OVERWRITE STATE -----
+        work_count = len([l for l in self.log if l['phase'] == 'work'])
+        if work_count != self.cycles_completed:
+            self.cycles_completed = work_count
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("UPDATE pomodoro_state SET cycles_completed = %s WHERE id = 1", (self.cycles_completed,))
+                conn.commit()
+                cursor.close()
+                conn.close()
+                # Also update the phase label if needed (no change)
+            except Exception:
+                pass
+        # --------------------------------------------------------------------
 
     def export_log_csv(self):
         import csv
