@@ -1240,7 +1240,7 @@ class PomodoroApp:
                 self.log_text.insert(tk.END, f"  Notes: {entry['notes']}\n")
             self.log_text.insert(tk.END, "-" * 40 + "\n")
         self.log_text.config(state=tk.DISABLED)
-        self.log_text.see(tk.END)
+        # self.log_text.see(tk.END) # Logs table on terminal
 
     def _beep(self):
         try:
