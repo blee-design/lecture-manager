@@ -364,7 +364,7 @@ class PomodoroApp:
         notes_frame.grid(row=4, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         notes_frame.columnconfigure(0, weight=1)
         notes_frame.rowconfigure(0, weight=1)
-        self.notes_text = scrolledtext.ScrolledText(notes_frame, height=8, wrap=tk.WORD, bg="#2c3e50", fg="#ecf0f1", insertbackground="#ecf0f1") # Note frame size can be reduced and increased here Default is 4
+        self.notes_text = scrolledtext.ScrolledText(notes_frame, height=10, wrap=tk.WORD, bg="#2c3e50", fg="#ecf0f1", insertbackground="#ecf0f1") # Note frame size hight can be reduced and increased here Default is 4
         self.notes_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # ----- RIGHT COLUMN (unchanged) -----
@@ -966,11 +966,9 @@ class PomodoroApp:
                 self.current_session_id = cursor.lastrowid
                 cursor.close()
                 conn.close()
-                print(f"[DEBUG] ✅ Inserted log with ID: {self.current_session_id}")
             except Exception as e:
-                print(f"[ERROR] Failed to insert log: {e}")
-                import traceback
-                traceback.print_exc()
+                # If insertion fails, fall back to the old method (will be handled later)
+                self.current_session_id = None
             self.pauses = []
             self.pause_start_time = None
 
@@ -1066,17 +1064,23 @@ class PomodoroApp:
             quote = random.choice(QUOTES)
             messagebox.showinfo("🎉 Session Complete!", f"Great work!\n\n{quote}")
 
-            # ----- UPDATE PLACEHOLDER LOG WITH PAUSES -----
-            self.finalize_session_with_pauses()   # updates the existing log entry
+            # Finalize the log entry
+            self.finalize_session_with_pauses()
 
-            # ----- AWARD BADGES -----
-            self.check_and_award_badges()
+            # ----- RELOAD AND REFRESH IMMEDIATELY -----
+            self.log = self.load_log()
+            self.refresh_log()
+            # Force Tkinter to redraw the widget
+            self.log_text.update_idletasks()
+
+            # Award badges (won't block if it fails)
+            try:
+                self.check_and_award_badges()
+            except Exception:
+                pass
 
             self.cycles_completed += 1
             self.today_count += 1
-            self.log = self.load_log()
-            print(f"[DEBUG] After load_log(), log length: {len(self.log)}")
-            self.refresh_log()
             self.update_progress()
 
             if self.cycles_completed % self.config["cycles_before_long"] == 0:
@@ -1088,7 +1092,6 @@ class PomodoroApp:
                 self.phase_label.config(text="Short Break")
                 self.remaining_seconds = self.config["short_break_min"] * 60
         else:
-            # break phase completed
             self.current_phase = "work"
             self.phase_label.config(text="Work")
             self.remaining_seconds = self.config["work_min"] * 60
@@ -1115,7 +1118,8 @@ class PomodoroApp:
 
     def finalize_session_with_pauses(self):
         if self.current_session_id is None:
-            # fallback: log normally
+            # Fallback: log normally (old method)
+            self.log_session()
             return
         conn = get_connection()
         cursor = conn.cursor()
@@ -1144,45 +1148,6 @@ class PomodoroApp:
         self.current_session_id = None
         self.pauses = []
         self.pause_start_time = None
-
-    def log_session(self):
-        subject_name = self.subject_var.get()
-        session_type = self.type_var.get()
-        subject_id = None
-
-        # Get subject_id from DB
-        if subject_name:
-            try:
-                conn = get_connection()
-                cursor = conn.cursor()
-                cursor.execute("SELECT id FROM subjects WHERE name = %s", (subject_name,))
-                row = cursor.fetchone()
-                if row:
-                    subject_id = row[0]
-                cursor.close()
-                conn.close()
-            except Exception as e:
-                print(f"[Pomodoro ERROR] Failed to get subject_id: {e}")
-
-        task_id = self.get_current_task_id()
-        notes = self.notes_text.get("1.0", tk.END).strip()
-        duration = self.config["work_min"]
-
-        # Insert log
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO pomodoro_log
-                (timestamp, phase, duration_min, subject, subject_id, session_type, notes, task_id)
-                VALUES (NOW(), 'work', %s, %s, %s, %s, %s, %s)
-            """, (duration, subject_name, subject_id, session_type, notes, task_id))
-            conn.commit()
-            cursor.close()
-            conn.close()
-            print(f"[Pomodoro] ✅ Logged session: {subject_name} ({session_type})")
-        except Exception as e:
-            print(f"[Pomodoro ERROR] Failed to log session: {e}")
 
     def update_progress(self):
         self.update_streak_display()
@@ -1225,29 +1190,31 @@ class PomodoroApp:
             messagebox.showerror("Error", "Please enter valid positive integers.")
 
     def refresh_log(self):
-        print(f"[DEBUG] refresh_log called. self.log length: {len(self.log)}")
-        print(f"[DEBUG] self.log content: {self.log[:2]}")
         self.log_text.config(state=tk.NORMAL)
         self.log_text.delete("1.0", tk.END)
-        for entry in reversed(self.log[-50:]):
-            line = f"{entry['timestamp']} - {entry['duration_min']} min"
-            if entry.get('task_name'):
-                line += f" [Task: {entry['task_name']}]"
-            elif entry.get('subject'):
-                line += f" [{entry['subject']}]"
-            self.log_text.insert(tk.END, line + "\n")
-            if entry['notes']:
-                self.log_text.insert(tk.END, f"  Notes: {entry['notes']}\n")
-            self.log_text.insert(tk.END, "-" * 40 + "\n")
+        if not self.log:
+            self.log_text.insert(tk.END, "No study sessions logged yet.")
+        else:
+            for entry in reversed(self.log[-50:]):
+                line = f"{entry['timestamp']} - {entry['duration_min']} min"
+                if entry.get('task_name'):
+                    line += f" [Task: {entry['task_name']}]"
+                elif entry.get('subject'):
+                    line += f" [{entry['subject']}]"
+                self.log_text.insert(tk.END, line + "\n")
+                if entry['notes']:
+                    self.log_text.insert(tk.END, f"  Notes: {entry['notes']}\n")
+                self.log_text.insert(tk.END, "-" * 40 + "\n")
         self.log_text.config(state=tk.DISABLED)
-        # self.log_text.see(tk.END) # Logs table on terminal
+        self.log_text.see(tk.END)
+        self.log_text.update_idletasks()
 
     def _beep(self):
         try:
             import winsound
             winsound.Beep(1000, 500)
         except:
-            print('\a')
+            os.system('printf "\a"')  # print('\a')
 
     # ---------- STATE PERSISTENCE ----------
     def save_state(self):
