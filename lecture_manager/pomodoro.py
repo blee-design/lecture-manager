@@ -1428,6 +1428,14 @@ class PomodoroApp:
             WHERE phase = 'work'
         """)
         totals = cursor.fetchone()
+        if totals:
+            totals = {
+                'total_sessions': totals['total_sessions'] or 0,
+                'total_minutes': totals['total_minutes'] or 0,
+                'avg_session': totals['avg_session'] or 0
+            }
+        else:
+            totals = {'total_sessions': 0, 'total_minutes': 0, 'avg_session': 0}
 
         cursor.close()
         conn.close()

@@ -1,7 +1,7 @@
 # main.py
 
 from .config import load_or_create_config, edit_config
-from .db import create_table, migrate_table
+from .db import create_table, migrate_table, ensure_subjects_populated
 from .crud import (
     add_lecture, view_all, view_one, update_lecture, delete_lecture,
     download_existing, show_embed_link, refresh_titles, search_all
@@ -82,6 +82,7 @@ def main():
     load_or_create_config()
     create_table()
     migrate_table()
+    ensure_subjects_populated()
 
     # ----- Helper wrappers (must be defined before menus) -----
     def upload_single_video():

@@ -474,6 +474,33 @@ def migrate_table():
     cursor.close()
     conn.close()
 
+def ensure_subjects_populated():
+    """Check if subjects table is empty; if so, repopulate from PAPER_CONFIG."""
+    from .file_manager import PAPER_CONFIG
+    from .utils import print_colored, COLORS
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM subjects")
+    count = cursor.fetchone()[0]
+
+    if count == 0:
+        print_colored("[i] Subjects table is empty. Re‑populating from PAPER_CONFIG...", COLORS.YELLOW)
+        for paper_key, config in PAPER_CONFIG.items():
+            for subject_code, subject_name in config["subjects"].items():
+                cursor.execute("""
+                    INSERT INTO subjects (name, paper, chapter, active)
+                    VALUES (%s, %s, %s, 1)
+                """, (subject_name, paper_key, subject_code))
+        conn.commit()
+        print_colored("[✓] Subjects re‑populated successfully.", COLORS.GREEN)
+    else:
+        print_colored("[✓] Subjects table already populated.", COLORS.BLUE)
+
+    cursor.close()
+    conn.close()
+
 def get_record_by_video_id(video_id):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True, buffered=True)
