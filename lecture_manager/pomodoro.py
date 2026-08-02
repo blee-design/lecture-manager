@@ -10,6 +10,8 @@ from tkinter import ttk, messagebox, scrolledtext, simpledialog, filedialog
 from datetime import datetime
 from .db import get_connection
 
+print("🚀 LOADING POMODORO MODULE – VERSION WITH DEBUG")
+
 QUOTES = [
     "The secret of getting ahead is getting started. – Mark Twain",
     "Success is the sum of small efforts repeated day in and day out. – Robert Collier",
@@ -118,8 +120,12 @@ class PomodoroApp:
         self.refresh_log()
         self.update_progress()
         self.update_task_combo()
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
         self.schedule_state_save()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        # ----- AUTOMATIC BADGE REFRESH ON STARTUP -----
+        self.root.after(1000, self.refresh_badges)
 
         # ----- RECOMPUTE cycles_completed FROM LOGS AND OVERWRITE STATE -----
         work_count = len([l for l in self.log if l['phase'] == 'work'])
@@ -788,11 +794,39 @@ class PomodoroApp:
 
     def on_task_combo_select(self, event):
         label = self.task_var.get()
-        if label and label in self.combo_label_to_id:
+        print(f"[DEBUG] on_task_combo_select: label='{label}'")   # debug
+        if not label:
+            self.current_task_id = None
+            return
+
+        # Directly look up the task ID
+        task_id = None
+        if label in self.combo_label_to_id:
             task_id = self.combo_label_to_id[label]
+            print(f"[DEBUG] Exact match found: task_id={task_id}")
+        else:
+            # Fuzzy match
+            import re
+            match = re.match(r'^\[P\d+\]\s*(.*)$', label)
+            if match:
+                task_text = match.group(1).strip()
+                print(f"[DEBUG] Fuzzy matching task_text='{task_text}'")
+                for lbl, tid in self.combo_label_to_id.items():
+                    m = re.match(r'^\[P\d+\]\s*(.*)$', lbl)
+                    if m and m.group(1).strip().lower() == task_text.lower():
+                        task_id = tid
+                        print(f"[DEBUG] Fuzzy match found: task_id={task_id}")
+                        break
+
+        if task_id is not None:
+            self.current_task_id = task_id
+            # Update priority spinbox
             task = next((t for t in self.tasks if t['id'] == task_id), None)
             if task:
                 self.priority_var.set(str(task['priority']))
+        else:
+            self.current_task_id = None
+            print("[DEBUG] No task ID found")
 
     def on_task_select(self, event):
         selection = self.task_listbox.curselection()
@@ -817,8 +851,25 @@ class PomodoroApp:
 
     def get_current_task_id(self):
         label = self.task_var.get()
-        if label and label in self.combo_label_to_id:
+        if not label:
+            return None
+
+        # Try exact match first
+        if label in self.combo_label_to_id:
             return self.combo_label_to_id[label]
+
+        # Fallback: extract task text (remove "[Px] " prefix)
+        import re
+        match = re.match(r'^\[P\d+\]\s*(.*)$', label)
+        if match:
+            task_text = match.group(1).strip()
+            # Search for a task with that text (case‑insensitive)
+            for lbl, tid in self.combo_label_to_id.items():
+                # Extract text from the stored label
+                m = re.match(r'^\[P\d+\]\s*(.*)$', lbl)
+                if m and m.group(1).strip().lower() == task_text.lower():
+                    return tid
+
         return None
 
     def get_current_streak(self):
@@ -916,11 +967,69 @@ class PomodoroApp:
     def add_log_entry(self, entry):
         conn = get_connection()
         cursor = conn.cursor()
+        subject_name = entry.get('subject')
+        subject_id = None
+        if subject_name:
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT id FROM subjects WHERE name = %s", (subject_name,))
+                row = cur.fetchone()
+                if row:
+                    subject_id = row[0]
+                cur.close()
+            except Exception:
+                pass
         cursor.execute("""
-            INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, notes, task_id)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, subject_id, notes, task_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """, (entry["timestamp"], entry["phase"], entry["duration_min"],
-              entry.get("subject"), entry.get("notes"), entry.get("task_id")))
+            subject_name, subject_id, entry.get("notes"), entry.get("task_id")))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+    def log_session(self):
+        """Fallback: log a work session without pause tracking."""
+        subject_name = self.subject_var.get().strip()
+        subject_id = None
+        if subject_name:
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM subjects WHERE name = %s", (subject_name,))
+                row = cursor.fetchone()
+                if row:
+                    subject_id = row[0]
+                cursor.close()
+                conn.close()
+            except Exception:
+                pass
+
+        # Direct lookup from combobox
+        label = self.task_var.get().strip()
+        task_id = None
+        if label:
+            if label in self.combo_label_to_id:
+                task_id = self.combo_label_to_id[label]
+            else:
+                import re
+                match = re.match(r'^\[P\d+\]\s*(.*)$', label)
+                if match:
+                    task_text = match.group(1).strip()
+                    for lbl, tid in self.combo_label_to_id.items():
+                        m = re.match(r'^\[P\d+\]\s*(.*)$', lbl)
+                        if m and m.group(1).strip().lower() == task_text.lower():
+                            task_id = tid
+                            break
+
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, subject_id, notes, task_id)
+            VALUES (NOW(), 'work', %s, %s, %s, %s, %s)
+        """, (self.config["work_min"], subject_name, subject_id,
+            self.notes_text.get("1.0", tk.END).strip(),
+            task_id))
         conn.commit()
         cursor.close()
         conn.close()
@@ -1003,24 +1112,79 @@ class PomodoroApp:
 
     # ---------- TIMER ----------
     def start_timer(self):
+        print("[DEBUG] start_timer called")
+        print(f"[DEBUG] Current phase: {self.current_phase}")
+        print(f"[DEBUG] Timer running: {self.timer_running}, paused: {self.paused}")
+
         # ----- NEW WORK SESSION? -----
         if self.current_phase == "work" and not self.timer_running and not self.paused:
+            subject_name = self.subject_var.get().strip()
+            print(f"[DEBUG] Subject: '{subject_name}'")
+            subject_id = None
+            if subject_name:
+                try:
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT id FROM subjects WHERE name = %s", (subject_name,))
+                    row = cursor.fetchone()
+                    if row:
+                        subject_id = row[0]
+                    cursor.close()
+                    conn.close()
+                except Exception as e:
+                    print(f"[DEBUG] Subject lookup error: {e}")
+
+            # ----- DIRECTLY LOOK UP TASK ID FROM THE COMBOBOX -----
+            label = self.task_var.get().strip()
+            print(f"[DEBUG] Task combobox label: '{label}'")
+            print(f"[DEBUG] combo_label_to_id: {self.combo_label_to_id}")
+
+            task_id = None
+            if label:
+                # Try exact match
+                if label in self.combo_label_to_id:
+                    task_id = self.combo_label_to_id[label]
+                    print(f"[DEBUG] Exact match found: task_id={task_id}")
+                else:
+                    # Fuzzy: remove "[Px] " prefix
+                    import re
+                    match = re.match(r'^\[P\d+\]\s*(.*)$', label)
+                    if match:
+                        task_text = match.group(1).strip()
+                        print(f"[DEBUG] Fuzzy matching task_text='{task_text}'")
+                        for lbl, tid in self.combo_label_to_id.items():
+                            m = re.match(r'^\[P\d+\]\s*(.*)$', lbl)
+                            if m and m.group(1).strip().lower() == task_text.lower():
+                                task_id = tid
+                                print(f"[DEBUG] Fuzzy match found: task_id={task_id}")
+                                break
+            else:
+                print("[DEBUG] Task label is empty")
+
+            if task_id is None:
+                print("[DEBUG] No matching task ID found – will insert NULL")
+
             try:
                 conn = get_connection()
                 cursor = conn.cursor()
+                notes = self.notes_text.get("1.0", tk.END).strip()
                 cursor.execute("""
-                    INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, notes, task_id)
-                    VALUES (NOW(), 'work', %s, %s, %s, %s)
-                """, (self.config["work_min"], self.subject_var.get(), self.notes_text.get("1.0", tk.END).strip(), self.get_current_task_id()))
+                    INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, subject_id, notes, task_id)
+                    VALUES (NOW(), 'work', %s, %s, %s, %s, %s)
+                """, (self.config["work_min"], subject_name, subject_id, notes, task_id))
                 conn.commit()
                 self.current_session_id = cursor.lastrowid
                 cursor.close()
                 conn.close()
+                print(f"[DEBUG] Inserted log with task_id={task_id}, id={self.current_session_id}")
             except Exception as e:
-                # If insertion fails, fall back to the old method (will be handled later)
+                print(f"[DEBUG] Insert failed: {e}")
                 self.current_session_id = None
             self.pauses = []
             self.pause_start_time = None
+        else:
+            print("[DEBUG] Not starting a new work session (phase/running/paused condition)")
+
 
         # ----- RESUME FROM PAUSE? -----
         if self.timer_running and not self.paused:
@@ -1105,50 +1269,74 @@ class PomodoroApp:
         self.timer_running = False
         self.start_btn.config(state=tk.NORMAL)
         self.pause_btn.config(state=tk.DISABLED, text="Pause")
-        self.sound_func()
+
+        # Beep – but don't let errors break the flow
+        try:
+            self.sound_func()
+        except Exception as e:
+            print(f"[DEBUG] Beep error (ignored): {e}")
 
         completed_phase = self.current_phase
+        print(f"[DEBUG] Timer complete. Phase: {completed_phase}")
 
-        if completed_phase == "work":
-            import random
-            quote = random.choice(QUOTES)
-            messagebox.showinfo("🎉 Session Complete!", f"Great work!\n\n{quote}")
+        try:
+            if completed_phase == "work":
+                import random
+                quote = random.choice(QUOTES)
+                messagebox.showinfo("🎉 Session Complete!", f"Great work!\n\n{quote}")
 
-            # Finalize the log entry
-            self.finalize_session_with_pauses()
+                # Finalize the log entry
+                self.finalize_session_with_pauses()
 
-            # ----- RELOAD AND REFRESH IMMEDIATELY -----
-            self.log = self.load_log()
-            self.refresh_log()
-            # Force Tkinter to redraw the widget
-            self.log_text.update_idletasks()
+                # Reload log and refresh
+                self.log = self.load_log()
+                self.refresh_log()
+                self.log_text.update_idletasks()
 
-            # Award badges (won't block if it fails)
-            try:
-                self.check_and_award_badges()
-            except Exception:
-                pass
+                # Award badges
+                try:
+                    self.check_and_award_badges()
+                except Exception as e:
+                    print(f"[DEBUG] Badge error: {e}")
 
-            self.cycles_completed += 1
-            self.today_count += 1
-            self.update_progress()
+                self.cycles_completed += 1
+                self.today_count += 1
+                self.update_progress()
 
-            if self.cycles_completed % self.config["cycles_before_long"] == 0:
-                self.current_phase = "long_break"
-                self.phase_label.config(text="Long Break")
-                self.remaining_seconds = self.config["long_break_min"] * 60
+                # Decide which break to take
+                if self.cycles_completed % self.config["cycles_before_long"] == 0:
+                    self.current_phase = "long_break"
+                    self.remaining_seconds = self.config["long_break_min"] * 60
+                    self.phase_label.config(text="Long Break")
+                else:
+                    self.current_phase = "short_break"
+                    self.remaining_seconds = self.config["short_break_min"] * 60
+                    self.phase_label.config(text="Short Break")
+
+                print(f"[DEBUG] New phase: {self.current_phase}, remaining: {self.remaining_seconds}s")
+
             else:
-                self.current_phase = "short_break"
-                self.phase_label.config(text="Short Break")
-                self.remaining_seconds = self.config["short_break_min"] * 60
-        else:
-            self.current_phase = "work"
-            self.phase_label.config(text="Work")
-            self.remaining_seconds = self.config["work_min"] * 60
+                # Break complete – go back to work
+                self.current_phase = "work"
+                self.remaining_seconds = self.config["work_min"] * 60
+                self.phase_label.config(text="Work")
+                print("[DEBUG] Break complete, switching to work.")
 
-        self.update_display()
-        self.save_state()
-        messagebox.showinfo("Pomodoro", f"{completed_phase.capitalize()} phase completed!")
+            self.update_display()
+            self.save_state()
+            messagebox.showinfo("Pomodoro", f"{completed_phase.capitalize()} phase completed!")
+
+        except Exception as e:
+            print(f"[ERROR] timer_complete() crashed: {e}")
+            import traceback
+            traceback.print_exc()
+            # Still try to set a sensible phase
+            self.current_phase = "work"
+            self.remaining_seconds = self.config["work_min"] * 60
+            self.phase_label.config(text="Work")
+            self.update_display()
+            self.save_state()
+            messagebox.showerror("Error", f"Timer completion failed: {e}\nReset to work phase.")
 
     def update_display(self):
         mins = self.remaining_seconds // 60
@@ -1261,10 +1449,10 @@ class PomodoroApp:
 
     def _beep(self):
         try:
-            import winsound
-            winsound.Beep(1000, 500)
-        except:
-            os.system('printf "\a"')  # print('\a')
+            print('\a', end='', flush=True)
+        except Exception:
+            # Fallback for unusual environments
+            pass
 
     # ---------- STATE PERSISTENCE ----------
     def save_state(self):
@@ -1361,6 +1549,68 @@ class PomodoroApp:
         if hasattr(self, 'root') and self.root.winfo_exists():
             self._after_id = self.root.after(5000, self.schedule_state_save)
 
+
+    def refresh_badges(self):
+        """Recalculate badges from current logs and remove those that no longer qualify."""
+        from .db import get_connection
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # Get current totals
+        cursor.execute("SELECT COUNT(*) as total FROM pomodoro_log WHERE phase = 'work'")
+        total_sessions = cursor.fetchone()['total']
+
+        cursor.execute("SELECT COUNT(DISTINCT DATE(timestamp)) as days FROM pomodoro_log WHERE phase = 'work'")
+        days_active = cursor.fetchone()['days']
+
+        # Streak
+        streak = self.get_current_streak()
+
+        cursor.execute("SELECT COUNT(*) as early FROM pomodoro_log WHERE phase='work' AND TIME(timestamp) < '08:00:00'")
+        early_bird = cursor.fetchone()['early'] > 0
+        cursor.execute("SELECT COUNT(*) as late FROM pomodoro_log WHERE phase='work' AND TIME(timestamp) > '22:00:00'")
+        night_owl = cursor.fetchone()['late'] > 0
+
+        cursor.execute("""
+            SELECT subject, SUM(duration_min) as total FROM pomodoro_log
+            WHERE phase='work' AND subject IS NOT NULL AND subject != ''
+            GROUP BY subject HAVING total >= 300 LIMIT 1
+        """)
+        specialist = cursor.fetchone() is not None
+
+        week_start = datetime.now() - timedelta(days=datetime.now().weekday())
+        week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+        cursor.execute("""
+            SELECT COUNT(DISTINCT subject) as distinct_subjects
+            FROM pomodoro_log
+            WHERE phase='work' AND subject IS NOT NULL AND subject != ''
+            AND timestamp >= %s
+        """, (week_start,))
+        distinct = cursor.fetchone()['distinct_subjects']
+        balanced = distinct >= 3
+
+        # Determine which badges should be earned
+        earned = []
+        if total_sessions >= 1:     earned.append('first_pomodoro')
+        if total_sessions >= 10:    earned.append('ten_sessions')
+        if total_sessions >= 50:    earned.append('fifty_sessions')
+        if total_sessions >= 100:   earned.append('hundred_sessions')
+        if streak >= 5:             earned.append('five_day_streak')
+        if streak >= 10:            earned.append('ten_day_streak')
+        if early_bird:              earned.append('early_bird')
+        if night_owl:               earned.append('night_owl')
+        if specialist:              earned.append('subject_specialist')
+        if balanced:                earned.append('balanced_learner')
+
+        # Clear all user_badges and re-insert those that qualify
+        cursor.execute("DELETE FROM user_badges")
+        for b in earned:
+            cursor.execute("INSERT INTO user_badges (badge_name) VALUES (%s)", (b,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        # messagebox.showinfo("Badges Refreshed", f"{len(earned)} badges currently active.")
+
     # ---------- OVERALL STATS ----------
     def show_overall_stats(self):
         conn = get_connection()
@@ -1378,13 +1628,13 @@ class PomodoroApp:
         minutes = [float(row['total_min']) for row in trend_data] if trend_data else []
 
         cursor.execute("""
-            SELECT COALESCE(s.name, 'Uncategorized') AS subject,
+            SELECT
+                l.subject AS subject,
                 SUM(l.duration_min) AS total_min,
                 COUNT(*) AS sessions
             FROM pomodoro_log l
-            LEFT JOIN subjects s ON l.subject_id = s.id
-            WHERE l.phase = 'work'
-            GROUP BY l.subject_id
+            WHERE l.phase = 'work' AND l.subject IS NOT NULL AND l.subject != ''
+            GROUP BY l.subject
             ORDER BY total_min DESC
         """)
         subject_data = cursor.fetchall()
