@@ -415,6 +415,14 @@ def migrate_table():
         cursor.execute("ALTER TABLE pomodoro_log ADD FOREIGN KEY (task_id) REFERENCES pomodoro_tasks(id) ON DELETE SET NULL")
         print_colored("[✓] Added 'task_id' column to pomodoro_log.", COLORS.GREEN)
 
+    # Add priority and completed columns to pomodoro_tasks if missing
+    cursor.execute("SHOW COLUMNS FROM pomodoro_tasks LIKE 'priority'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE pomodoro_tasks ADD COLUMN priority INT DEFAULT 3")
+    cursor.execute("SHOW COLUMNS FROM pomodoro_tasks LIKE 'completed'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE pomodoro_tasks ADD COLUMN completed BOOLEAN DEFAULT FALSE")
+
     # 1. Badges table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS pomodoro_badges (
