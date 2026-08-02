@@ -382,7 +382,6 @@ def migrate_table():
         """)
         cursor.execute("INSERT INTO pomodoro_state (id, current_phase, remaining_seconds) VALUES (1, 'work', 0)")
         print_colored("[✓] Created pomodoro_state table.", COLORS.GREEN)
-        print_colored("[✓] Created pomodoro_state table.", COLORS.GREEN)
 
     # --- Add subject_id and session_type to pomodoro_log ---
     cursor.execute("SHOW COLUMNS FROM pomodoro_log LIKE 'subject_id'")

@@ -82,7 +82,7 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
         english = None
 
     if not force:
-        existing = check_duplicate(date, institution, level, question_number)
+        existing = check_duplicate(date, institution, level, paper, group, question_number)
         if existing:
             print_colored(f"[!] Duplicate found! Question already exists with ID: {existing}", COLORS.YELLOW)
             overwrite = input(color_text("Overwrite existing question? (y/n): ", COLORS.MAGENTA)).strip().lower()
