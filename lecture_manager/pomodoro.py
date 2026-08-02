@@ -102,9 +102,9 @@ class PomodoroApp:
         self._after_id = None
         self.task_var = tk.StringVar()
 
-
-        self._after_id = None
-        self.task_var = tk.StringVar()
+        # pause tracking
+        self.pauses = []
+        self.pause_start_time = None
 
         self.sound_func = self._beep
 
@@ -1135,6 +1135,10 @@ class PomodoroApp:
             self.save_state()
             return
 
+        # reset pause tracking for a fresh session
+        self.pauses = []
+        self.pause_start_time = None
+
         # ----- Set duration for the phase -----
         if self.current_phase == "work":
             minutes = self.config["work_min"]
@@ -1166,6 +1170,7 @@ class PomodoroApp:
 
     def pause_timer(self):
         if self.timer_running and not self.paused:
+            # Pausing
             self.paused = True
             self.pause_btn.config(text="Resume")
             self.start_btn.config(state=tk.NORMAL)
@@ -1181,6 +1186,7 @@ class PomodoroApp:
             self.paused = False
             self.pause_btn.config(text="Pause")
             self.start_btn.config(state=tk.DISABLED)
+            self.timer_running = True
             self.save_state()
             self.update_timer()
 
