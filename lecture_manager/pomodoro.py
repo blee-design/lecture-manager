@@ -82,21 +82,20 @@ class PomodoroApp:
         self.timer_running = False
         self.paused = False
         self.current_phase = "work"
-        self.cycles_completed = 0
 
-        # --- Recompute cycles_completed from logs ---
-        work_count = len([l for l in self.log if l['phase'] == 'work'])
-        if work_count != self.cycles_completed:
-            self.cycles_completed = work_count
-            try:
-                conn = get_connection()
-                cursor = conn.cursor()
-                cursor.execute("UPDATE pomodoro_state SET cycles_completed = %s WHERE id = 1", (self.cycles_completed,))
-                conn.commit()
-                cursor.close()
-                conn.close()
-            except Exception:
-                pass
+        # Set cycles_completed to today's count
+        self.today_count = self.count_today_pomodoros()
+        self.cycles_completed = self.today_count
+        # Update the state table to reflect today's count (keeps DB in sync)
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE pomodoro_state SET cycles_completed = %s WHERE id = 1", (self.cycles_completed,))
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
         # ------------------------------------------
 
         self._after_id = None
@@ -122,22 +121,6 @@ class PomodoroApp:
 
         # ----- AUTOMATIC BADGE REFRESH ON STARTUP -----
         self.root.after(1000, self.refresh_badges)
-
-        # ----- RECOMPUTE cycles_completed FROM LOGS AND OVERWRITE STATE -----
-        work_count = len([l for l in self.log if l['phase'] == 'work'])
-        if work_count != self.cycles_completed:
-            self.cycles_completed = work_count
-            try:
-                conn = get_connection()
-                cursor = conn.cursor()
-                cursor.execute("UPDATE pomodoro_state SET cycles_completed = %s WHERE id = 1", (self.cycles_completed,))
-                conn.commit()
-                cursor.close()
-                conn.close()
-                # Also update the phase label if needed (no change)
-            except Exception:
-                pass
-        # --------------------------------------------------------------------
 
     def export_log_csv(self):
         import csv
@@ -1060,8 +1043,8 @@ class PomodoroApp:
         conn.close()
         return count
 
-    # ---------- TODAY SUMMARY ----------
     def get_today_summary(self):
+        """Return task‑based summary for today."""
         today = datetime.now().date().isoformat()
         conn = get_connection()
         cursor = conn.cursor()
@@ -1081,49 +1064,109 @@ class PomodoroApp:
         conn.close()
         return rows
 
+    def get_today_summary_by_type(self):
+        """Return session‑type summary for today."""
+        today = datetime.now().date().isoformat()
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                session_type,
+                SUM(duration_min) AS total_minutes,
+                COUNT(*) AS sessions
+            FROM pomodoro_log
+            WHERE DATE(timestamp) = %s AND phase = 'work'
+            GROUP BY session_type
+            ORDER BY total_minutes DESC
+        """, (today,))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return rows
+
     def show_today_summary(self):
-        rows = self.get_today_summary()
-        if not rows:
+        # Task breakdown (existing)
+        task_rows = self.get_today_summary()
+        # Type breakdown (new)
+        type_rows = self.get_today_summary_by_type()
+
+        if not task_rows and not type_rows:
             messagebox.showinfo("Today's Summary", "No study sessions logged today yet.")
             return
 
         summary_win = tk.Toplevel(self.root)
         summary_win.title("Today's Study Summary")
-        summary_win.geometry("500x350")
+        summary_win.geometry("700x500")
         summary_win.resizable(False, False)
 
         ttk.Label(summary_win, text=f"Summary for {datetime.now().strftime('%Y-%m-%d')}",
-                  font=("Helvetica", 14, "bold")).pack(pady=10)
+                font=("Helvetica", 14, "bold")).pack(pady=10)
 
-        frame = ttk.Frame(summary_win, padding="10")
-        frame.pack(fill=tk.BOTH, expand=True)
+        # Notebook for two tabs
+        notebook = ttk.Notebook(summary_win)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        columns = ("Task", "Time (min)", "Sessions")
-        tree = ttk.Treeview(frame, columns=columns, show="headings", height=10)
-        tree.heading("Task", text="Task")
-        tree.heading("Time (min)", text="Time (min)")
-        tree.heading("Sessions", text="Sessions")
-        tree.column("Task", width=250)
-        tree.column("Time (min)", width=100, anchor=tk.CENTER)
-        tree.column("Sessions", width=80, anchor=tk.CENTER)
+        # ----- Tab 1: Tasks -----
+        tab1 = ttk.Frame(notebook, padding="10")
+        notebook.add(tab1, text="📋 By Task")
 
-        total_time = 0
-        total_sessions = 0
-        for task, minutes, sessions in rows:
-            tree.insert("", tk.END, values=(task, minutes, sessions))
-            total_time += minutes
-            total_sessions += sessions
+        if task_rows:
+            columns = ("Task", "Time (min)", "Sessions")
+            tree = ttk.Treeview(tab1, columns=columns, show="headings", height=10)
+            tree.heading("Task", text="Task")
+            tree.heading("Time (min)", text="Time (min)")
+            tree.heading("Sessions", text="Sessions")
+            tree.column("Task", width=250)
+            tree.column("Time (min)", width=100, anchor=tk.CENTER)
+            tree.column("Sessions", width=80, anchor=tk.CENTER)
 
-        tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            total_time = 0
+            total_sessions = 0
+            for task, minutes, sessions in task_rows:
+                tree.insert("", tk.END, values=(task, minutes, sessions))
+                total_time += minutes
+                total_sessions += sessions
+            tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        total_hours = total_time // 60
-        total_mins = total_time % 60
-        footer = f"Total: {total_hours}h {total_mins}m  |  Sessions: {total_sessions}"
-        ttk.Label(summary_win, text=footer, font=("Helvetica", 10, "bold")).pack(pady=10)
+            total_hours = total_time // 60
+            total_mins = total_time % 60
+            footer = f"Total: {total_hours}h {total_mins}m  |  Sessions: {total_sessions}"
+            ttk.Label(tab1, text=footer, font=("Helvetica", 10, "bold")).pack(pady=5)
+        else:
+            ttk.Label(tab1, text="No task data for today.").pack(pady=50)
+
+        # ----- Tab 2: Session Types -----
+        tab2 = ttk.Frame(notebook, padding="10")
+        notebook.add(tab2, text="📊 By Session Type")
+
+        if type_rows:
+            columns = ("Type", "Time (min)", "Sessions")
+            tree2 = ttk.Treeview(tab2, columns=columns, show="headings", height=10)
+            tree2.heading("Type", text="Type")
+            tree2.heading("Time (min)", text="Time (min)")
+            tree2.heading("Sessions", text="Sessions")
+            tree2.column("Type", width=150)
+            tree2.column("Time (min)", width=100, anchor=tk.CENTER)
+            tree2.column("Sessions", width=80, anchor=tk.CENTER)
+
+            total_time2 = 0
+            total_sessions2 = 0
+            for stype, minutes, sessions in type_rows:
+                display_type = stype if stype else "Unspecified"
+                tree2.insert("", tk.END, values=(display_type, minutes, sessions))
+                total_time2 += minutes
+                total_sessions2 += sessions
+            tree2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+            total_hours2 = total_time2 // 60
+            total_mins2 = total_time2 % 60
+            footer2 = f"Total: {total_hours2}h {total_mins2}m  |  Sessions: {total_sessions2}"
+            ttk.Label(tab2, text=footer2, font=("Helvetica", 10, "bold")).pack(pady=5)
+        else:
+            ttk.Label(tab2, text="No session type data for today.").pack(pady=50)
 
         ttk.Button(summary_win, text="Close", command=summary_win.destroy).pack(pady=5)
 
-        # ---------- TIMER ----------
     def start_timer(self):
         # ----- If resuming from pause -----
         if self.paused:
@@ -1166,7 +1209,8 @@ class PomodoroApp:
             return
         self.remaining_seconds -= 1
         self.update_display()
-        self.root.after(1000, self.update_timer)
+        # Store the after ID so we can cancel it later
+        self._timer_after_id = self.root.after(1000, self.update_timer)
 
     def pause_timer(self):
         if self.timer_running and not self.paused:
@@ -1297,14 +1341,13 @@ class PomodoroApp:
             except Exception:
                 pass
 
-        # Get task ID from combobox
+        # Get task ID
         label = self.task_var.get().strip()
         task_id = None
         if label:
             if label in self.combo_label_to_id:
                 task_id = self.combo_label_to_id[label]
             else:
-                # Fuzzy match (if needed)
                 import re
                 match = re.match(r'^\[P\d+\]\s*(.*)$', label)
                 if match:
@@ -1316,12 +1359,14 @@ class PomodoroApp:
                             break
 
         notes = self.notes_text.get("1.0", tk.END).strip()
+        session_type = self.type_var.get().strip()   # e.g., "study", "revision", etc.
+
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, subject_id, notes, task_id)
-            VALUES (NOW(), 'work', %s, %s, %s, %s, %s)
-        """, (self.config["work_min"], subject_name, subject_id, notes, task_id))
+            INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, subject_id, notes, task_id, session_type)
+            VALUES (NOW(), 'work', %s, %s, %s, %s, %s, %s)
+        """, (self.config["work_min"], subject_name, subject_id, notes, task_id, session_type))
         conn.commit()
         cursor.close()
         conn.close()
@@ -1394,6 +1439,9 @@ class PomodoroApp:
                     line += f" [Task: {entry['task_name']}]"
                 elif entry.get('subject'):
                     line += f" [{entry['subject']}]"
+                # --- Add session type ---
+                if entry.get('session_type'):
+                    line += f" ({entry['session_type']})"
                 self.log_text.insert(tk.END, line + "\n")
                 if entry['notes']:
                     self.log_text.insert(tk.END, f"  Notes: {entry['notes']}\n")
@@ -1463,21 +1511,22 @@ class PomodoroApp:
             return None
 
     def restore_state_if_any(self):
-        state = self.load_state()
+        state = self.load_state()   # now returns None if the state is not from today
         if not state:
             return
 
         msg = (f"Resume previous session?\n\n"
-               f"Phase: {state['current_phase'].capitalize()}\n"
-               f"Remaining: {state['remaining_seconds']//60}m {state['remaining_seconds']%60}s\n"
-               f"Subject: {state.get('subject', '') or '(none)'}\n"
-               f"Cycles completed: {state['cycles_completed']}\n\n"
-               f"Notes: {state.get('notes', '')[:100]}...")
+            f"Phase: {state['current_phase'].capitalize()}\n"
+            f"Remaining: {state['remaining_seconds']//60}m {state['remaining_seconds']%60}s\n"
+            f"Subject: {state.get('subject', '') or '(none)'}\n"
+            f"Cycles completed: {state['cycles_completed']}\n\n"
+            f"Notes: {state.get('notes', '')[:100]}...")
         answer = messagebox.askyesno("Resume Session", msg)
         if answer:
+            # Restore everything from the saved state
             self.current_phase = state['current_phase']
             self.remaining_seconds = state['remaining_seconds']
-            self.cycles_completed = state['cycles_completed']
+            self.cycles_completed = state['cycles_completed']   # this is today's count
 
             if state.get('subject'):
                 self.subject_var.set(state['subject'])
@@ -1489,6 +1538,7 @@ class PomodoroApp:
             self.phase_label.config(text=self.current_phase.capitalize())
             self.update_display()
 
+            # Set the timer as paused (ready to resume when user clicks Start)
             self.paused = True
             self.timer_running = False
             self.start_btn.config(state=tk.NORMAL)
@@ -1496,7 +1546,18 @@ class PomodoroApp:
 
             messagebox.showinfo("Restored", "Session restored. Click Start to resume.")
         else:
+            # User declines – clear the old state and reset cycles to today's actual count
             self.clear_state()
+            # Recompute cycles based on today's logs (should be 0 or whatever was logged today)
+            self.today_count = self.count_today_pomodoros()
+            self.cycles_completed = self.today_count
+            # If we are not resuming, we should also reset the timer display to work phase
+            self.current_phase = "work"
+            self.remaining_seconds = self.config["work_min"] * 60
+            self.phase_label.config(text="Work")
+            self.update_display()
+            # Update progress bars (today's count already updated)
+            self.update_progress()
 
     def schedule_state_save(self):
         if self.timer_running or self.paused:
@@ -1755,6 +1816,41 @@ class PomodoroApp:
         else:
             ttk.Label(tab3, text="No subject data available.").pack(pady=50)
 
+        # ---- Session Type Distribution (new) ----
+        tab_type = ttk.Frame(notebook)
+        notebook.add(tab_type, text="📊 Session Types")
+
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT
+                session_type,
+                SUM(duration_min) AS total_min
+            FROM pomodoro_log
+            WHERE phase = 'work'
+            GROUP BY session_type
+            ORDER BY total_min DESC
+        """)
+        type_data = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if type_data:
+            types = [row['session_type'] if row['session_type'] else 'Unspecified' for row in type_data]
+            mins = [float(row['total_min']) for row in type_data if row['total_min'] is not None and float(row['total_min']) > 0]
+            if mins:
+                fig_type, ax_type = plt.subplots(figsize=(6, 6))
+                ax_type.pie(mins, labels=types, autopct='%1.1f%%', startangle=90)
+                ax_type.axis('equal')
+                ax_type.set_title('Total Study Time by Session Type')
+                canvas_type = FigureCanvasTkAgg(fig_type, master=tab_type)
+                canvas_type.draw()
+                canvas_type.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            else:
+                ttk.Label(tab_type, text="No session type data available.").pack(pady=50)
+        else:
+            ttk.Label(tab_type, text="No session type data available.").pack(pady=50)
+
         tab4 = ttk.Frame(notebook)
         notebook.add(tab4, text="📋 Top Tasks")
         if tasks:
@@ -1818,11 +1914,19 @@ class PomodoroApp:
 
     # ---------- ON CLOSE (with error handling) ----------
     def on_close(self):
-        # 1. Stop the timer immediately to prevent any further updates
+        # 1. Stop the timer immediately
         self.timer_running = False
         self.paused = False
 
-        # 2. Cancel any scheduled "after" events
+        # 2. Cancel the timer's after callback
+        if hasattr(self, '_timer_after_id') and self._timer_after_id:
+            try:
+                self.root.after_cancel(self._timer_after_id)
+            except Exception:
+                pass
+            self._timer_after_id = None
+
+        # 3. Cancel the state‑save after callback
         if hasattr(self, '_after_id') and self._after_id:
             try:
                 self.root.after_cancel(self._after_id)
@@ -1830,7 +1934,7 @@ class PomodoroApp:
                 pass
             self._after_id = None
 
-        # 3. Save state (only if there is remaining time)
+        # 4. Save state (if remaining time > 0)
         try:
             if self.remaining_seconds > 0:
                 self.save_state()
@@ -1839,7 +1943,7 @@ class PomodoroApp:
         except Exception as e:
             print(f"[Pomodoro] State save error: {e}")
 
-        # 4. Save settings and tasks
+        # 5. Save settings and tasks
         try:
             self.save_config(self.config)
         except Exception as e:
@@ -1850,7 +1954,7 @@ class PomodoroApp:
         except Exception as e:
             print(f"[Pomodoro] Tasks save error: {e}")
 
-        # 5. Destroy the window
+        # 6. Destroy the window
         self.root.destroy()
 
     def run(self):

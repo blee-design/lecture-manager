@@ -50,6 +50,7 @@ build/
 *.txt
 *.kate-swp
 *.bak
+packer.py
 !requirements.txt   # keep requirements.txt if you have it
 !setup.py           # keep setup.py
 
