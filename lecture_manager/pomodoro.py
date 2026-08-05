@@ -122,6 +122,46 @@ class PomodoroApp:
         # ----- AUTOMATIC BADGE REFRESH ON STARTUP -----
         self.root.after(1000, self.refresh_badges)
 
+    def edit_task(self):
+        """Edit the text of the selected task."""
+        selection = self.task_listbox.curselection()
+        if not selection:
+            messagebox.showinfo("Info", "Select a task to edit.")
+            return
+
+        index = selection[0]
+        task_id = self.task_listbox_task_ids[index]
+        task = next((t for t in self.tasks if t['id'] == task_id), None)
+        if not task:
+            return
+
+        current_text = task['task_text']
+        new_text = simpledialog.askstring(
+            "Edit Task",
+            f"Edit task:\n\nCurrent: {current_text}",
+            initialvalue=current_text
+        )
+        if new_text is None:          # user cancelled
+            return
+        new_text = new_text.strip()
+        if not new_text:
+            messagebox.showwarning("Empty", "Task text cannot be empty.")
+            return
+
+        # Update database
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE pomodoro_tasks SET task_text = %s WHERE id = %s", (new_text, task_id))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        # Refresh UI
+        self.tasks = self.load_tasks()
+        self.refresh_task_list()
+        self.update_task_combo()
+        messagebox.showinfo("Task Updated", "Task text updated successfully.")
+
     def export_log_csv(self):
         import csv
         from tkinter import filedialog
@@ -475,10 +515,12 @@ class PomodoroApp:
         scrollbar2.grid(row=0, column=1, sticky=(tk.N, tk.S))
         self.task_listbox.config(yscrollcommand=scrollbar2.set)
         self.task_listbox.bind('<<ListboxSelect>>', self.on_task_select)
+        self.task_listbox.bind('<Double-Button-1>', lambda e: self.edit_task())
 
         task_btn_frame = ttk.Frame(tasks_frame)
         task_btn_frame.grid(row=3, column=0, pady=5, sticky=tk.W)
         ttk.Button(task_btn_frame, text="🗑 Remove", command=self.remove_task).pack(side=tk.LEFT, padx=2)
+        ttk.Button(task_btn_frame, text="✏️ Edit", command=self.edit_task).pack(side=tk.LEFT, padx=2)   # NEW
         ttk.Button(task_btn_frame, text="✅ Toggle Done", command=self.toggle_complete).pack(side=tk.LEFT, padx=2)
         ttk.Button(task_btn_frame, text="🔢 Set Priority", command=self.set_priority).pack(side=tk.LEFT, padx=2)
         ttk.Button(task_btn_frame, text="🗑 Clear All", command=self.clear_all_tasks).pack(side=tk.LEFT, padx=2)
@@ -594,15 +636,69 @@ class PomodoroApp:
             return
         index = selection[0]
         task_id = self.task_listbox_task_ids[index]
-        confirm = messagebox.askyesno("Remove Task", "Delete this task?")
+        task = next((t for t in self.tasks if t['id'] == task_id), None)
+        if not task:
+            return
+
+        # Check if this task has any log entries
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM pomodoro_log WHERE task_id = %s", (task_id,))
+        log_count = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
+
+        if log_count > 0:
+            msg = (f"This task has {log_count} log entries.\n"
+                "If you delete it, those sessions will become 'Uncategorized'.\n\n"
+                "Do you want to reassign these logs to another task?")
+            answer = messagebox.askyesnocancel("Task has history", msg)
+            if answer is None:   # Cancel
+                return
+            if answer:           # Yes – reassign
+                # Get list of other active tasks (excluding the one being deleted)
+                other_tasks = [t for t in self.tasks if t['id'] != task_id and not t['completed']]
+                if not other_tasks:
+                    messagebox.showinfo("No other tasks", "There are no other active tasks. The logs will be set to NULL (Uncategorized).")
+                    new_task_id = None
+                else:
+                    # Show a simple dialog to choose a task
+                    task_names = [f"[P{t['priority']}] {t['task_text']}" for t in other_tasks]
+                    import tkinter.simpledialog
+                    choice = tkinter.simpledialog.askinteger(
+                        "Reassign logs",
+                        "Select a task to reassign the logs to:\n\n" +
+                        "\n".join(f"{i+1}. {name}" for i, name in enumerate(task_names)) +
+                        "\n\nEnter 0 to set logs to NULL (Uncategorized).",
+                        minvalue=0, maxvalue=len(other_tasks)
+                    )
+                    if choice is None or choice == 0:
+                        new_task_id = None
+                    else:
+                        new_task_id = other_tasks[choice-1]['id']
+
+                # Update logs
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("UPDATE pomodoro_log SET task_id = %s WHERE task_id = %s", (new_task_id, task_id))
+                conn.commit()
+                cursor.close()
+                conn.close()
+            else:   # No – delete anyway, leaving logs uncategorized
+                pass  # fall through to deletion
+
+        # Proceed with deletion
+        confirm = messagebox.askyesno("Remove Task", "Delete this task permanently?")
         if not confirm:
             return
+
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM pomodoro_tasks WHERE id = %s", (task_id,))
         conn.commit()
         cursor.close()
         conn.close()
+
         self.tasks = self.load_tasks()
         self.refresh_task_list()
         self.update_task_combo()
