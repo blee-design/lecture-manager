@@ -15,6 +15,6 @@ Manage your YouTube lectures with a terminal interface, web UI, and local playba
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/lecture-manager.git
+git clone https://github.com/blee-design/lecture-manager.git
 cd lecture-manager
 pip install -e .

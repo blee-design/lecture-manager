@@ -51,6 +51,7 @@ build/
 *.kate-swp
 *.bak
 packer.py
+lecture-manager-*.py
 !requirements.txt   # keep requirements.txt if you have it
 !setup.py           # keep setup.py
 

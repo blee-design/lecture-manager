@@ -1,4 +1,9 @@
 # File: MANIFEST.in
 
-include lecture_manager/templates/*.html
+include templates
 include lecture_manager/*.py
+include lecture.py 
+include setup.py
+# include README.md
+# include Makefile
+# include LICENSE
