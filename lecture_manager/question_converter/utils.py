@@ -4,6 +4,7 @@ import re
 import os
 import sys
 from .constants import C
+from .exceptions import ConverterError, ParseError, ValidationError, IOError
 
 
 # -------------------- LOGGING --------------------
@@ -190,7 +191,7 @@ def filter_questions(questions, filter_arg, verbose=False):
 
     # Display errors if any - THESE ARE NOW FATAL
     if errors:
-        print(f"\n{C.RED}[ERROR] Cannot apply filter - invalid question numbers:{C.RESET}")
+        raise InvalidFilterError("\n".join(errors))
         for error in errors:
             print(f"  • {error}")
         print(f"\n{C.YELLOW}Available questions: 1 to {max_question}{C.RESET}")
@@ -199,8 +200,6 @@ def filter_questions(questions, filter_arg, verbose=False):
         print(f"  {C.GREEN}-q 5..10{C.RESET}            # Range (inclusive)")
         print(f"  {C.GREEN}-q 1,5..10,15,20..25{C.RESET} # Mixed pattern")
         print(f"\n{C.YELLOW}Fix: Remove out-of-range numbers from your filter pattern.{C.RESET}")
-        # EXIT ON ERROR
-        sys.exit(1)
 
     # If no valid numbers selected
     if not selected_numbers:
@@ -405,7 +404,7 @@ def filter_questions(questions, filter_arg, verbose=False):
 
     # Display errors if any
     if errors:
-        print(f"\n{C.RED}[ERROR] Filter pattern parsing failed:{C.RESET}")
+        raise InvalidFilterError("\n".join(errors))
         for error in errors:
             print(f"  • {error}")
         print(f"\n{C.YELLOW}Available questions: 1 to {max_question}{C.RESET}")

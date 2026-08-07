@@ -24,6 +24,7 @@ from .upload import scan_and_match_youtube_videos, batch_upload_missing_mirrors
 from .question_bank import question_bank_menu
 from .instapaper import instapaper_menu
 from .question_converter import create_tables, import_from_file, get_questions, delete_question, export_to_file, run_conversion
+from .question_converter.exceptions import ConverterError
 
 def show_banner():
     width = 60

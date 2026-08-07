@@ -5,6 +5,7 @@ import sys
 import re
 from .constants import C
 from .utils import log
+from .exceptions import ConverterError, ParseError, ValidationError, IOError
 
 # List VALID_QUESTION_TYPES
 VALID_QUESTION_TYPES = ["multichoice", "essay", "truefalse", "matching"]
@@ -308,8 +309,7 @@ def xml_to_questions(input_file, verbose=False):
     try:
         dom = parse(input_file)
     except Exception as e:
-        print(f"{C.RED}[ERROR] Failed to parse XML: {e}{C.RESET}")
-        sys.exit(1)
+        raise ParseError(f"Failed to parse XML file: {e}")
 
     questions = []
     question_elements = dom.getElementsByTagName("question")

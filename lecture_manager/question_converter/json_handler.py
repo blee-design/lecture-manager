@@ -1,7 +1,6 @@
-# File json_handler.py
-
 import json
-from .utils import log  # Add this import
+from .utils import log
+from .exceptions import ConverterError, ParseError, ValidationError, IOError
 
 VALID_QUESTION_TYPES = ["multichoice", "essay", "truefalse", "matching"]
 
@@ -19,18 +18,17 @@ def json_to_questions(input_file, verbose=False):  # Add verbose parameter
         
         # Validate question type
         if q_type not in VALID_QUESTION_TYPES:
-            print(f"{C.RED}[ERROR] Unknown question type: '{q_type}'{C.RESET}")
+            raise UnknownQuestionTypeError(f"Unknown question type: '{q_type}' in JSON question {i}")
         
         # Validate question type
         if q_type not in VALID_QUESTION_TYPES:
-            print(f"{C.RED}[ERROR] Unknown question type: '{q_type}'{C.RESET}")
+            raise UnknownQuestionTypeError(f"Unknown question type: '{q_type}' in JSON question {i}")
             print(f"        Question No.: {i}")
             print(f"        Question: {item.get('text', '')[:80]}...")
             print(f"{C.YELLOW}        Available question types:")
             print(f"        • multichoice - Multiple choice questions (MCQ)")
             print(f"        • essay - Essay questions (long answer)")
             print(f"        • truefalse - True/False questions{C.RESET}")
-            sys.exit(1)
             
         question = {
             "text": item.get("text", ""),

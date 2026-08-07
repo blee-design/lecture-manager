@@ -71,23 +71,22 @@ def normalize_question_number(qno):
 
 def add_question(date, institution, subject, paper, group, marks, chapter,
                  question_number, nepali, english, level, notes=None,
-                 force=False):
-    """
-    Add a new question, unless a duplicate exists (date + institution + level + question_number).
-    If force=True, skip duplicate check and insert anyway.
-    Returns the new ID or existing ID if duplicate.
-    """
-    # ---- Clear duplicate English before any checks ----
-    if _should_clear_english(nepali, english):
-        english = None
-
+                 force=False, options=None, pairs=None, hints=None,
+                 general_feedback=None, fraction_correct=100, fraction_wrong=-20,
+                 shuffle_answers=True, show_num_correct=False,
+                 correct_feedback=None, partially_correct_feedback=None,
+                 incorrect_feedback=None,
+                 response_lines=15, attachments=0,
+                 filetypes='.doc,.docx,.pdf,.png,.jpg,.jpeg',
+                 maxbytes=2097152, grader_info=None):
+    # Check duplicate
     if not force:
         existing = check_duplicate(date, institution, level, paper, group, question_number)
         if existing:
             print_colored(f"[!] Duplicate found! Question already exists with ID: {existing}", COLORS.YELLOW)
             overwrite = input(color_text("Overwrite existing question? (y/n): ", COLORS.MAGENTA)).strip().lower()
             if overwrite == 'y':
-                # Update existing question
+                # Update existing
                 updates = {
                     'subject': subject,
                     'paper': paper,
@@ -95,13 +94,25 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                     'marks': marks,
                     'chapter': chapter,
                     'nepali_transcription': nepali,
-                    'english_transcription': english,   # may be None now
-                    'notes': notes
+                    'english_transcription': english,
+                    'notes': notes,
+                    'general_feedback': general_feedback,
+                    'fraction_correct': fraction_correct,
+                    'fraction_wrong': fraction_wrong,
+                    'shuffle_answers': shuffle_answers,
+                    'show_num_correct': show_num_correct,
+                    'correct_feedback': correct_feedback,
+                    'partially_correct_feedback': partially_correct_feedback,
+                    'incorrect_feedback': incorrect_feedback,
+                    'response_lines': response_lines,
+                    'attachments': attachments,
+                    'filetypes': filetypes,
+                    'maxbytes': maxbytes,
+                    'grader_info': grader_info,
                 }
                 # Remove None values
                 updates = {k: v for k, v in updates.items() if v is not None}
-                # We need to use the generic update function
-                if update_question(existing, **updates):
+                if update_question(existing, **updates, options=options, pairs=pairs, hints=hints):
                     print_colored(f"[✓] Question {existing} updated.", COLORS.GREEN)
                     return existing
                 else:
@@ -111,31 +122,74 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                 print_colored("[i] Keeping existing question. No changes made.", COLORS.YELLOW)
                 return existing
 
-    # No duplicate, or force=True – insert new
+    # Insert new question
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(f"""
-        INSERT INTO {TABLE_NAME}
+        INSERT INTO questions
         (question_date, institution, subject, paper, `group`, marks, chapter,
-         question_number, nepali_transcription, english_transcription, level, notes)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+         question_number, nepali_transcription, english_transcription, level, notes,
+         general_feedback, fraction_correct, fraction_wrong, shuffle_answers,
+         show_num_correct, correct_feedback, partially_correct_feedback,
+         incorrect_feedback, response_lines, attachments, filetypes, maxbytes,
+         grader_info)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (date, institution, subject, paper, group, marks, chapter,
-          question_number, nepali, english, level, notes))
+          question_number, nepali, english, level, notes,
+          general_feedback, fraction_correct, fraction_wrong,
+          shuffle_answers, show_num_correct,
+          correct_feedback, partially_correct_feedback, incorrect_feedback,
+          response_lines, attachments, filetypes, maxbytes, grader_info))
     conn.commit()
-    new_id = cursor.lastrowid
+    qid = cursor.lastrowid
+
+    # Insert options
+    if options:
+        for idx, opt in enumerate(options):
+            cursor.execute("""
+                INSERT INTO question_options (question_id, text, fraction, feedback, display_order)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (qid, opt['text'], opt.get('fraction', 0), opt.get('feedback', ''), idx))
+
+    # Insert matching pairs
+    if pairs:
+        for idx, pair in enumerate(pairs):
+            cursor.execute("""
+                INSERT INTO question_matching_pairs (question_id, subquestion, answer, display_order)
+                VALUES (%s, %s, %s, %s)
+            """, (qid, pair['subquestion'], pair['answer'], idx))
+
+    # Insert hints
+    if hints:
+        for idx, hint in enumerate(hints, 1):
+            cursor.execute("""
+                INSERT INTO question_hints (question_id, hint_text, clear_incorrect, show_num_correct, hint_number)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (qid, hint['text'], hint.get('clear_incorrect', False),
+                  hint.get('show_num_correct', False), idx))
+
+    conn.commit()
     cursor.close()
     conn.close()
-    print_colored(f"[✓] Question added with ID: {new_id}", COLORS.GREEN)
-    return new_id
+    print_colored(f"[✓] Question added with ID: {qid}", COLORS.GREEN)
+    return qid
 
 def get_question_by_id(qid):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
-    cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE id = %s", (qid,))
-    row = cursor.fetchone()
+    cursor.execute("SELECT * FROM questions WHERE id = %s", (qid,))
+    q = cursor.fetchone()
+    if q:
+        cursor.execute("SELECT * FROM question_options WHERE question_id = %s ORDER BY display_order", (qid,))
+        q['options'] = cursor.fetchall()
+        cursor.execute("SELECT * FROM question_matching_pairs WHERE question_id = %s ORDER BY display_order", (qid,))
+        q['pairs'] = cursor.fetchall()
+        cursor.execute("SELECT * FROM question_hints WHERE question_id = %s ORDER BY hint_number", (qid,))
+        q['hints'] = cursor.fetchall()
     cursor.close()
     conn.close()
-    return row
+    return q
 
 def get_questions_by_criteria(date=None, institution=None, level=None, paper=None, group=None, subject=None, question_number=None, chapter=None):
     conn = get_connection()

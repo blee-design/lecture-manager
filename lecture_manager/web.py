@@ -26,6 +26,7 @@ from .question_bank import (
     delete_question
 )
 from .question_converter import import_from_file, get_questions, export_to_file, create_tables
+from .question_converter.exceptions import ConverterError
 
 # ===== PLAYBACK CONFIGURATION =====
 PLAYBACK_SOURCE = 'mirror_only'   # Change this to your preference
@@ -680,7 +681,7 @@ def converter_import():
         flash(f'✅ Successfully imported {count} questions.', 'success')
         if errors:
             flash(f'⚠️ {len(errors)} errors occurred.', 'warning')
-    except Exception as e:
+    except ConverterError as e:
         flash(f'❌ Import failed: {e}', 'danger')
     finally:
         os.unlink(tmp_path)

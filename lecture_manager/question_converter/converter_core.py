@@ -13,6 +13,7 @@ from .xml_handler import xml_to_questions, create_moodle_xml
 from .html_output import create_html_output
 from .text_output import create_text_output
 from .exam_output import create_exam_html, parse_time_argument
+from .exceptions import ConverterError, ParseError, ValidationError, IOError
 
 # -------------------- SUCCESS MESSAGE --------------------
 def print_success_message(questions, input_file, output_file, input_format, output_format, bypass_used, skipped_lines=0, verbose=False, shuffle_applied=False):
@@ -159,9 +160,7 @@ def run_conversion(args):
     """Main conversion logic - separated from CLI parsing"""
     # Check input file
     if not os.path.exists(args.input):
-        print(f"{C.RED}[ERROR] Input file not found: {args.input}{C.RESET}")
-        print(f"Please ensure '{args.input}' exists in the current directory.")
-        sys.exit(1)
+        raise IOError(f"Input file not found: {args.input}. Please ensure it exists.")
 
     # ---------- DETECT EXAM MODE EARLY ----------
     # Store original format and exam flag before any modifications
@@ -262,10 +261,9 @@ def run_conversion(args):
             print(f"{C.RED}[ERROR] Unsupported input format: {input_format}{C.RESET}")
             sys.exit(1)
     except Exception as e:
-        print(f"{C.RED}[ERROR] Failed to parse input file: {e}{C.RESET}")
+        raise ParseError(f"Failed to parse input file: {e}")
         import traceback
         traceback.print_exc()
-        sys.exit(1)
 
     # ---------- FILTERING ----------
     original_count = len(questions)

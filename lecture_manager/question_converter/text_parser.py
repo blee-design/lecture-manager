@@ -7,6 +7,8 @@ from .utils import (
     filter_questions, find_line_in_file, format_passage_in_question
 )
 from .constants import C
+from .exceptions import ConverterError, ParseError, ValidationError, IOError
+from ..question_bank import check_duplicate
 
 # Define valid question types
 VALID_QUESTION_TYPES = ["multichoice", "essay", "truefalse", "matching"]
@@ -79,11 +81,8 @@ def remove_passage_marker(line, passages, verbose=False):
         start = max(0, marker_start - 30)
         end = min(len(line), marker_start + 50)
         snippet = line[start:end]
-        print(f"{C.RED}[ERROR] Passage reference to undefined passage: '{identifier}'{C.RESET}")
+        raise UndefinedPassageError(f"Passage reference to undefined passage: '{identifier}' (available: {list(passages.keys())})")
         print(f"{C.YELLOW}Line snippet: ...{snippet}...{C.RESET}")
-        print(f"{C.YELLOW}Available passages: {', '.join(passages.keys()) if passages else 'none'}{C.RESET}")
-        print(f"{C.YELLOW}Make sure you defined a passage with [passage:{identifier}] before using it.{C.RESET}")
-        sys.exit(1)
     cleaned = pattern.sub('', line).strip()
     return cleaned, identifier
 # ----- END PASSAGE FEATURE -----
@@ -91,23 +90,7 @@ def remove_passage_marker(line, passages, verbose=False):
 def validate_question_type(q_type, question_no, line_no, question_text):
     """Validate question type and provide helpful error message"""
     if q_type not in VALID_QUESTION_TYPES:
-        print(f"{C.RED}[ERROR] Unknown question type: '{q_type}'{C.RESET}")
-        print(f"        Question No.: {question_no}")
-        if line_no and line_no > 0:
-            print(f"        Line No.: ~{line_no}")
-        print(f"        Question: {question_text[:80]}...")
-        print(f"{C.YELLOW}        Available question types:")
-        print(f"        • multichoice - Multiple choice questions (MCQ)")
-        print(f"        • essay - Essay questions (long answer)")
-        print(f"        • truefalse - True/False questions")
-        print(f"")
-        print(f"        Example usage:")
-        print(f"        Type: multichoice   (for MCQ questions)")
-        print(f"        Type: essay         (for essay questions)")
-        print(f"        Type: truefalse     (for True/False questions)")
-        print(f"")
-        print(f"        Check your input file for typos in the 'Type:' field.")
-        print(f"        The value '{q_type}' is not recognized.{C.RESET}")
+        raise UnknownQuestionTypeError(f"Unknown question type: '{q_type}' in question {question_no} (line {line_no})")
         return False
     return True
 
@@ -218,8 +201,7 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
     # ===== VALIDATE NON-HINT FIELDS =====
     # Validate field name
     if field_name not in VALID_FIELD_NAMES:
-        print(f"{C.RED}[ERROR] Unknown field: '{field_name}'{C.RESET}")
-        print(f"        Question No.: {question_no}")
+        raise ParseError(f"Unknown field: '{field_name}' in question {question_no} (line {line_no})")
         if line_no and line_no > 0:
             print(f"        Line No.: {line_no}")
         print(f"        Question: {question_text[:80]}...")
@@ -251,7 +233,6 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
         print(f"")
         print(f"        Check for typos in field names and ensure they start with a capital letter.")
         print(f"        Example: 'Type: multichoice', not 'type: multichoice'{C.RESET}")
-        sys.exit(1)
 
     # ===== HANDLE SPECIFIC FIELD TYPES =====
     if field_name == 'type':
@@ -761,12 +742,9 @@ def parse_text_file(file_path, args):
                 else:
                     # Find actual line number
                     actual_line = find_line_in_file(file_path, question_text)
-                    print(f"{C.RED}[ERROR] Duplicate question detected{C.RESET}")
-                    print(f"        Question No.: {question_no}")
-                    print(f"        Line No.: {actual_line}")
-                    print(f"        Question: {question_text[:80]}...")
+                    raise DuplicateQuestionError(f"Duplicate question '{question_text}' at question {question_no} (line {actual_line})")
+                    raise DuplicateQuestionError(f"Question already exists with ID {dup_id} for {date} {institution} {level} {paper} {group} Q{question_number}")
                     print(f"{C.YELLOW}        Fix: Remove duplicate or use --bypass-duplicate{C.RESET}")
-                    sys.exit(1)
             seen_questions.add(key)
 
             # Create new question
@@ -827,35 +805,11 @@ def parse_text_file(file_path, args):
             else:
                 # Not a comment and not a question - this is malformed!
                 actual_line = find_line_in_file(file_path, line)
-                print(f"{C.RED}[ERROR] Malformed section detected - does not start with a question{C.RESET}")
+                raise ParseError(f"Malformed section at line {actual_line}: '{line[:80]}...' (does not start with 'Question')")
                 print(f"        Line No.: {actual_line}")
                 print(f"        Line: '{line[:80]}...'")
                 print(f"{C.YELLOW}        Expected: 'Question: <text>' or 'Question No. X: <text>'")
                 print(f"        Also accepted: Comment lines starting with #, ###, ---, or ***")
-                print(f"")
-                print(f"        This section appears to be extra text not properly formatted as a question.")
-                print(f"        In your example, the line 'this is extra text section...' is causing this error.")
-                print(f"")
-                print(f"        Fix options:")
-                print(f"        1. Remove this line from the input file")
-                print(f"        2. Add it as a comment by starting with #, //, or ---")
-                print(f"        3. If this is meant to be a question, format it properly:")
-                print(f"           Question No. 3: Your question here")
-                print(f"           Type: [multichoice|essay|truefalse]")
-                print(f"           ... (other fields as needed)")
-                print(f"")
-                print(f"        Example of proper format:")
-                print(f"        Question No. 1: Nepal's current fiscal year...")
-                print(f"        Option: April 14, 2024")
-                print(f"        Option: July 16, 2024 *")
-                print(f"        Option: October 17, 2024")
-                print(f"        Option: January 1, 2025")
-                print(f"        General Feedback: Nepal's fiscal year...")
-                print(f"")
-                print(f"        # This is a proper comment")
-                print(f"        // This is also a comment")
-                print(f"        --- Section divider ---{C.RESET}")
-                sys.exit(1)
 
     # Add the last question
     if current_question:
@@ -882,8 +836,7 @@ def parse_text_file(file_path, args):
             if correct_count == 0:
                 # No correct option found
                 actual_line = find_line_in_file(file_path, q["text"])
-                print(f"{C.RED}[ERROR] Question has no correct option marked{C.RESET}")
-                print(f"        Question No.: {q['question_no']}")
+                raise MissingCorrectOptionError(f"Question {q['question_no']} has no correct option marked.")
                 print(f"        Line No.: ~{actual_line}")
                 print(f"        Question: {q['text'][:80]}...")
                 print(f"{C.YELLOW}        Fix: Mark exactly ONE option as correct using:")
@@ -894,18 +847,14 @@ def parse_text_file(file_path, args):
                 print(f"        Note: Markers must be OUTSIDE LaTeX math blocks")
                 print(f"        Example: 'Option: Solve \\(x^2 = 4\\) to get *' (correct)")
                 print(f"        Example: 'Option: Solve \\(x^2 = 4 *\\)' (WRONG - inside LaTeX){C.RESET}")
-                sys.exit(1)
 
             elif correct_count > 1:
                 actual_line = find_line_in_file(file_path, q["text"])
-                print(f"{C.RED}[ERROR] Question has multiple correct options{C.RESET}")
-                print(f"        Question No.: {q['question_no']}")
+                raise MultipleCorrectOptionsError(f"Question {q['question_no']} has {correct_count} correct options.")
                 print(f"        Line No.: ~{actual_line}")
                 print(f"        Question: {q['text'][:80]}...")
-                print(f"        Correct options found: {correct_count}")
                 print(f"{C.YELLOW}        Fix: Remove extra correct markers, keep only ONE")
                 print(f"        Check all options and remove *, [Correct], [OK], [Right] from extras{C.RESET}")
-                sys.exit(1)
 
             if len(q["options"]) < 4:
                 if args.bypass_option:
@@ -915,14 +864,9 @@ def parse_text_file(file_path, args):
                     bypass_used["option"].append(q['question_no'])
                 else:
                     actual_line = find_line_in_file(file_path, q["text"])
-                    print(f"{C.RED}[ERROR] Insufficient options for MCQ{C.RESET}")
-                    print(f"        Question No.: {q['question_no']}")
+                    raise InsufficientOptionsError(f"Question {q['question_no']} has {len(q['options'])} options (need 4).")
                     print(f"        Line No.: ~{actual_line}")
                     print(f"        Question: {q['text'][:80]}...")
-                    print(f"        Options found: {len(q['options'])} (need exactly 4 for MCQ)")
-                    print(f"{C.YELLOW}        Fix: Add exactly 4 options for multiple choice")
-                    print(f"        OR if this should be an essay question, add:")
-                    print(f"        'Type: essay' after the question")
                     print(f"        OR use --bypass-option to auto-fill missing options{C.RESET}")
                     sys.exit(1)
 
@@ -954,11 +898,9 @@ def parse_text_file(file_path, args):
             # Check if we have pairs
             if "pairs" not in q or len(q.get("pairs", [])) < 2:
                 actual_line = find_line_in_file(file_path, q["text"])
-                print(f"{C.RED}[ERROR] Matching question needs at least 2 pairs (subquestion/answer){C.RESET}")
-                print(f"        Question No.: {q['question_no']}")
+                raise MatchingPairError(f"Matching question {q['question_no']} has only {len(q.get('pairs', []))} pairs (need at least 2).")
                 print(f"        Line No.: ~{actual_line}")
                 print(f"        Question: {q['text'][:80]}...")
-                print(f"        Pairs found: {len(q.get('pairs', []))}")
                 print(f"{C.YELLOW}        Fix: Add at least 2 subquestion/answer pairs")
                 print(f"        Example:")
                 print(f"        Subquestion: France")
