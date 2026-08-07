@@ -1,5 +1,8 @@
 # web.py
 
+import tempfile
+import os
+from werkzeug.utils import secure_filename
 import os
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
 from .db import get_connection, TABLE_NAME, get_record_by_video_id
@@ -22,6 +25,7 @@ from .question_bank import (
     update_question,
     delete_question
 )
+from .question_converter import import_from_file, get_questions, export_to_file, create_tables
 
 # ===== PLAYBACK CONFIGURATION =====
 PLAYBACK_SOURCE = 'mirror_only'   # Change this to your preference
@@ -632,6 +636,88 @@ def chapter_suggestions():
     from .question_bank import get_distinct_chapters_like
     suggestions = get_distinct_chapters_like(query)
     return jsonify(suggestions)
+
+@app.route('/converter', methods=['GET'])
+def converter_home():
+    return render_template('converter.html')
+
+@app.route('/converter/import', methods=['POST'])
+def converter_import():
+    if 'file' not in request.files:
+        flash('No file uploaded', 'danger')
+        return redirect(url_for('converter_home'))
+    file = request.files['file']
+    if file.filename == '':
+        flash('No file selected', 'danger')
+        return redirect(url_for('converter_home'))
+
+    filename = secure_filename(file.filename)
+    ext = os.path.splitext(filename)[1].lower().lstrip('.')
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.'+ext) as tmp:
+        file.save(tmp.name)
+        tmp_path = tmp.name
+
+    try:
+        if ext in ('txt', 'text'):
+            fmt = 'txt'
+        elif ext == 'xml':
+            fmt = 'xml'
+        elif ext == 'json':
+            fmt = 'json'
+        else:
+            flash(f'Unsupported file extension: {ext}', 'danger')
+            os.unlink(tmp_path)
+            return redirect(url_for('converter_home'))
+
+        source = request.form.get('source', '').strip()
+        if not source:
+            flash('Source name is required to separate exam sets.', 'danger')
+            os.unlink(tmp_path)
+            return redirect(url_for('converter_home'))
+
+        args = type('Args', (), {'verbose': True, 'bypass_duplicate': False, 'bypass_option': False, 'questions': None})()
+        count, errors = import_from_file(tmp_path, fmt, source=source, args=args)
+        flash(f'✅ Successfully imported {count} questions.', 'success')
+        if errors:
+            flash(f'⚠️ {len(errors)} errors occurred.', 'warning')
+    except Exception as e:
+        flash(f'❌ Import failed: {e}', 'danger')
+    finally:
+        os.unlink(tmp_path)
+    return redirect(url_for('converter_home'))
+
+@app.route('/converter/export', methods=['POST'])
+def converter_export():
+    fmt = request.form.get('format', 'xml')
+    source = request.form.get('source_filter', '').strip()
+    group = request.form.get('group_filter', '').strip()
+    qtype = request.form.get('type_filter', '').strip()
+
+    filters = {}
+    if source:
+        filters['source'] = source
+    if group:
+        filters['group_name'] = group
+    if qtype:
+        filters['type'] = qtype
+
+    questions = get_questions(filters)
+    if not questions:
+        flash('No questions found matching the criteria.', 'warning')
+        return redirect(url_for('converter_home'))
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.'+fmt) as tmp:
+        tmp_path = tmp.name
+    try:
+        args = type('Args', (), {'verbose': False})()
+        export_to_file(questions, tmp_path, fmt, args)
+        return send_file(tmp_path, as_attachment=True, download_name=f'export.{fmt}')
+    except Exception as e:
+        flash(f'Export failed: {e}', 'danger')
+        return redirect(url_for('converter_home'))
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 def run_web_server(host='127.0.0.1', port=5000):
     app.run(host=host, port=port, debug=False, threaded=True)

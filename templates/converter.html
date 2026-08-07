@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>📝 Question Converter (Moodle)</h2>
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">⬆️ Import</div>
+            <div class="card-body">
+                <form method="post" enctype="multipart/form-data" action="{{ url_for('converter_import') }}">
+                    <div class="mb-3">
+                        <label for="file" class="form-label">Choose file</label>
+                        <input class="form-control" type="file" name="file" id="file" accept=".txt,.xml,.json" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="source" class="form-label">Source name (e.g., Officer_2078)</label>
+                        <input type="text" class="form-control" name="source" id="source" placeholder="Required to separate exam sets" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Import</button>
+                </form>
+                <p class="text-muted mt-2">Supported: .txt (text format), .xml (Moodle XML), .json</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">⬇️ Export</div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('converter_export') }}">
+                    <div class="mb-3">
+                        <label for="format" class="form-label">Output format</label>
+                        <select class="form-select" name="format" id="format">
+                            <option value="xml">Moodle XML</option>
+                            <option value="json">JSON</option>
+                            <option value="html">HTML (web view)</option>
+                            <option value="txt">Text</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="source_filter" class="form-label">Filter by source (optional)</label>
+                        <input type="text" class="form-control" name="source_filter" placeholder="e.g. Officer_2078">
+                    </div>
+                    <div class="mb-3">
+                        <label for="group_filter" class="form-label">Filter by group (optional)</label>
+                        <input type="text" class="form-control" name="group_filter" placeholder="e.g. Geography">
+                    </div>
+                    <div class="mb-3">
+                        <label for="type_filter" class="form-label">Filter by type (optional)</label>
+                        <select class="form-select" name="type_filter" id="type_filter">
+                            <option value="">All types</option>
+                            <option value="multichoice">Multichoice</option>
+                            <option value="essay">Essay</option>
+                            <option value="truefalse">True/False</option>
+                            <option value="matching">Matching</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-success">Export</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
