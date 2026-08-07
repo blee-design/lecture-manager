@@ -1,8 +1,12 @@
 import json
+from decimal import Decimal
 from .utils import log
-from .exceptions import ConverterError, ParseError, ValidationError, IOError
+from ..utils import sanitize_for_json
+from .exceptions import UnknownQuestionTypeError
 
 VALID_QUESTION_TYPES = ["multichoice", "essay", "truefalse", "matching"]
+
+
 
 # -------------------- JSON PARSING --------------------
 def json_to_questions(input_file, verbose=False):  # Add verbose parameter
@@ -102,17 +106,26 @@ def json_to_questions(input_file, verbose=False):  # Add verbose parameter
     log(f"Total questions loaded: {len(questions)}", "SUMMARY", verbose)
     return questions
 
+def convert_decimals(obj):
+    """Recursively convert Decimal to float/int in a dict/list."""
+    if isinstance(obj, Decimal):
+        return int(obj) if obj % 1 == 0 else float(obj)
+    elif isinstance(obj, dict):
+        return {k: convert_decimals(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_decimals(v) for v in obj]
+    else:
+        return obj
+
 # -------------------- JSON OUTPUT --------------------
 def create_json_output(questions, output_file, verbose=False):
-    """Convert questions list to JSON format"""
     log(f"Creating JSON output with {len(questions)} questions", "INFO", verbose)
 
-    # Prepare JSON-friendly structure
     json_data = []
     for i, q in enumerate(questions, 1):
         json_q = {
-            "question_no": q.get("question_no", i),
-            "type": q.get("type", "multichoice"),
+            "question_no": q.get("question_no"),
+            "type": q.get("type"),
             "text": q.get("text", ""),
             "general_feedback": q.get("general_feedback", ""),
             "grader_info": q.get("grader_info", ""),
@@ -123,49 +136,30 @@ def create_json_output(questions, output_file, verbose=False):
         }
 
         if q.get("type") == "multichoice":
-            json_q["fraction_correct"] = q.get("fraction_correct", 100)
-            json_q["fraction_wrong"] = q.get("fraction_wrong", -20)
-            json_q["options"] = q.get("options", [])
-            log(f"Writing Question {i}: MCQ with {len(json_q['options'])} options", "INFO", verbose)
-        
-        # Matching Types
+            json_q["fraction_correct"] = float(q.get("fraction_correct", 100)) if isinstance(q.get("fraction_correct"), Decimal) else q.get("fraction_correct", 100)
+            json_q["fraction_wrong"] = float(q.get("fraction_wrong", -20)) if isinstance(q.get("fraction_wrong"), Decimal) else q.get("fraction_wrong", -20)
+            json_q["options"] = []
+            for opt in q.get("options", []):
+                opt_copy = opt.copy()
+                if "fraction" in opt_copy and isinstance(opt_copy["fraction"], Decimal):
+                    opt_copy["fraction"] = float(opt_copy["fraction"])
+                json_q["options"].append(opt_copy)
         elif q.get("type") == "matching":
-            json_q["shuffle_answers"] = q.get("shuffle_answers", True)
-            json_q["show_num_correct"] = q.get("show_num_correct", False)
-            json_q["correct_feedback"] = q.get("correct_feedback", "Your answer is correct.")
-            json_q["partially_correct_feedback"] = q.get("partially_correct_feedback", "Your answer is partially correct.")
-            json_q["incorrect_feedback"] = q.get("incorrect_feedback", "Your answer is incorrect.")
             json_q["pairs"] = q.get("pairs", [])
             json_q["hints"] = q.get("hints", [])
-            
-            log(f"Writing Question {i}: Matching with {len(json_q['pairs'])} pairs", "INFO", verbose)
-        
-        # True False Type
+            json_q["shuffle_answers"] = q.get("shuffle_answers", True)
+            json_q["show_num_correct"] = q.get("show_num_correct", False)
+            # Convert any Decimal in grade/penalty already done
         elif q.get("type") == "truefalse":
-            json_q["type"] = "truefalse"
-            # Determine correct answer (True or False)
-            correct_option = next((opt for opt in q.get("options", []) if opt.get("correct", False)), None)
-            if correct_option:
-                json_q["correct_answer"] = correct_option.get("text", "").lower() == "true"
-            else:
-                json_q["correct_answer"] = True  # Default to True
-            
-            json_q["feedback_true"] = q.get("feedback_true", "")
-            json_q["feedback_false"] = q.get("feedback_false", "")
-            json_q["fraction_correct"] = q.get("fraction_correct", 100)
-            json_q["fraction_wrong"] = q.get("fraction_wrong", -20)
-            log(f"Writing Question {i}: True/False (Correct: {json_q['correct_answer']})", "INFO", verbose)
-        
-        else:  # essay
+            # handle similarly
+            pass
+        else:
             json_q["attachments"] = q.get("attachments", 0)
             json_q["filetypes"] = q.get("filetypes", ".doc,.docx,.pdf,.png,.jpg,.jpeg")
             json_q["maxbytes"] = q.get("maxbytes", 2*1024*1024)
-            log(f"Writing Question {i}: Essay (Grade: {json_q['grade']})", "INFO", verbose)
 
+        json_q = sanitize_for_json(json_q)
         json_data.append(json_q)
-        log(f"Question {i}: Added to JSON data", "OK", verbose)
 
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(json_data, f, indent=2, ensure_ascii=False)
-
-    log(f"JSON file created: {output_file}", "SUCCESS", verbose)

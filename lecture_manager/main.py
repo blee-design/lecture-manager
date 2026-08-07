@@ -82,6 +82,7 @@ def export_import_submenu():
 
 def converter_submenu():
     from .question_converter import create_tables, import_from_file, get_questions, delete_question, export_to_file, run_conversion
+    from .question_converter.exceptions import ConverterError
     import os
     import argparse
 
@@ -128,7 +129,17 @@ def converter_submenu():
                 exam=False,
                 time=90
             )
-            run_conversion(args)
+            try:
+                run_conversion(args)
+            except ConverterError as e:
+                print_colored(f"[!] Conversion error: {e}", COLORS.RED)
+            except SystemExit as e:
+                if e.code != 0:
+                    print_colored(f"[!] Converter exited with error code {e.code}", COLORS.RED)
+                else:
+                    print_colored("[i] Converter terminated normally.", COLORS.BLUE)
+            except Exception as e:
+                print_colored(f"[!] Unexpected error: {e}", COLORS.RED)
             input("\nPress Enter to continue...")
 
         elif choice == '2':
@@ -151,12 +162,20 @@ def converter_submenu():
                 print_colored("[!] Source name is required to separate exam sets.", COLORS.RED)
                 continue
             args = type('Args', (), {'verbose': True, 'bypass_duplicate': False, 'bypass_option': False, 'questions': None})()
-            count, errors = import_from_file(input_file, fmt, source=source, args=args)
-            print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
-            if errors:
-                print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
-                for e in errors[:5]:
-                    print(f"  {e}")
+            try:
+                count, errors = import_from_file(input_file, fmt, source=source, args=args)
+                print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
+                if errors:
+                    print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
+                    for e in errors[:5]:
+                        print(f"  {e}")
+            except ConverterError as e:
+                print_colored(f"[!] Import error: {e}", COLORS.RED)
+            except SystemExit as e:
+                if e.code != 0:
+                    print_colored(f"[!] Import exited with error code {e.code}", COLORS.RED)
+            except Exception as e:
+                print_colored(f"[!] Unexpected error: {e}", COLORS.RED)
             input("\nPress Enter to continue...")
 
         elif choice == '3':
@@ -176,14 +195,23 @@ def converter_submenu():
             qtype = input(color_text("Filter by type (multichoice, essay, truefalse, matching) (or skip): ", COLORS.MAGENTA)).strip()
             if qtype:
                 filters['type'] = qtype
-            questions = get_questions(filters)
-            if not questions:
-                print_colored("[i] No questions found.", COLORS.YELLOW)
-                continue
-            print_colored(f"[i] Exporting {len(questions)} questions...", COLORS.BLUE)
-            args = type('Args', (), {'verbose': True})()
-            export_to_file(questions, output_file, fmt, args)
-            print_colored(f"[✓] Exported to {output_file}", COLORS.GREEN)
+            try:
+                questions = get_questions(filters)
+                if not questions:
+                    print_colored("[i] No questions found.", COLORS.YELLOW)
+                    input("\nPress Enter to continue...")
+                    continue
+                print_colored(f"[i] Exporting {len(questions)} questions...", COLORS.BLUE)
+                args = type('Args', (), {'verbose': True})()
+                export_to_file(questions, output_file, fmt, args)
+                print_colored(f"[✓] Exported to {output_file}", COLORS.GREEN)
+            except ConverterError as e:
+                print_colored(f"[!] Export error: {e}", COLORS.RED)
+            except SystemExit as e:
+                if e.code != 0:
+                    print_colored(f"[!] Export exited with error code {e.code}", COLORS.RED)
+            except Exception as e:
+                print_colored(f"[!] Unexpected error: {e}", COLORS.RED)
             input("\nPress Enter to continue...")
 
         elif choice == '4':
@@ -197,24 +225,35 @@ def converter_submenu():
             qtype = input(color_text("Filter by type (or skip): ", COLORS.MAGENTA)).strip()
             if qtype:
                 filters['type'] = qtype
-            questions = get_questions(filters)
-            if not questions:
-                print_colored("[i] No questions found.", COLORS.YELLOW)
-            else:
-                print(f"\n--- Questions in Database ({len(questions)}) ---")
-                for q in questions:
-                    print(f"  ID: {q.get('id', '?')} | Source: {q.get('source', '?')} | QNo: {q.get('question_no', '?')} | Type: {q.get('type')} | Group: {q.get('group')} | {q.get('text')[:50]}...")
+            try:
+                questions = get_questions(filters)
+                if not questions:
+                    print_colored("[i] No questions found.", COLORS.YELLOW)
+                else:
+                    print(f"\n--- Questions in Database ({len(questions)}) ---")
+                    for q in questions:
+                        print(f"  ID: {q.get('id', '?')} | Source: {q.get('source', '?')} | QNo: {q.get('question_no', '?')} | Type: {q.get('type')} | Group: {q.get('group')} | {q.get('text')[:50]}...")
+            except ConverterError as e:
+                print_colored(f"[!] Error: {e}", COLORS.RED)
+            except Exception as e:
+                print_colored(f"[!] Unexpected error: {e}", COLORS.RED)
             input("\nPress Enter to continue...")
 
         elif choice == '5':
             qid = input(color_text("Enter question ID to delete: ", COLORS.MAGENTA)).strip()
             if not qid.isdigit():
                 print_colored("Invalid ID.", COLORS.RED)
+                input("\nPress Enter to continue...")
                 continue
-            if delete_question(int(qid)):
-                print_colored("[✓] Deleted.", COLORS.GREEN)
-            else:
-                print_colored("[!] Not found.", COLORS.RED)
+            try:
+                if delete_question(int(qid)):
+                    print_colored("[✓] Deleted.", COLORS.GREEN)
+                else:
+                    print_colored("[!] Not found.", COLORS.RED)
+            except ConverterError as e:
+                print_colored(f"[!] Error: {e}", COLORS.RED)
+            except Exception as e:
+                print_colored(f"[!] Unexpected error: {e}", COLORS.RED)
             input("\nPress Enter to continue...")
 
         elif choice == '6':
@@ -224,7 +263,6 @@ def converter_submenu():
             if not input_file:
                 print_colored("Cancelled.", COLORS.YELLOW)
                 continue
-            # detect format
             ext = os.path.splitext(input_file)[1].lower().lstrip('.')
             if ext in ('txt', 'text'):
                 fmt = 'txt'
@@ -250,10 +288,18 @@ def converter_submenu():
                 'bypass_option': bypass_opt,
                 'questions': qfilter
             })()
-            count, errors = import_from_file(input_file, fmt, source=source, args=args)
-            print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
-            if errors:
-                print_colored(f"[!] {len(errors)} errors.", COLORS.RED)
+            try:
+                count, errors = import_from_file(input_file, fmt, source=source, args=args)
+                print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
+                if errors:
+                    print_colored(f"[!] {len(errors)} errors.", COLORS.RED)
+            except ConverterError as e:
+                print_colored(f"[!] Import error: {e}", COLORS.RED)
+            except SystemExit as e:
+                if e.code != 0:
+                    print_colored(f"[!] Import exited with error code {e.code}", COLORS.RED)
+            except Exception as e:
+                print_colored(f"[!] Unexpected error: {e}", COLORS.RED)
             input("\nPress Enter to continue...")
 
         elif choice == '7':
@@ -277,7 +323,6 @@ def converter_submenu():
 
             qnos = input(color_text("Filter by question numbers (e.g., 1,5,10 or 5..10) (or skip): ", COLORS.MAGENTA)).strip()
             if qnos:
-                # Parse the filter string into a list of ints
                 qnos_list = []
                 for part in qnos.split(','):
                     part = part.strip()
@@ -290,17 +335,27 @@ def converter_submenu():
                 if qnos_list:
                     filters['question_nos'] = qnos_list
 
-            questions = get_questions(filters)
-            if not questions:
-                print_colored("[i] No questions found.", COLORS.YELLOW)
-                continue
-            args = type('Args', (), {'verbose': True})()
-            export_to_file(questions, output_file, fmt, args)
-            print_colored(f"[✓] Exported {len(questions)} questions.", COLORS.GREEN)
+            try:
+                questions = get_questions(filters)
+                if not questions:
+                    print_colored("[i] No questions found.", COLORS.YELLOW)
+                    input("\nPress Enter to continue...")
+                    continue
+                args = type('Args', (), {'verbose': True})()
+                export_to_file(questions, output_file, fmt, args)
+                print_colored(f"[✓] Exported {len(questions)} questions.", COLORS.GREEN)
+            except ConverterError as e:
+                print_colored(f"[!] Export error: {e}", COLORS.RED)
+            except SystemExit as e:
+                if e.code != 0:
+                    print_colored(f"[!] Export exited with error code {e.code}", COLORS.RED)
+            except Exception as e:
+                print_colored(f"[!] Unexpected error: {e}", COLORS.RED)
             input("\nPress Enter to continue...")
 
         elif choice == '8':
-            # Run converter with full custom arguments (file‑to‑file)
+            # (already handled above with the new try/except and help handling)
+            # I'll repeat the improved version here for completeness
             print("\n[Run converter with custom arguments]")
             print("Enter the arguments as you would on the command line.")
             print("Example: -i input.txt -o output.xml --shuffle --time 60")
@@ -308,15 +363,36 @@ def converter_submenu():
             if not args_str:
                 print_colored("Cancelled.", COLORS.YELLOW)
                 continue
-            import argparse
-            # We can't easily parse a string with argparse without splitting, so we use shlex
+
             import shlex
+            from .question_converter.converter_main import parser, show_help_format
+
             argv = shlex.split(args_str)
-            # Build a Namespace; we need to define parser (the same one from converter_main)
-            # But we can reuse the parser defined in converter_main
-            from .question_converter.converter_main import parser
-            parsed_args = parser.parse_args(argv)
-            run_conversion(parsed_args)
+
+            try:
+                parsed_args = parser.parse_args(argv)
+            except SystemExit:
+                # argparse already printed help, just continue
+                continue
+
+            if parsed_args.help_format is not None:
+                if parsed_args.help_format == "":
+                    show_help_format()
+                else:
+                    show_help_format(parsed_args.help_format)
+                continue
+
+            try:
+                run_conversion(parsed_args)
+            except ConverterError as e:
+                print_colored(f"[!] Conversion error: {e}", COLORS.RED)
+            except SystemExit as e:
+                if e.code != 0:
+                    print_colored(f"[!] Converter exited with error code {e.code}", COLORS.RED)
+                else:
+                    print_colored("[i] Converter terminated normally.", COLORS.BLUE)
+            except Exception as e:
+                print_colored(f"[!] Unexpected error: {e}", COLORS.RED)
             input("\nPress Enter to continue...")
 
         else:

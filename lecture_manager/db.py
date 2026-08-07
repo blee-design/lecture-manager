@@ -24,6 +24,7 @@ def create_table():
     cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
         id INT AUTO_INCREMENT PRIMARY KEY,
+        source VARCHAR(255) NULL,
         video_id VARCHAR(20) NOT NULL UNIQUE,
         video_title TEXT,
         syllabus_id VARCHAR(20),
@@ -137,6 +138,42 @@ def create_table():
         active BOOLEAN DEFAULT TRUE,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+    """)
+
+    # ---- Question supporting tables (from merged converter) ----
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS question_options (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        question_id INT NOT NULL,
+        text LONGTEXT NOT NULL,
+        fraction DECIMAL(10,2) DEFAULT 0.00,
+        feedback LONGTEXT,
+        display_order INT DEFAULT 0,
+        FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS question_matching_pairs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        question_id INT NOT NULL,
+        subquestion LONGTEXT NOT NULL,
+        answer LONGTEXT NOT NULL,
+        display_order INT DEFAULT 0,
+        FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS question_hints (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        question_id INT NOT NULL,
+        hint_text LONGTEXT NOT NULL,
+        clear_incorrect BOOLEAN DEFAULT FALSE,
+        show_num_correct BOOLEAN DEFAULT FALSE,
+        hint_number INT NOT NULL,
+        FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     """)
 
 
@@ -310,6 +347,18 @@ def migrate_table():
     if not cursor.fetchone():
         cursor.execute("ALTER TABLE questions ADD COLUMN notes TEXT NULL")
         print_colored("[✓] Added 'notes' column to questions table.", COLORS.GREEN)
+
+    cursor.execute("SHOW COLUMNS FROM questions LIKE 'notes'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE questions ADD COLUMN notes TEXT NULL")
+        print_colored("[✓] Added 'notes' column to questions table.", COLORS.GREEN)
+
+    # ---- ADD THIS BLOCK ----
+    cursor.execute("SHOW COLUMNS FROM questions LIKE 'source'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE questions ADD COLUMN source VARCHAR(255) NULL")
+        print_colored("[✓] Added 'source' column to questions table.", COLORS.GREEN)
+
     # ---------- Full‑text index for question search ----------
     cursor.execute("SHOW INDEX FROM questions WHERE Key_name = 'ft_search'")
     if not cursor.fetchone():
@@ -319,6 +368,87 @@ def migrate_table():
             nepali_transcription, english_transcription, notes)
         """)
         print_colored("[✓] Added full‑text index ft_search for question search.", COLORS.GREEN)
+
+    # ---- Add all missing columns to questions table ----
+    columns_to_add = {
+        'source': 'VARCHAR(255) NULL',
+        'general_feedback': 'TEXT NULL',
+        'fraction_correct': 'DECIMAL(10,2) DEFAULT 100.00',
+        'fraction_wrong': 'DECIMAL(10,2) DEFAULT -20.00',
+        'shuffle_answers': 'BOOLEAN DEFAULT TRUE',
+        'show_num_correct': 'BOOLEAN DEFAULT FALSE',
+        'correct_feedback': 'TEXT NULL',
+        'partially_correct_feedback': 'TEXT NULL',
+        'incorrect_feedback': 'TEXT NULL',
+        'response_lines': 'INT DEFAULT 15',
+        'attachments': 'INT DEFAULT 0',
+        'filetypes': "VARCHAR(255) DEFAULT '.doc,.docx,.pdf,.png,.jpg,.jpeg'",
+        'maxbytes': 'INT DEFAULT 2097152',
+        'grader_info': 'TEXT NULL',
+    }
+    for col, definition in columns_to_add.items():
+        cursor.execute(f"SHOW COLUMNS FROM questions LIKE '{col}'")
+        if not cursor.fetchone():
+            cursor.execute(f"ALTER TABLE questions ADD COLUMN {col} {definition}")
+            print_colored(f"[✓] Added '{col}' column to questions.", COLORS.GREEN)
+
+    # ---- Add unique constraint ----
+    cursor.execute("SHOW INDEX FROM questions WHERE Key_name = 'unique_question'")
+    if not cursor.fetchone():
+        try:
+            cursor.execute("""
+                ALTER TABLE questions ADD UNIQUE INDEX unique_question
+                (question_date, institution, level, paper, `group`, question_number)
+            """)
+            print_colored("[✓] Added unique constraint on (date, institution, level, paper, group, question_number).", COLORS.GREEN)
+        except mysql.connector.Error as e:
+            print_colored(f"[!] Could not add unique constraint: {e}", COLORS.RED)
+            print_colored("[i] You may have duplicate entries. Clean them up first.", COLORS.YELLOW)
+
+    # ---- Ensure supporting tables exist (if they were not created in create_table) ----
+    cursor.execute("SHOW TABLES LIKE 'question_options'")
+    if not cursor.fetchone():
+        cursor.execute("""
+        CREATE TABLE question_options (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            question_id INT NOT NULL,
+            text LONGTEXT NOT NULL,
+            fraction DECIMAL(10,2) DEFAULT 0.00,
+            feedback LONGTEXT,
+            display_order INT DEFAULT 0,
+            FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        """)
+        print_colored("[✓] Created question_options table.", COLORS.GREEN)
+
+    cursor.execute("SHOW TABLES LIKE 'question_matching_pairs'")
+    if not cursor.fetchone():
+        cursor.execute("""
+        CREATE TABLE question_matching_pairs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            question_id INT NOT NULL,
+            subquestion LONGTEXT NOT NULL,
+            answer LONGTEXT NOT NULL,
+            display_order INT DEFAULT 0,
+            FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        """)
+        print_colored("[✓] Created question_matching_pairs table.", COLORS.GREEN)
+
+    cursor.execute("SHOW TABLES LIKE 'question_hints'")
+    if not cursor.fetchone():
+        cursor.execute("""
+        CREATE TABLE question_hints (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            question_id INT NOT NULL,
+            hint_text LONGTEXT NOT NULL,
+            clear_incorrect BOOLEAN DEFAULT FALSE,
+            show_num_correct BOOLEAN DEFAULT FALSE,
+            hint_number INT NOT NULL,
+            FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        """)
+        print_colored("[✓] Created question_hints table.", COLORS.GREEN)
 
     # ---- Instapaper credentials table ----
     cursor.execute("SHOW TABLES LIKE 'instapaper_credentials'")

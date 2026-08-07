@@ -15,7 +15,7 @@ from ..question_bank import (
     delete_question as delete_q,
     check_duplicate
 )
-from .exceptions import DuplicateQuestionError
+from .exceptions import DuplicateQuestionError, ConverterError
 
 # -------------------- Table Creation --------------------
 def create_tables():
@@ -157,6 +157,36 @@ def insert_question(q_dict, source=None, force=False):
     )
     return qid
 
+def _convert_to_db_fields(q_dict):
+    """Map converter dict keys to database column names."""
+    return {
+        'question_date': q_dict.get('question_date'),
+        'institution': q_dict.get('institution'),
+        'level': q_dict.get('level'),
+        'paper': q_dict.get('paper'),
+        'group': q_dict.get('group'),
+        'subject': q_dict.get('subject'),
+        'marks': q_dict.get('marks'),
+        'chapter': q_dict.get('chapter'),
+        'question_number': str(q_dict.get('question_no', '')).zfill(2),
+        'nepali_transcription': q_dict.get('nepali_transcription') or q_dict.get('text'),
+        'english_transcription': q_dict.get('english_transcription') or q_dict.get('english'),
+        'notes': q_dict.get('notes'),
+        'general_feedback': q_dict.get('general_feedback'),
+        'fraction_correct': q_dict.get('fraction_correct', 100),
+        'fraction_wrong': q_dict.get('fraction_wrong', -20),
+        'shuffle_answers': q_dict.get('shuffle_answers', True),
+        'show_num_correct': q_dict.get('show_num_correct', False),
+        'correct_feedback': q_dict.get('correct_feedback'),
+        'partially_correct_feedback': q_dict.get('partially_correct_feedback'),
+        'incorrect_feedback': q_dict.get('incorrect_feedback'),
+        'response_lines': q_dict.get('lines', 15),
+        'attachments': q_dict.get('attachments', 0),
+        'filetypes': q_dict.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg'),
+        'maxbytes': q_dict.get('maxbytes', 2097152),
+        'grader_info': q_dict.get('grader_info'),
+    }
+
 def update_question(qid, **kwargs):
     """
     Update an existing question in the unified database.
@@ -182,82 +212,73 @@ def delete_question(qid):
 # -------------------- Get Questions --------------------
 def get_questions(filters=None):
     """
-    Filters can include:
-    - source, type, group_name
-    - question_no_min, question_no_max
-    - question_nos: a list of question numbers (e.g., [1,3,5])
+    Fetch questions from the unified `questions` table,
+    including options, matching pairs, and hints.
+    Returns a list of question dicts in the converter's internal format.
     """
-    # Since the unified schema doesn't have 'source' in questions table, we ignore 'source' filter.
-    # We'll map filters to the question_bank's get_questions_by_criteria or get_all_questions.
-    # But we need to return the converter's dict format with options/pairs/hints.
-    # We'll fetch the rows using question_bank functions and then convert.
-
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
 
-    # Build WHERE clause based on filters
-    conditions = []
+    # Base query
+    sql = """
+        SELECT q.*
+        FROM questions q
+        WHERE 1=1
+    """
     params = []
+
+    # Apply filters if provided
     if filters:
-        if 'type' in filters:
-            # The type is not a column in questions; it's derived from the presence of options/pairs.
-            # For simplicity, we can filter after fetching.
+        if 'source' in filters:
+            # 'source' is not a column in `questions` – you can store it in `notes` or ignore
+            # For now, we'll skip it or you can store source in notes
             pass
         if 'group_name' in filters:
-            conditions.append("`group` = %s")
+            sql += " AND q.`group` = %s"
             params.append(filters['group_name'])
-        if 'question_no_min' in filters:
-            conditions.append("question_number >= %s")
-            params.append(str(filters['question_no_min']).zfill(2))
-        if 'question_no_max' in filters:
-            conditions.append("question_number <= %s")
-            params.append(str(filters['question_no_max']).zfill(2))
+        if 'type' in filters:
+            # We don't have a type column in `questions` yet – we derive from presence of options/pairs
+            # For now, we'll ignore type filter or you can add a 'type' column
+            pass
         if 'question_nos' in filters and filters['question_nos']:
             placeholders = ','.join(['%s'] * len(filters['question_nos']))
-            conditions.append(f"question_number IN ({placeholders})")
-            params.extend([str(n).zfill(2) for n in filters['question_nos']])
+            sql += f" AND q.question_number IN ({placeholders})"
+            params.extend(filters['question_nos'])
 
-    sql = "SELECT * FROM questions"
-    if conditions:
-        sql += " WHERE " + " AND ".join(conditions)
-    sql += " ORDER BY question_number ASC"
+    sql += " ORDER BY q.question_date DESC, q.question_number ASC"
     cursor.execute(sql, params)
     rows = cursor.fetchall()
 
-    # Convert to converter format
     questions = []
     for row in rows:
         qid = row['id']
+
+        # Build the question dict in converter format
         q = {
             'id': qid,
-            'type': None,  # we'll determine type later
+            'question_no': row.get('question_number', ''),
             'text': row.get('nepali_transcription') or row.get('english_transcription') or '',
+            'type': 'essay',  # default – will be overridden if options/pairs exist
             'general_feedback': row.get('general_feedback') or '',
-            'grade': float(row.get('marks') or 1),
-            'penalty': 0,  # not stored; default
-            'fraction_correct': float(row.get('fraction_correct', 100)),
-            'fraction_wrong': float(row.get('fraction_wrong', -20)),
-            'shuffle_answers': bool(row.get('shuffle_answers', True)),
-            'show_num_correct': bool(row.get('show_num_correct', False)),
+            'grade': row.get('marks') or 1,
+            'penalty': 0,
+            'fraction_correct': row.get('fraction_correct', 100),
+            'fraction_wrong': row.get('fraction_wrong', -20),
+            'shuffle_answers': row.get('shuffle_answers', True),
+            'show_num_correct': row.get('show_num_correct', False),
             'correct_feedback': row.get('correct_feedback') or '',
             'partially_correct_feedback': row.get('partially_correct_feedback') or '',
             'incorrect_feedback': row.get('incorrect_feedback') or '',
-            'question_no': int(row.get('question_number', 0)),
-            'original_question_no': int(row.get('question_number', 0)),
             'group': row.get('group') or '',
-            'source': row.get('institution') or '',  # map institution as source
             'options': [],
             'pairs': [],
             'hints': [],
-            'question_date': row.get('question_date') or '',
             'institution': row.get('institution') or '',
             'level': row.get('level') or '',
             'paper': row.get('paper') or '',
-            'subject': row.get('subject') or '',
+            'date': row.get('question_date') or '',
             'chapter': row.get('chapter') or '',
             'marks': row.get('marks'),
-            'nepali_transcription': row.get('nepali_transcription') or '',
-            'english_transcription': row.get('english_transcription') or '',
             'notes': row.get('notes') or '',
         }
 
@@ -271,6 +292,8 @@ def get_questions(filters=None):
                 'feedback': opt['feedback'] or '',
                 'correct': float(opt['fraction']) > 0
             })
+        if q['options']:
+            q['type'] = 'multichoice'  # if options exist, it's MCQ or truefalse
 
         # Fetch matching pairs
         cursor.execute("SELECT * FROM question_matching_pairs WHERE question_id = %s ORDER BY display_order", (qid,))
@@ -280,32 +303,22 @@ def get_questions(filters=None):
                 'subquestion': pair['subquestion'],
                 'answer': pair['answer']
             })
+        if q['pairs']:
+            q['type'] = 'matching'
 
         # Fetch hints
         cursor.execute("SELECT * FROM question_hints WHERE question_id = %s ORDER BY hint_number", (qid,))
-        hints_rows = cursor.fetchall()
-        for hint in hints_rows:
+        hints = cursor.fetchall()
+        for hint in hints:
             q['hints'].append({
                 'text': hint['hint_text'],
                 'clear_incorrect': bool(hint['clear_incorrect']),
                 'show_num_correct': bool(hint['show_num_correct'])
             })
 
-        # Determine type based on content
-        if q['options']:
-            # If there are exactly 2 options and they are 'true'/'false' (case-insensitive)
-            if len(q['options']) == 2:
-                opt_texts = [opt['text'].lower().strip() for opt in q['options']]
-                if set(opt_texts) == {'true', 'false'}:
-                    q['type'] = 'truefalse'
-                else:
-                    q['type'] = 'multichoice'
-            else:
-                q['type'] = 'multichoice'
-        elif q['pairs']:
-            q['type'] = 'matching'
-        else:
-            q['type'] = 'essay'  # fallback
+        # Determine type if still 'essay' but has no options/pairs
+        if q['type'] == 'essay' and not q['options'] and not q['pairs']:
+            q['type'] = 'essay'
 
         questions.append(q)
 
@@ -358,7 +371,8 @@ def import_from_file(file_path, format, source=None, args=None):
                 if dup_id:
                     # Update
                     try:
-                        update_question(dup_id, **q)
+                        # update_question(dup_id, **q)
+                        update_question(dup_id, **db_dict)
                         count += 1
                     except Exception as e2:
                         errors.append(f"Error updating question {q.get('question_no', '?')}: {e2}")

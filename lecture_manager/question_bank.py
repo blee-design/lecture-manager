@@ -16,8 +16,9 @@ import re
 import shutil
 from datetime import date, datetime
 from collections import defaultdict
+from decimal import Decimal
 from .db import get_connection
-from .utils import print_colored, color_text, COLORS, clean_field, html_to_terminal
+from .utils import print_colored, color_text, COLORS, clean_field, html_to_terminal, sanitize_for_json
 
 TABLE_NAME = 'questions'
 
@@ -28,6 +29,7 @@ def create_question_table():
     cursor.execute(f"""
         CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
             id INT AUTO_INCREMENT PRIMARY KEY,
+            source VARCHAR(255) NULL,
             question_date VARCHAR(20),
             institution VARCHAR(255),
             subject VARCHAR(255),
@@ -39,13 +41,27 @@ def create_question_table():
             nepali_transcription TEXT,
             english_transcription TEXT,
             level VARCHAR(100),
+            notes TEXT NULL,
+            general_feedback TEXT NULL,
+            fraction_correct DECIMAL(10,2) DEFAULT 100.00,
+            fraction_wrong DECIMAL(10,2) DEFAULT -20.00,
+            shuffle_answers BOOLEAN DEFAULT TRUE,
+            show_num_correct BOOLEAN DEFAULT FALSE,
+            correct_feedback TEXT NULL,
+            partially_correct_feedback TEXT NULL,
+            incorrect_feedback TEXT NULL,
+            response_lines INT DEFAULT 15,
+            attachments INT DEFAULT 0,
+            filetypes VARCHAR(255) DEFAULT '.doc,.docx,.pdf,.png,.jpg,.jpeg',
+            maxbytes INT DEFAULT 2097152,
+            grader_info TEXT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             INDEX idx_subject (subject),
             INDEX idx_institution (institution),
             INDEX idx_paper (paper),
             INDEX idx_level (level)
-        )
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     """)
     conn.commit()
     cursor.close()
@@ -1087,6 +1103,12 @@ def import_questions_csv():
             row['question_number'] = normalize_question_number(row['question_number'])
         if 'marks' in row and row['marks'] and row['marks'].isdigit():
             row['marks'] = int(row['marks'])
+
+        if row.get('marks'):
+            row['marks'] = int(row['marks']) if row['marks'].isdigit() else None
+        if row.get('grade'):
+            row['grade'] = float(row['grade'])
+
         # Convert empty strings to None for optional fields
         for field in ['paper', 'group', 'chapter', 'notes']:
             if field in row and row[field] == '':
@@ -1421,7 +1443,7 @@ def import_questions_txt():
     print(f"\n[✓] Import complete: {added} added, {updated} updated, {no_change} unchanged, {skipped} skipped.")
 
 def export_questions_json():
-    """Export all questions to a JSON file, excluding internal IDs."""
+    """Export all questions to a JSON file, converting Decimal to float/int."""
     print("\n" + "═" * 50)
     print_colored("  EXPORT QUESTIONS TO JSON", COLORS.CYAN, bold=True)
     print("═" * 50)
@@ -1437,16 +1459,33 @@ def export_questions_json():
     if not filename.endswith('.json'):
         filename += '.json'
 
-    # Remove internal fields and convert dates
+    # Remove internal fields and convert Decimal to float/int
     export_data = []
     for row in rows:
         clean_row = row.copy()
+        # Remove internal fields
         clean_row.pop('id', None)
         clean_row.pop('created_at', None)
         clean_row.pop('updated_at', None)
+        export_data.append(sanitize_for_json(clean_row))
+
+        # Convert date to string if it's a date/datetime
         if 'question_date' in clean_row and clean_row['question_date']:
-            clean_row['question_date'] = str(clean_row['question_date'])
-        export_data.append(clean_row)
+            if hasattr(clean_row['question_date'], 'isoformat'):
+                clean_row['question_date'] = clean_row['question_date'].isoformat()
+            else:
+                clean_row['question_date'] = str(clean_row['question_date'])
+
+        # Convert Decimal to float for all numeric fields
+        for key, value in clean_row.items():
+            if isinstance(value, Decimal):
+                # If it's a whole number, convert to int, else float
+                if value % 1 == 0:
+                    clean_row[key] = int(value)
+                else:
+                    clean_row[key] = float(value)
+
+        # export_data.append(clean_row) # sanitize_for_json already handles it.
 
     try:
         with open(filename, 'w', encoding='utf-8') as f:

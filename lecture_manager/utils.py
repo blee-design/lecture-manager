@@ -7,6 +7,7 @@ import hashlib
 from bs4 import BeautifulSoup
 from tabulate import tabulate
 import html2text
+from decimal import Decimal
 
 ROOT_DIR = os.path.expanduser("~/foxCloud/office/RootData")
 TRASH_DIR = os.path.expanduser("~/.lecture_trash")
@@ -181,6 +182,18 @@ def color_text(text, color=None, bold=False):
 
 def print_colored(text, color=None, bold=False):
     print(color_text(text, color, bold))
+
+def sanitize_for_json(obj):
+    """Convert Decimal to int/float, and convert date/datetime to isoformat."""
+    if isinstance(obj, Decimal):
+        return int(obj) if obj % 1 == 0 else float(obj)
+    if hasattr(obj, 'isoformat'):  # datetime/date
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [sanitize_for_json(v) for v in obj]
+    return obj
 
 def sanitize_filename(text):
     text = re.sub(r'[\\/*?"<>]', '', text)
