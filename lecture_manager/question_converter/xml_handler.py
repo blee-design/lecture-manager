@@ -309,7 +309,7 @@ def xml_to_questions(input_file, verbose=False):
     try:
         dom = parse(input_file)
     except Exception as e:
-        raise ParseError(f"Failed to parse XML file: {e}")
+        raise ParseError(f"Failed to parse XML: {e}")
 
     questions = []
     question_elements = dom.getElementsByTagName("question")

@@ -359,6 +359,12 @@ def migrate_table():
         cursor.execute("ALTER TABLE questions ADD COLUMN source VARCHAR(255) NULL")
         print_colored("[✓] Added 'source' column to questions table.", COLORS.GREEN)
 
+    # ---- Add type column to questions if missing ----
+    cursor.execute("SHOW COLUMNS FROM questions LIKE 'type'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE questions ADD COLUMN type ENUM('multichoice','essay','truefalse','matching') DEFAULT 'essay'")
+        print_colored("[✓] Added 'type' column to questions table.", COLORS.GREEN)
+
     # ---------- Full‑text index for question search ----------
     cursor.execute("SHOW INDEX FROM questions WHERE Key_name = 'ft_search'")
     if not cursor.fetchone():
@@ -449,6 +455,12 @@ def migrate_table():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
         """)
         print_colored("[✓] Created question_hints table.", COLORS.GREEN)
+
+    # ---- ADD THIS BLOCK ----
+    cursor.execute("SHOW COLUMNS FROM questions LIKE 'source'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE questions ADD COLUMN source VARCHAR(255) NULL")
+        print_colored("[✓] Added 'source' column to questions table.", COLORS.GREEN)
 
     # ---- Instapaper credentials table ----
     cursor.execute("SHOW TABLES LIKE 'instapaper_credentials'")

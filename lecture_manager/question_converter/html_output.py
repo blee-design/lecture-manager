@@ -2,6 +2,7 @@
 
 from html import escape
 from .utils import log
+import warnings
 
 # Optional: try to import bleach
 try:
@@ -108,13 +109,19 @@ def create_html_output(questions, output_file, verbose=False, shuffle_applied=Fa
                     full_questions_html += '</div></div>'
                 if group:
                     group_id_counter += 1
+                    marks_badge = ""
+                    if q.get('marks'):
+                        marks_badge = f'<div class="marks-badge mt-2"><span class="badge bg-warning text-dark">Marks: {q["marks"]}</span></div>'
+
                     full_questions_html += f'''
-                    <div class="group" data-group-id="{group_id_counter}">
-                        <div class="group-title" data-group-toggle="{group_id_counter}">
-                            <span class="group-icon">📁</span> {escape(group)}
-                            <span class="group-toggle-icon">▼</span>
+                    <div class="question-card" data-question-id="{i}" data-question-type="{q_type}">
+                        <div class="question-header">
+                            <div class="q-number">Question {q_no}</div>
+                            <div class="q-type {q_type}">{q_type.upper()}</div>
                         </div>
-                        <div class="group-questions" data-group-questions="{group_id_counter}">'''
+                        {marks_badge}
+                        <div class="q-text">{q_text}</div>
+                    '''
                     group_opened = True
                 else:
                     full_questions_html += '<div class="group"><div class="group-questions">'

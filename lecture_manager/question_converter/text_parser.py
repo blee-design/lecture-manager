@@ -22,7 +22,9 @@ VALID_FIELD_NAMES = {
     # Matching question fields
     'subquestion', 'answer', 'shuffle answers', 'show number correct',
     'correct feedback', 'partially correct feedback', 'incorrect feedback',
-    'hint', 'hint clear incorrect', 'hint show number correct'
+    'hint', 'hint clear incorrect', 'hint show number correct',
+    # Bank TXT fields
+    'nepali', 'english', 'marks', 'chapter', 'source'
 }
 
 # ----- PASSAGE FEATURE: extract passages from content -----
@@ -443,6 +445,27 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
     elif field_name == 'incorrect feedback':
         question["incorrect_feedback"] = field_content.replace('\n', '<br>')
         log(f"  Question {question.get('question_no', '?')}: Added incorrect feedback", "INFO", True)
+
+    # ---- NEW: Bank TXT fields ----
+    elif field_name == 'nepali':
+        question['nepali_transcription'] = field_content
+        log(f"  Question {question.get('question_no', '?')}: Added Nepali transcription", "INFO", True)
+    elif field_name == 'english':
+        question['english_transcription'] = field_content
+        log(f"  Question {question.get('question_no', '?')}: Added English transcription", "INFO", True)
+    elif field_name == 'marks':
+        try:
+            question['marks'] = int(field_content)
+            log(f"  Question {question.get('question_no', '?')}: Set marks to {field_content}", "INFO", True)
+        except ValueError:
+            question['marks'] = None
+            log(f"  Question {question.get('question_no', '?')}: Invalid marks value, set to NULL", "WARN", True)
+    elif field_name == 'chapter':
+        question['chapter'] = field_content
+        log(f"  Question {question.get('question_no', '?')}: Set chapter to {field_content}", "INFO", True)
+    elif field_name == 'source':
+        question['source'] = field_content
+        log(f"  Question {question.get('question_no', '?')}: Set source to {field_content}", "INFO", True)
 
 def process_question_lines(question, lines, line_number_start, file_path):
     """Process lines for a question, handling multi-line fields"""

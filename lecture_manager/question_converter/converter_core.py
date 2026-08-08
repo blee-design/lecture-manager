@@ -160,7 +160,7 @@ def run_conversion(args):
     """Main conversion logic - separated from CLI parsing"""
     # Check input file
     if not os.path.exists(args.input):
-        raise IOError(f"Input file not found: {args.input}. Please ensure it exists.")
+        raise IOError(f"Input file not found: {args.input}")
 
     # ---------- DETECT EXAM MODE EARLY ----------
     # Store original format and exam flag before any modifications
@@ -261,9 +261,9 @@ def run_conversion(args):
             print(f"{C.RED}[ERROR] Unsupported input format: {input_format}{C.RESET}")
             sys.exit(1)
     except Exception as e:
-        raise ParseError(f"Failed to parse input file: {e}")
         import traceback
         traceback.print_exc()
+        raise ParseError(f"Failed to parse input file: {e}")
 
     # ---------- FILTERING ----------
     original_count = len(questions)

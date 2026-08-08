@@ -73,89 +73,91 @@ def create_tables():
 # -------------------- Insert / Update / Delete --------------------
 def insert_question(q_dict, source=None, force=False):
     """
-    Insert a single question into the unified database.
-    Uses the composite key (date, institution, level, paper, group, question_number)
-    to detect duplicates.
+    Insert a new question. If duplicate exists and force=True, update it.
+    Returns the question ID (new or existing).
     """
-    # Extract fields from q_dict (converter's internal format)
+    # Extract fields
     date = q_dict.get('question_date') or ''
     institution = q_dict.get('institution') or ''
     level = q_dict.get('level') or ''
     paper = q_dict.get('paper') or ''
     group = q_dict.get('group') or ''
     question_number = str(q_dict.get('question_no', '')).zfill(2)
-    subject = q_dict.get('subject', '')
-    marks = q_dict.get('marks', None)
-    chapter = q_dict.get('chapter', '')
-    nepali = q_dict.get('nepali_transcription') or q_dict.get('text', '')
-    english = q_dict.get('english_transcription') or q_dict.get('english', '')
-    notes = q_dict.get('notes', None)
 
-    # Duplicate check (uses question_bank's check_duplicate)
-    if not force:
-        dup_id = check_duplicate(date, institution, level, paper, group, question_number)
-        if dup_id:
-            if source and not force:
-                # If not forcing, raise an error – caller can catch and handle
-                raise DuplicateQuestionError(
-                    f"Question already exists with ID {dup_id} for {date} {institution} {level} {paper} {group} Q{question_number}"
-                )
-            # If we want to update, we can call update_question later – handled by caller
-            return dup_id  # return existing ID
+    # Check duplicate
+    dup_id = check_duplicate(date, institution, level, paper, group, question_number)
 
-    # Build additional fields
-    general_feedback = q_dict.get('general_feedback')
-    fraction_correct = q_dict.get('fraction_correct', 100)
-    fraction_wrong = q_dict.get('fraction_wrong', -20)
-    shuffle_answers = q_dict.get('shuffle_answers', True)
-    show_num_correct = q_dict.get('show_num_correct', False)
-    correct_feedback = q_dict.get('correct_feedback')
-    partially_correct_feedback = q_dict.get('partially_correct_feedback')
-    incorrect_feedback = q_dict.get('incorrect_feedback')
-    response_lines = q_dict.get('lines', 15)
-    attachments = q_dict.get('attachments', 0)
-    filetypes = q_dict.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg')
-    maxbytes = q_dict.get('maxbytes', 2097152)
-    grader_info = q_dict.get('grader_info')
+    if dup_id:
+        if force:
+            # Update existing question
+            update_question(
+                dup_id,
+                source=source,
+                subject=q_dict.get('subject', ''),
+                paper=paper,
+                group=group,
+                marks=q_dict.get('marks'),
+                chapter=q_dict.get('chapter', ''),
+                question_number=question_number,
+                nepali=q_dict.get('nepali_transcription') or q_dict.get('text', ''),
+                english=q_dict.get('english_transcription') or q_dict.get('english', ''),
+                level=level,
+                notes=q_dict.get('notes'),
+                options=q_dict.get('options'),
+                pairs=q_dict.get('pairs'),
+                hints=q_dict.get('hints'),
+                general_feedback=q_dict.get('general_feedback'),
+                fraction_correct=q_dict.get('fraction_correct', 100),
+                fraction_wrong=q_dict.get('fraction_wrong', -20),
+                shuffle_answers=q_dict.get('shuffle_answers', True),
+                show_num_correct=q_dict.get('show_num_correct', False),
+                correct_feedback=q_dict.get('correct_feedback'),
+                partially_correct_feedback=q_dict.get('partially_correct_feedback'),
+                incorrect_feedback=q_dict.get('incorrect_feedback'),
+                response_lines=q_dict.get('lines', 15),
+                attachments=q_dict.get('attachments', 0),
+                filetypes=q_dict.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg'),
+                maxbytes=q_dict.get('maxbytes', 2097152),
+                grader_info=q_dict.get('grader_info')
+            )
+            return dup_id
+        else:
+            raise DuplicateQuestionError(
+                f"Question already exists with ID {dup_id} for {date} {institution} {level} {paper} {group} Q{question_number}"
+            )
 
-    # Options, pairs, hints
-    options = q_dict.get('options', [])  # list of dicts with 'text', 'fraction', 'feedback'
-    pairs = q_dict.get('pairs', [])      # list of dicts with 'subquestion', 'answer'
-    hints = q_dict.get('hints', [])      # list of dicts with 'text', 'clear_incorrect', 'show_num_correct'
-
-    # Insert using add_question from question_bank (enhanced version)
-    qid = add_question(
+    # No duplicate – insert new
+    return add_question(
         date=date,
         institution=institution,
-        subject=subject,
+        subject=q_dict.get('subject', ''),
         paper=paper,
         group=group,
-        marks=marks,
-        chapter=chapter,
+        marks=q_dict.get('marks'),
+        chapter=q_dict.get('chapter', ''),
         question_number=question_number,
-        nepali=nepali,
-        english=english,
+        nepali=q_dict.get('nepali_transcription') or q_dict.get('text', ''),
+        english=q_dict.get('english_transcription') or q_dict.get('english', ''),
         level=level,
-        notes=notes,
-        force=force,
-        options=options,
-        pairs=pairs,
-        hints=hints,
-        general_feedback=general_feedback,
-        fraction_correct=fraction_correct,
-        fraction_wrong=fraction_wrong,
-        shuffle_answers=shuffle_answers,
-        show_num_correct=show_num_correct,
-        correct_feedback=correct_feedback,
-        partially_correct_feedback=partially_correct_feedback,
-        incorrect_feedback=incorrect_feedback,
-        response_lines=response_lines,
-        attachments=attachments,
-        filetypes=filetypes,
-        maxbytes=maxbytes,
-        grader_info=grader_info
+        notes=q_dict.get('notes'),
+        force=True,   # we already checked duplicate, so force insert
+        options=q_dict.get('options'),
+        pairs=q_dict.get('pairs'),
+        hints=q_dict.get('hints'),
+        general_feedback=q_dict.get('general_feedback'),
+        fraction_correct=q_dict.get('fraction_correct', 100),
+        fraction_wrong=q_dict.get('fraction_wrong', -20),
+        shuffle_answers=q_dict.get('shuffle_answers', True),
+        show_num_correct=q_dict.get('show_num_correct', False),
+        correct_feedback=q_dict.get('correct_feedback'),
+        partially_correct_feedback=q_dict.get('partially_correct_feedback'),
+        incorrect_feedback=q_dict.get('incorrect_feedback'),
+        response_lines=q_dict.get('lines', 15),
+        attachments=q_dict.get('attachments', 0),
+        filetypes=q_dict.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg'),
+        maxbytes=q_dict.get('maxbytes', 2097152),
+        grader_info=q_dict.get('grader_info')
     )
-    return qid
 
 def _convert_to_db_fields(q_dict):
     """Map converter dict keys to database column names."""
@@ -229,16 +231,14 @@ def get_questions(filters=None):
 
     # Apply filters if provided
     if filters:
-        if 'source' in filters:
-            # 'source' is not a column in `questions` – you can store it in `notes` or ignore
-            # For now, we'll skip it or you can store source in notes
-            pass
-        if 'group_name' in filters:
+        if 'source' in filters and filters['source']:
+            sql += " AND q.source = %s"
+            params.append(filters['source'])
+        if 'group_name' in filters and filters['group_name']:
             sql += " AND q.`group` = %s"
             params.append(filters['group_name'])
-        if 'type' in filters:
-            # We don't have a type column in `questions` yet – we derive from presence of options/pairs
-            # For now, we'll ignore type filter or you can add a 'type' column
+        if 'type' in filters and filters['type']:
+            # We don't have a type column; we'll handle this by checking options/pairs existence later
             pass
         if 'question_nos' in filters and filters['question_nos']:
             placeholders = ','.join(['%s'] * len(filters['question_nos']))
@@ -253,12 +253,19 @@ def get_questions(filters=None):
     for row in rows:
         qid = row['id']
 
+        # ----- EXTRACT NEPALI AND ENGLISH -----
+        nep = row.get('nepali_transcription', '') or ''
+        eng = row.get('english_transcription', '') or ''
+        combined = f"{nep} ({eng})" if nep and eng else (nep or eng)
+
         # Build the question dict in converter format
         q = {
             'id': qid,
             'question_no': row.get('question_number', ''),
-            'text': row.get('nepali_transcription') or row.get('english_transcription') or '',
-            'type': 'essay',  # default – will be overridden if options/pairs exist
+            'text': combined,                     # for human-readable exports
+            'nepali_transcription': nep,          # for JSON/backup
+            'english_transcription': eng,         # for JSON/backup
+            'type': row.get('type', 'essay'),  # default – will be overridden if options/pairs exist
             'general_feedback': row.get('general_feedback') or '',
             'grade': row.get('marks') or 1,
             'penalty': 0,
@@ -276,10 +283,12 @@ def get_questions(filters=None):
             'institution': row.get('institution') or '',
             'level': row.get('level') or '',
             'paper': row.get('paper') or '',
+            'subject': row.get('subject') or '',
             'date': row.get('question_date') or '',
             'chapter': row.get('chapter') or '',
             'marks': row.get('marks'),
             'notes': row.get('notes') or '',
+            'source': row.get('source') or '',
         }
 
         # Fetch options
@@ -316,7 +325,7 @@ def get_questions(filters=None):
                 'show_num_correct': bool(hint['show_num_correct'])
             })
 
-        # Determine type if still 'essay' but has no options/pairs
+        # If still 'essay' but no options/pairs, keep as essay
         if q['type'] == 'essay' and not q['options'] and not q['pairs']:
             q['type'] = 'essay'
 

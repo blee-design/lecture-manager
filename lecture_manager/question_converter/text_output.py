@@ -22,9 +22,9 @@ def create_text_output(questions, output_file, verbose=False):
                 last_group = group
 
             # Write question number and text
-            question_no = q.get("question_no", i)
-            if question_no > 0:
-                f.write(f"Question No. {question_no}: {q.get('text', '')}\n")
+            qno = q.get("question_no")
+            if qno is not None and str(qno).strip() != '':
+                f.write(f"Question No. {qno}: {q.get('text', '')}\n")
             else:
                 f.write(f"Question: {q.get('text', '')}\n")
 

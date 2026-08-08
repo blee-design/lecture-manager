@@ -20,6 +20,8 @@ from decimal import Decimal
 from .db import get_connection
 from .utils import print_colored, color_text, COLORS, clean_field, html_to_terminal, sanitize_for_json
 
+_last_filtered_questions = None
+
 TABLE_NAME = 'questions'
 
 # ---------- Database ----------
@@ -85,6 +87,120 @@ def normalize_question_number(qno):
         # If it's already a string like '01', keep as is (but ensure it's stripped)
         return str(qno).strip().zfill(2)
 
+def _get_filtered_questions_interactive():
+    """
+    Show the filter menu, let the user set filters, and return the filtered questions.
+    Returns: (filtered_questions, cancelled)
+    - filtered_questions: list of question dicts matching the filters, or [] if none
+    - cancelled: True if user chose 0 to cancel
+    """
+    from .question_converter.db_handler import get_questions
+
+    filters = {
+        'date': '',
+        'institution': '',
+        'level': '',
+        'paper': '',
+        'group': '',
+        'subject': '',
+        'chapter': '',
+        'type': ''
+    }
+
+    display_labels = {
+        'date': 'Question Date',
+        'institution': 'Institution',
+        'level': 'Level',
+        'paper': 'Paper',
+        'group': 'Group',
+        'subject': 'Subject',
+        'chapter': 'Chapter',
+        'type': 'Type'
+    }
+
+    def show_filters():
+        print("\n" + "─" * 60)
+        print_colored("  CURRENT FILTERS", COLORS.YELLOW, bold=True)
+        print("─" * 60)
+        for i, (key, value) in enumerate(filters.items(), 1):
+            display = value if value else color_text("(not set)", COLORS.RED)
+            label = display_labels.get(key, key.replace('_', ' ').title())
+            print(f"  {i}. {label:15}: {display}")
+        print("─" * 60)
+
+    all_questions = get_questions()
+    filtered = all_questions
+
+    while True:
+        show_filters()
+
+        # Apply filters (substring for text, exact for date/type)
+        filtered = all_questions
+        for key, value in filters.items():
+            if not value:
+                continue
+            if key == 'type':
+                filtered = [q for q in filtered if q.get('type', '').lower() == value.lower()]
+            elif key == 'date':
+                filtered = [q for q in filtered if q.get('date', '') == value]
+            else:
+                filtered = [q for q in filtered if value.lower() in q.get(key, '').lower()]
+
+        print_colored(f"[i] {len(filtered)} questions match current filters.", COLORS.BLUE)
+
+        # Show preview of matches
+        if filtered:
+            print(f"\n  {color_text('Preview (first 5):', COLORS.CYAN)}")
+            for q in filtered[:5]:
+                qid = q.get('id', '?')
+                date = q.get('date', '')
+                inst = q.get('institution', '')[:25]
+                subj = q.get('subject', '')[:25]
+                paper = q.get('paper', '')[:15]
+                level = q.get('level', '')[:12]
+                qno = q.get('question_no', '')
+                print(f"  [{date}] {qid} | {inst} | {subj} | {paper} | {level} | Q{qno}")
+            if len(filtered) > 5:
+                print(f"  ... and {len(filtered) - 5} more")
+
+        print("\n  " + color_text("OPTIONS:", COLORS.WHITE, bold=True))
+        print("  1-8. Edit filter (by number)")
+        print("  9.  " + color_text("Execute with current filters", COLORS.GREEN, bold=True))
+        print("  0.  " + color_text("Cancel", COLORS.RED))
+        print("  c.  " + color_text("Clear all filters", COLORS.YELLOW))
+        print("─" * 60)
+
+        choice = input(color_text("Choose an option: ", COLORS.MAGENTA)).strip().lower()
+
+        if choice == '9':
+            return filtered, False
+
+        elif choice == '0':
+            return [], True
+
+        elif choice == 'c':
+            for key in filters:
+                filters[key] = ''
+            print_colored("[✓] All filters cleared.", COLORS.GREEN)
+            continue
+
+        elif choice.isdigit() and 1 <= int(choice) <= 8:
+            idx = int(choice) - 1
+            key = list(filters.keys())[idx]
+            current = filters[key]
+            label = display_labels.get(key, key.replace('_', ' ').title())
+            new_val = input(color_text(f"New value for {label} [{current}]: ", COLORS.MAGENTA)).strip()
+            if new_val:
+                filters[key] = new_val
+                print_colored(f"[✓] {label} set to: {new_val}", COLORS.GREEN)
+            else:
+                print_colored("[i] No change.", COLORS.YELLOW)
+            continue
+
+        else:
+            print_colored("[!] Invalid choice.", COLORS.RED)
+            continue
+
 def add_question(date, institution, subject, paper, group, marks, chapter,
                  question_number, nepali, english, level, notes=None,
                  force=False, options=None, pairs=None, hints=None,
@@ -94,7 +210,8 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                  incorrect_feedback=None,
                  response_lines=15, attachments=0,
                  filetypes='.doc,.docx,.pdf,.png,.jpg,.jpeg',
-                 maxbytes=2097152, grader_info=None):
+                 maxbytes=2097152, grader_info=None,
+                 q_type='essay'):   # <-- NEW parameter
     # Check duplicate
     if not force:
         existing = check_duplicate(date, institution, level, paper, group, question_number)
@@ -125,6 +242,7 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                     'filetypes': filetypes,
                     'maxbytes': maxbytes,
                     'grader_info': grader_info,
+                    'type': q_type,   # <-- include type
                 }
                 # Remove None values
                 updates = {k: v for k, v in updates.items() if v is not None}
@@ -148,15 +266,15 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
          general_feedback, fraction_correct, fraction_wrong, shuffle_answers,
          show_num_correct, correct_feedback, partially_correct_feedback,
          incorrect_feedback, response_lines, attachments, filetypes, maxbytes,
-         grader_info)
+         grader_info, type)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (date, institution, subject, paper, group, marks, chapter,
           question_number, nepali, english, level, notes,
           general_feedback, fraction_correct, fraction_wrong,
           shuffle_answers, show_num_correct,
           correct_feedback, partially_correct_feedback, incorrect_feedback,
-          response_lines, attachments, filetypes, maxbytes, grader_info))
+          response_lines, attachments, filetypes, maxbytes, grader_info, q_type))
     conn.commit()
     qid = cursor.lastrowid
 
@@ -271,39 +389,15 @@ def get_all_questions(sort_by='question_date', order='DESC', search=None):
     return rows
 
 def update_question(qid, **kwargs):
-    """
-    Update a question by ID.
-    Returns:
-        'updated'      – update succeeded (rows affected > 0)
-        'no_change'    – no rows affected (values identical or fields cleared due to duplicate detection)
-        'no_fields'    – no fields provided
-        'not_found'    – question not found
-        'error: <msg>' – on database error
-    """
-    current = get_question_by_id(qid)
-    if not current:
-        return 'not_found'
+    # Separate out the related data
+    options = kwargs.pop('options', None)
+    pairs = kwargs.pop('pairs', None)
+    hints = kwargs.pop('hints', None)
 
-    had_fields = bool(kwargs)  # track if any fields were originally provided
-
-    # ---- Clear English if it duplicates Nepali ----
-    nep_new = kwargs.get('nepali_transcription')
-    eng_new = kwargs.get('english_transcription')
-    if nep_new is not None and eng_new is not None:
-        if _should_clear_english(nep_new, eng_new):
-            kwargs['english_transcription'] = None
-    elif nep_new is not None and eng_new is None:
-        current_eng = current.get('english_transcription')
-        if current_eng and _should_clear_english(nep_new, current_eng):
-            kwargs['english_transcription'] = None
-    elif eng_new is not None and nep_new is None:
-        current_nep = current.get('nepali_transcription')
-        if current_nep and _should_clear_english(current_nep, eng_new):
-            kwargs['english_transcription'] = None
-
-    # ---- Build UPDATE statement ----
+    # Update main question fields
     fields = []
     values = []
+    # Allowed fields (including type and source)
     for key, val in kwargs.items():
         if val is not None:
             if key == 'group':
@@ -313,14 +407,10 @@ def update_question(qid, **kwargs):
             values.append(val)
 
     if not fields:
-        # If we had fields but all were cleared (e.g., English duplicate), treat as no change
-        if had_fields:
-            return 'no_change'
-        else:
-            return 'no_fields'
+        return 'no_fields'
 
     values.append(qid)
-    sql = f"UPDATE {TABLE_NAME} SET {', '.join(fields)} WHERE id = %s"
+    sql = f"UPDATE questions SET {', '.join(fields)} WHERE id = %s"
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -328,12 +418,37 @@ def update_question(qid, **kwargs):
         cursor.execute(sql, values)
         conn.commit()
         affected = cursor.rowcount
+
+        # Handle related tables (options, pairs, hints)
+        if options is not None or pairs is not None or hints is not None:
+            # Delete existing options, pairs, hints
+            if options is not None:
+                cursor.execute("DELETE FROM question_options WHERE question_id = %s", (qid,))
+                for idx, opt in enumerate(options):
+                    cursor.execute("""
+                        INSERT INTO question_options (question_id, text, fraction, feedback, display_order)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (qid, opt['text'], opt.get('fraction', 0), opt.get('feedback', ''), idx))
+            if pairs is not None:
+                cursor.execute("DELETE FROM question_matching_pairs WHERE question_id = %s", (qid,))
+                for idx, pair in enumerate(pairs):
+                    cursor.execute("""
+                        INSERT INTO question_matching_pairs (question_id, subquestion, answer, display_order)
+                        VALUES (%s, %s, %s, %s)
+                    """, (qid, pair['subquestion'], pair['answer'], idx))
+            if hints is not None:
+                cursor.execute("DELETE FROM question_hints WHERE question_id = %s", (qid,))
+                for idx, hint in enumerate(hints, 1):
+                    cursor.execute("""
+                        INSERT INTO question_hints (question_id, hint_text, clear_incorrect, show_num_correct, hint_number)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (qid, hint['text'], hint.get('clear_incorrect', False),
+                          hint.get('show_num_correct', False), idx))
+            conn.commit()
+
         cursor.close()
         conn.close()
-        if affected > 0:
-            return 'updated'
-        else:
-            return 'no_change'
+        return 'updated' if affected > 0 else 'no_change'
     except Exception as e:
         cursor.close()
         conn.close()
@@ -638,44 +753,262 @@ def import_export_submenu():
 
         input("\nPress Enter to continue...")
 
-# ---------- CLI menu ----------
-def question_bank_menu():
+# Question bank menu
+def unified_question_menu():
+    global _last_filtered_questions
+    """Unified menu for all question operations – bank + converter merged."""
+    from .question_converter.db_handler import get_questions as get_questions_db
+    verbose_mode = False
+
     while True:
-        print("\n" + "═" * 50)
-        print_colored("  QUESTION BANK", COLORS.CYAN, bold=True)
-        print("═" * 50)
-        print("  1. Add question")
+        print("\n" + "═" * 60)
+        print_colored("  📚 QUESTION BANK (Unified)", COLORS.CYAN, bold=True)
+        print("═" * 60)
+        print("  1. Add question (manual)")
         print("  2. View all questions")
-        print("  3. Quick lookup (smart input)")
-        print("  4. View a whole paper (interactive prompts)")
-        print("  5. Advanced search (multiple fields)")
+        print("  3. Quick lookup (by date/institution/level)")
+        print("  4. View whole paper")
+        print("  5. Advanced search")
         print("  6. Update question")
         print("  7. Delete question")
-        print("  8. Import/Export (CSV, JSON, TXT)")
-        print("  0. Return to main menu")
-        print("═" * 50)
+        print("\n  " + color_text("📥 Import", COLORS.YELLOW, bold=True))
+        print("  a. From TXT (human-readable, universal)")
+        print("  b. From CSV (full backup, all columns)")
+        print("  c. From JSON (full backup, all columns)")
+        print("  d. From XML (Moodle format)")
+        print("  e. Advanced import (with --questions filter)")
+        print("\n  " + color_text("📤 Export", COLORS.YELLOW, bold=True))
+        print("  f. To TXT (human-readable)")
+        print("  g. To CSV (full backup, all columns)")
+        print("  h. To JSON (full backup, all columns)")
+        print("  i. To XML (Moodle format)")
+        print("  j. To HTML (web view)")
+        print("  k. To Exam HTML (interactive exam)")
+        print("  l. Advanced export (with question number filter)")
+        print("\n  " + color_text("🔄 Convert file to file (standalone, no DB)", COLORS.WHITE))
+        print("  m. Run converter with custom arguments (file‑to‑file)")
+        print("  0. Back to main menu")
+        print("═" * 60)
 
-        choice = input(color_text("Choose an option (0-8): ", COLORS.MAGENTA)).strip()
+        choice = input(color_text("Choose an option: ", COLORS.MAGENTA)).strip().lower()
 
+        # ----- Bank operations (1-7) -----
         if choice == '1':
+            from .question_bank import add_question_interactive
             add_question_interactive()
         elif choice == '2':
+            from .question_bank import view_all_questions_interactive
             view_all_questions_interactive()
         elif choice == '3':
+            from .question_bank import quick_lookup_interactive
             quick_lookup_interactive()
         elif choice == '4':
+            from .question_bank import view_whole_paper_interactive
             view_whole_paper_interactive()
         elif choice == '5':
+            from .question_bank import advanced_search_interactive
             advanced_search_interactive()
         elif choice == '6':
+            from .question_bank import update_question_interactive
             update_question_interactive()
         elif choice == '7':
+            from .question_bank import delete_question_interactive
             delete_question_interactive()
-        elif choice == '8':
-            import_export_submenu()
+
+        # ----- Import -----
+        elif choice == 'a':
+            from .question_converter import import_from_file
+            from .question_converter.exceptions import ConverterError
+            filepath = input(color_text("TXT file path: ", COLORS.MAGENTA)).strip()
+            if not filepath:
+                continue
+            source = input(color_text("Source name (optional): ", COLORS.MAGENTA)).strip() or None
+            try:
+                count, errors = import_from_file(filepath, 'txt', source=source)
+                print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
+                if errors:
+                    print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
+                    for e in errors[:5]:
+                        print(f"  {e}")
+            except ConverterError as e:
+                print_colored(f"[!] {e}", COLORS.RED)
+
+        elif choice == 'b':
+            from .question_bank import import_questions_csv
+            import_questions_csv()
+
+        elif choice == 'c':
+            from .question_bank import import_questions_json
+            import_questions_json()
+
+        elif choice == 'd':
+            from .question_converter import import_from_file
+            from .question_converter.exceptions import ConverterError
+            filepath = input(color_text("XML file path: ", COLORS.MAGENTA)).strip()
+            if not filepath:
+                continue
+            source = input(color_text("Source name (optional): ", COLORS.MAGENTA)).strip() or None
+            try:
+                count, errors = import_from_file(filepath, 'xml', source=source)
+                print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
+                if errors:
+                    print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
+                    for e in errors[:5]:
+                        print(f"  {e}")
+            except ConverterError as e:
+                print_colored(f"[!] {e}", COLORS.RED)
+
+        elif choice == 'e':
+            # Advanced import with --questions filter (reuse converter's option)
+            from .question_converter.converter_main import parser, run_conversion
+            print("\n[Advanced import]")
+            args_str = input(color_text("Arguments (e.g., -i input.txt --questions 1,5,10 --bypass-duplicate): ", COLORS.MAGENTA)).strip()
+            if not args_str:
+                continue
+            import shlex
+            argv = shlex.split(args_str)
+            try:
+                parsed = parser.parse_args(argv)
+                # We need to override format? The parser expects -i and -o; but we want to import to DB.
+                # For advanced import, we can just call run_conversion with parsed args, which will parse and insert.
+                run_conversion(parsed)
+            except SystemExit:
+                print_colored("[!] Invalid arguments.", COLORS.RED)
+            except Exception as e:
+                print_colored(f"[!] {e}", COLORS.RED)
+
+        # ----- Export -----
+        elif choice == 'f':
+            from .question_converter import export_to_file
+            from .question_converter.db_handler import get_questions as get_questions_db
+            questions = get_questions_db()
+            if not questions:
+                print_colored("[i] No questions to export.", COLORS.YELLOW)
+                continue
+            default_name = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            outfile = input(color_text(f"Output TXT file (default: {default_name}): ", COLORS.MAGENTA)).strip()
+            if not outfile:
+                outfile = default_name
+            try:
+                export_to_file(questions, outfile, 'txt')
+                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
+            except Exception as e:
+                print_colored(f"[!] {e}", COLORS.RED)
+
+        elif choice == 'g':
+            from .question_bank import export_questions_csv
+            export_questions_csv()
+
+        elif choice == 'h':
+            from .question_bank import export_questions_json
+            export_questions_json()
+
+        elif choice == 'i':
+            from .question_converter import export_to_file
+            from .question_converter.db_handler import get_questions
+            questions = get_questions_db()
+            if not questions:
+                print_colored("[i] No questions to export.", COLORS.YELLOW)
+                continue
+            default_name = f"questions_export_moodle_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
+            outfile = input(color_text(f"Output XML file (default: {default_name}): ", COLORS.MAGENTA)).strip()
+            if not outfile:
+                outfile = default_name
+            try:
+                export_to_file(questions, outfile, 'xml')
+                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
+            except Exception as e:
+                print_colored(f"[!] {e}", COLORS.RED)
+
+        elif choice == 'j':
+            from .question_converter import export_to_file
+            from .question_converter.db_handler import get_questions
+            questions = get_questions_db()
+            if not questions:
+                print_colored("[i] No questions to export.", COLORS.YELLOW)
+                continue
+            default_name = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            outfile = input(color_text(f"Output HTML file (default: {default_name}): ", COLORS.MAGENTA)).strip()
+            if not outfile:
+                outfile = default_name
+            try:
+                export_to_file(questions, outfile, 'html')
+                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
+            except Exception as e:
+                print_colored(f"[!] {e}", COLORS.RED)
+
+        elif choice == 'k':
+            # Exam HTML export with filters
+            filtered, cancelled = _get_filtered_questions_interactive()
+            if cancelled:
+                print_colored("Cancelled.", COLORS.YELLOW)
+                continue
+            if not filtered:
+                print_colored("[i] No questions match the filters. Export cancelled.", COLORS.YELLOW)
+                continue
+
+            _last_filtered_questions = filtered  # store for potential reuse
+
+            from .question_converter.exam_output import create_exam_html
+            from datetime import datetime
+            default_name = f"exam_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            outfile = input(color_text(f"Output Exam HTML file (default: {default_name}): ", COLORS.MAGENTA)).strip()
+            if not outfile:
+                outfile = default_name
+            time_str = input(color_text("Time limit in minutes (default 90): ", COLORS.MAGENTA)).strip()
+            time_min = int(time_str) if time_str.isdigit() else 90
+            create_exam_html(filtered, outfile, verbose=False, time_minutes=time_min, pass_marks=45)
+            print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
+
+        elif choice == 'l':
+            # Advanced export with filters
+            filtered, cancelled = _get_filtered_questions_interactive()
+            if cancelled:
+                print_colored("Cancelled.", COLORS.YELLOW)
+                continue
+            if not filtered:
+                print_colored("[i] No questions match the filters. Export cancelled.", COLORS.YELLOW)
+                continue
+
+            _last_filtered_questions = filtered  # store for later use (e.g., exam export)
+
+            fmt = input(color_text("Format (xml, json, html, txt): ", COLORS.MAGENTA)).strip()
+            if not fmt:
+                print_colored("[!] Format is required.", COLORS.RED)
+                continue
+
+            default_name = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{fmt}"
+            outfile = input(color_text(f"Output file (default: {default_name}): ", COLORS.MAGENTA)).strip()
+            if not outfile:
+                outfile = default_name
+
+            try:
+                from .question_converter import export_to_file
+                export_to_file(filtered, outfile, fmt)
+                print_colored(f"[✓] Exported {len(filtered)} questions to {outfile}", COLORS.GREEN)
+            except Exception as e:
+                print_colored(f"[!] {e}", COLORS.RED)
+
+        # ----- Convert file to file -----
+        elif choice == 'm':
+            from .question_converter.converter_main import parser, run_conversion
+            print("\n[Run converter with custom arguments]")
+            args_str = input(color_text("Arguments (e.g., -i input.txt -o output.xml --shuffle): ", COLORS.MAGENTA)).strip()
+            if not args_str:
+                continue
+            import shlex
+            argv = shlex.split(args_str)
+            try:
+                parsed = parser.parse_args(argv)
+                run_conversion(parsed)
+            except SystemExit:
+                print_colored("[!] Invalid arguments.", COLORS.RED)
+            except Exception as e:
+                print_colored(f"[!] {e}", COLORS.RED)
+
         elif choice == '0':
-            print_colored("Returning to main menu.", COLORS.YELLOW)
             break
+
         else:
             print_colored("[!] Invalid option.", COLORS.RED)
 
