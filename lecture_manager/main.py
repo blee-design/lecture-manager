@@ -354,8 +354,6 @@ def converter_submenu():
             input("\nPress Enter to continue...")
 
         elif choice == '8':
-            # (already handled above with the new try/except and help handling)
-            # I'll repeat the improved version here for completeness
             print("\n[Run converter with custom arguments]")
             print("Enter the arguments as you would on the command line.")
             print("Example: -i input.txt -o output.xml --shuffle --time 60")
@@ -363,37 +361,15 @@ def converter_submenu():
             if not args_str:
                 print_colored("Cancelled.", COLORS.YELLOW)
                 continue
-
             import shlex
-            from .question_converter.converter_main import parser, show_help_format
-
+            from .question_converter.converter_main import parser, run_conversion
             argv = shlex.split(args_str)
-
             try:
                 parsed_args = parser.parse_args(argv)
-            except SystemExit:
-                # argparse already printed help, just continue
-                continue
-
-            if parsed_args.help_format is not None:
-                if parsed_args.help_format == "":
-                    show_help_format()
-                else:
-                    show_help_format(parsed_args.help_format)
-                continue
-
-            try:
                 run_conversion(parsed_args)
-            except ConverterError as e:
-                print_colored(f"[!] Conversion error: {e}", COLORS.RED)
-            except SystemExit as e:
-                if e.code != 0:
-                    print_colored(f"[!] Converter exited with error code {e.code}", COLORS.RED)
-                else:
-                    print_colored("[i] Converter terminated normally.", COLORS.BLUE)
-            except Exception as e:
-                print_colored(f"[!] Unexpected error: {e}", COLORS.RED)
-            input("\nPress Enter to continue...")
+            except SystemExit:
+                # argparse may call sys.exit() on error; we catch it to avoid killing the menu
+                print_colored("[!] Invalid arguments. Please check your input.", COLORS.RED)
 
         else:
             print_colored("[!] Invalid choice.", COLORS.RED)

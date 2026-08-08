@@ -1,5 +1,3 @@
-# File: core/converter_main.py
-
 #!/usr/bin/env python3
 import sys
 import argparse
@@ -9,10 +7,94 @@ from .constants import (
     HELP_HEADER, HELP_VALID_TYPES, HELP_TRUEFALSE,
     HELP_MULTICHOICE, HELP_ESSAY, HELP_MATCHING,
     HELP_TEXT_FORMAT, HELP_ADVANCED_EXAMPLES, HELP_CONVERSION, HELP_TIPS,
-    HELP_PASSAGE, HELP_GROUP          # NEW imports
+    HELP_PASSAGE, HELP_GROUP
+)
+from .converter_core import run_conversion
+
+# ======================== PARSER (global) ========================
+parser = argparse.ArgumentParser(
+    description=f"{C.CYAN}{C.BOLD}Multi-format question converter{C.RESET}",
+    formatter_class=argparse.RawDescriptionHelpFormatter,
+    epilog=f"""
+{C.YELLOW}{C.BOLD}Security Notes:{C.RESET}
+  {C.GREEN}• Matching questions:{C.RESET} Defaults prevent cheating
+  {C.GREEN}  - Show Number Correct: false{C.RESET} (no count shown)
+  {C.GREEN}  - Hint options: false by default{C.RESET} (no clearing/showing count)
+  {C.GREEN}• Use defaults for exams{C.RESET} (secure, no bias)
+  {C.GREEN}• Change only for practice{C.RESET} (set to true for hints/feedback)
+
+{C.YELLOW}{C.BOLD}Examples:{C.RESET}
+  {C.GREEN}# Basic conversions (defaults to txt → xml){C.RESET}
+  python3 converter.py -i questions.txt -o output.xml
+
+  {C.GREEN}# Matching question with secure defaults{C.RESET}
+  Question: Match the capitals
+  Type: matching
+  Subquestion: France
+  Answer: Paris
+  Subquestion: Germany
+  Answer: Berlin
+
+  {C.GREEN}# Matching question with hints (for practice){C.RESET}
+  Question: Match the capitals
+  Type: matching
+  Subquestion: France
+  Answer: Paris
+  Subquestion: Germany
+  Answer: Berlin
+  Show Number Correct: true
+  Hint 1: France's capital starts with P
+  Hint 1 Clear Incorrect: true
+  Hint 1 Show Number Correct: true
+
+{C.YELLOW}{C.BOLD}Shuffling Questions:{C.RESET}
+  {C.GREEN}• Use -s or --shuffle to randomize question order{C.RESET}
+  {C.GREEN}• Questions are renumbered sequentially after shuffling{C.RESET}
+  {C.GREEN}• Can be combined with --questions filter{C.RESET}
+
+{C.YELLOW}{C.BOLD}Supported conversions:{C.RESET}
+  {C.GREEN}txt → xml, json, html{C.RESET}
+  {C.GREEN}json → xml, txt, html{C.RESET}
+  {C.GREEN}xml → txt, json, html{C.RESET}
+    """
 )
 
-from .converter_core import run_conversion
+# Core arguments
+parser.add_argument("-i", "--input", default="questions.txt",
+                   help=f"{C.GREEN}Input file path (default: questions.txt){C.RESET}")
+
+parser.add_argument("-o", "--output",
+                   help=f"{C.GREEN}Output file path (auto-detected from format if not specified){C.RESET}")
+
+# Exam mode options
+parser.add_argument("-e", "--exam", action="store_true",
+                   help=f"{C.GREEN}Enable interactive exam mode (one question at a time, timer, certificate){C.RESET}")
+parser.add_argument("--time", type=str, default="90",
+                   help=f"{C.GREEN}Exam time limit. Examples: 90 (minutes), 1h (1 hour), 90m, 120s (seconds). Default: 90m.{C.RESET}")
+
+parser.add_argument("-f", "--format",
+                   choices=["xml", "json", "html", "txt", "exam"],
+                   help=f"{C.GREEN}Output format: xml, json, html, txt, or exam (exam mode). .exam extension also triggers exam mode.{C.RESET}")
+
+# Question filtering
+parser.add_argument("-q", "--questions",
+                   help=f"{C.GREEN}Filter questions: comma-separated (5,10,20) or range (90..100){C.RESET}")
+
+# Question shuffling
+parser.add_argument("-s", "--shuffle", action="store_true",
+                   help=f"{C.GREEN}Shuffle all questions randomly{C.RESET}")
+
+# Existing bypass arguments
+parser.add_argument("--bypass-option", action="store_true",
+                   help=f"{C.YELLOW}Auto-fill missing options for MCQs{C.RESET}")
+parser.add_argument("--bypass-duplicate", action="store_true",
+                   help=f"{C.YELLOW}Allow duplicate questions{C.RESET}")
+
+# Other arguments
+parser.add_argument("-v", "--verbose", action="store_true",
+                   help=f"{C.CYAN}Show detailed progress{C.RESET}")
+parser.add_argument("--help-format", nargs='?', const="", default=None,
+                   help=f"{C.MAGENTA}Show detailed formatting help (optionally specify question types: truefalse,multichoice,essay,passage,group){C.RESET}")
 
 # -------------------- HELPER FUNCTION FOR FORMATTED HELP --------------------
 def show_help_format(types=None):
@@ -58,8 +140,8 @@ def show_help_format(types=None):
         help_text += HELP_ESSAY + SEPARATOR
         help_text += HELP_MATCHING + SEPARATOR
         help_text += HELP_TEXT_FORMAT + SEPARATOR
-        help_text += HELP_PASSAGE + SEPARATOR      # NEW
-        help_text += HELP_GROUP + SEPARATOR        # NEW
+        help_text += HELP_PASSAGE + SEPARATOR
+        help_text += HELP_GROUP + SEPARATOR
         help_text += HELP_ADVANCED_EXAMPLES + SEPARATOR
         help_text += HELP_CONVERSION + SEPARATOR
         help_text += HELP_TIPS + SEPARATOR
@@ -76,8 +158,8 @@ def show_help_format(types=None):
             help_text += HELP_ESSAY + SEPARATOR
             help_text += HELP_MATCHING + SEPARATOR
             help_text += HELP_TEXT_FORMAT + SEPARATOR
-            help_text += HELP_PASSAGE + SEPARATOR      # NEW
-            help_text += HELP_GROUP + SEPARATOR        # NEW
+            help_text += HELP_PASSAGE + SEPARATOR
+            help_text += HELP_GROUP + SEPARATOR
             help_text += HELP_ADVANCED_EXAMPLES + SEPARATOR
             help_text += HELP_CONVERSION + SEPARATOR
             help_text += HELP_TIPS + SEPARATOR
@@ -141,8 +223,6 @@ def show_help_format(types=None):
     
     print(help_text)
 
-# -------------------- MAIN --------------------
-def main():
     """Main CLI entry point - called from root converter.py"""
     # Display colorful banner
     print(PROGRAM_BANNER)
@@ -151,93 +231,59 @@ def main():
         description=f"{C.CYAN}{C.BOLD}Multi-format question converter{C.RESET}",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""
-{C.YELLOW}{C.BOLD}Security Notes:{C.RESET}
-  {C.GREEN}• Matching questions:{C.RESET} Defaults prevent cheating
-  {C.GREEN}  - Show Number Correct: false{C.RESET} (no count shown)
-  {C.GREEN}  - Hint options: false by default{C.RESET} (no clearing/showing count)
-  {C.GREEN}• Use defaults for exams{C.RESET} (secure, no bias)
-  {C.GREEN}• Change only for practice{C.RESET} (set to true for hints/feedback)
+    {C.YELLOW}{C.BOLD}Security Notes:{C.RESET}
+    {C.GREEN}• Matching questions:{C.RESET} Defaults prevent cheating
+    {C.GREEN}  - Show Number Correct: false{C.RESET} (no count shown)
+    {C.GREEN}  - Hint options: false by default{C.RESET} (no clearing/showing count)
+    {C.GREEN}• Use defaults for exams{C.RESET} (secure, no bias)
+    {C.GREEN}• Change only for practice{C.RESET} (set to true for hints/feedback)
 
-{C.YELLOW}{C.BOLD}Examples:{C.RESET}
-  {C.GREEN}# Basic conversions (defaults to txt → xml){C.RESET}
-  python3 converter.py -i questions.txt -o output.xml
+    {C.YELLOW}{C.BOLD}Examples:{C.RESET}
+    {C.GREEN}# Basic conversions (defaults to txt → xml){C.RESET}
+    python3 converter.py -i questions.txt -o output.xml
 
-  {C.GREEN}# Matching question with secure defaults{C.RESET}
-  Question: Match the capitals
-  Type: matching
-  Subquestion: France
-  Answer: Paris
-  Subquestion: Germany
-  Answer: Berlin
+    {C.GREEN}# Matching question with secure defaults{C.RESET}
+    Question: Match the capitals
+    Type: matching
+    Subquestion: France
+    Answer: Paris
+    Subquestion: Germany
+    Answer: Berlin
 
-  {C.GREEN}# Matching question with hints (for practice){C.RESET}
-  Question: Match the capitals
-  Type: matching
-  Subquestion: France
-  Answer: Paris
-  Subquestion: Germany
-  Answer: Berlin
-  Show Number Correct: true
-  Hint 1: France's capital starts with P
-  Hint 1 Clear Incorrect: true
-  Hint 1 Show Number Correct: true
+    {C.GREEN}# Matching question with hints (for practice){C.RESET}
+    Question: Match the capitals
+    Type: matching
+    Subquestion: France
+    Answer: Paris
+    Subquestion: Germany
+    Answer: Berlin
+    Show Number Correct: true
+    Hint 1: France's capital starts with P
+    Hint 1 Clear Incorrect: true
+    Hint 1 Show Number Correct: true
 
-{C.YELLOW}{C.BOLD}Shuffling Questions:{C.RESET}
-  {C.GREEN}• Use -s or --shuffle to randomize question order{C.RESET}
-  {C.GREEN}• Questions are renumbered sequentially after shuffling{C.RESET}
-  {C.GREEN}• Can be combined with --questions filter{C.RESET}
+    {C.YELLOW}{C.BOLD}Shuffling Questions:{C.RESET}
+    {C.GREEN}• Use -s or --shuffle to randomize question order{C.RESET}
+    {C.GREEN}• Questions are renumbered sequentially after shuffling{C.RESET}
+    {C.GREEN}• Can be combined with --questions filter{C.RESET}
 
-{C.YELLOW}{C.BOLD}Supported conversions:{C.RESET}
-  {C.GREEN}txt → xml, json, html{C.RESET}
-  {C.GREEN}json → xml, txt, html{C.RESET}
-  {C.GREEN}xml → txt, json, html{C.RESET}
+    {C.YELLOW}{C.BOLD}Supported conversions:{C.RESET}
+    {C.GREEN}txt → xml, json, html{C.RESET}
+    {C.GREEN}json → xml, txt, html{C.RESET}
+    {C.GREEN}xml → txt, json, html{C.RESET}
         """
     )
 
-    # Core arguments with colors
-    parser.add_argument("-i", "--input", default="questions.txt",
-                       help=f"{C.GREEN}Input file path (default: questions.txt){C.RESET}")
-
-    parser.add_argument("-o", "--output",
-                       help=f"{C.GREEN}Output file path (auto-detected from format if not specified){C.RESET}")
-    
-    # Exam mode options
-    parser.add_argument("-e", "--exam", action="store_true",
-                       help=f"{C.GREEN}Enable interactive exam mode (one question at a time, timer, certificate){C.RESET}")
-    parser.add_argument("--time", type=str, default="90",
-                       help=f"{C.GREEN}Exam time limit. Examples: 90 (minutes), 1h (1 hour), 90m, 120s (seconds). Default: 90m.{C.RESET}")
-
-    parser.add_argument("-f", "--format",
-                   choices=["xml", "json", "html", "txt", "exam"],
-                   help=f"{C.GREEN}Output format: xml, json, html, txt, or exam (exam mode). .exam extension also triggers exam mode.{C.RESET}")
-
-    # Question filtering
-    parser.add_argument("-q", "--questions",
-                       help=f"{C.GREEN}Filter questions: comma-separated (5,10,20) or range (90..100){C.RESET}")
-    
-    # Question shuffling
-    parser.add_argument("-s", "--shuffle", action="store_true",
-                       help=f"{C.GREEN}Shuffle all questions randomly{C.RESET}")
-
-    # Existing bypass arguments
-    parser.add_argument("--bypass-option", action="store_true",
-                       help=f"{C.YELLOW}Auto-fill missing options for MCQs{C.RESET}")
-
-    parser.add_argument("--bypass-duplicate", action="store_true",
-                       help=f"{C.YELLOW}Allow duplicate questions{C.RESET}")
-
-    # Other arguments
-    parser.add_argument("-v", "--verbose", action="store_true",
-                       help=f"{C.CYAN}Show detailed progress{C.RESET}")
-
-    parser.add_argument("--help-format", nargs='?', const="", default=None,
-                       help=f"{C.MAGENTA}Show detailed formatting help (optionally specify question types: truefalse,multichoice,essay,passage,group){C.RESET}")
+# ======================== MAIN ========================
+def main():
+    """Main CLI entry point - called from root converter.py"""
+    # Display colorful banner
+    print(PROGRAM_BANNER)
 
     args = parser.parse_args()
 
     # Handle help-format with optional types
     if args.help_format is not None:
-        # If --help-format was used without value, const="" triggers, so show all
         if args.help_format == "":
             show_help_format()
         else:
@@ -247,6 +293,5 @@ def main():
     # Run the actual conversion
     run_conversion(args)
 
-# This allows the file to be run directly for testing
 if __name__ == "__main__":
     main()
