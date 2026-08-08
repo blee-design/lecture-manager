@@ -52,6 +52,8 @@ build/
 *.bak
 packer.py
 lecture-manager-*.py
+*_import_*
+*_export_*
 !requirements.txt   # keep requirements.txt if you have it
 !setup.py           # keep setup.py
 
