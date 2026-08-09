@@ -3,6 +3,7 @@
 from html import escape
 from .utils import log
 import warnings
+from bleach.css_sanitizer import CSSSanitizer
 
 # Optional: try to import bleach
 try:
@@ -71,7 +72,13 @@ def create_html_output(questions, output_file, verbose=False, shuffle_applied=Fa
             allowed_attrs.update(svg_attrs)
             
             # No 'styles' argument – style attribute is already allowed via allowed_attrs['*']
-            return bleach.clean(text, tags=ALLOWED_TAGS, attributes=allowed_attrs, strip=True)
+            return bleach.clean(
+                text,
+                tags=ALLOWED_TAGS,
+                attributes=allowed_attrs,
+                strip=True,
+                css_sanitizer=CSSSanitizer()
+            )
         
         return text
 
@@ -94,45 +101,52 @@ def create_html_output(questions, output_file, verbose=False, shuffle_applied=Fa
     # Build full questions HTML (with groups and collapsible structure)
     full_questions_html = ""
     last_group = None
-    group_opened = False
     group_id_counter = 0
+    group_opened = False
 
     for i, q in enumerate(questions, 1):
         q_text = sanitize(q.get("text", ""))
         q_type = q.get("type", "multichoice")
         q_no = q.get("question_no", i)
-
         group = q.get("group", "")
+
         if not shuffle_applied:
+            # Handle group changes
             if group != last_group:
+                # Close previous group if open
                 if group_opened:
-                    full_questions_html += '</div></div>'
+                    full_questions_html += '</div></div>'  # close group-questions and group
+                    group_opened = False
+
+                # If new group is non‑empty, open a group container with title
                 if group:
                     group_id_counter += 1
-                    marks_badge = ""
-                    if q.get('marks'):
-                        marks_badge = f'<div class="marks-badge mt-2"><span class="badge bg-warning text-dark">Marks: {q["marks"]}</span></div>'
-
                     full_questions_html += f'''
-                    <div class="question-card" data-question-id="{i}" data-question-type="{q_type}">
-                        <div class="question-header">
-                            <div class="q-number">Question {q_no}</div>
-                            <div class="q-type {q_type}">{q_type.upper()}</div>
+                    <div class="group">
+                        <div class="group-title" onclick="toggleGroup(this)">
+                            <span>📂 {group}</span>
+                            <span class="group-toggle-icon">▼</span>
                         </div>
-                        {marks_badge}
-                        <div class="q-text">{q_text}</div>
+                        <div class="group-questions">
                     '''
                     group_opened = True
                 else:
+                    # No group – just open a wrapper (optional)
                     full_questions_html += '<div class="group"><div class="group-questions">'
                     group_opened = True
+
                 last_group = group
+            # If group is empty and group_opened is False (shouldn't happen)
+            elif not group_opened:
+                full_questions_html += '<div class="group"><div class="group-questions">'
+                group_opened = True
         else:
+            # When shuffling is applied, groups are stripped – just ensure a container
             if not group_opened:
                 full_questions_html += '<div class="group"><div class="group-questions">'
                 group_opened = True
 
-        # Question card
+        # Now output the question card (same as before)
         full_questions_html += f'''
         <div class="question-card" data-question-id="{i}" data-question-type="{q_type}">
             <div class="question-header">

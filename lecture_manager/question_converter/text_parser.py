@@ -242,7 +242,7 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
 
         # Validate question type
         if not validate_question_type(q_type, question_no, line_no, question_text):
-            sys.exit(1)
+            raise ValidationError("Detailed error message")
 
         question["type"] = q_type
         log(f"  Question {question_no}: Set type to '{q_type}'", "INFO", True)
@@ -293,8 +293,7 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
             if line_no and line_no > 0:
                 print(f"        Line No.: {line_no}")
             print(f"        Question: {question_text[:80]}...")
-            print(f"{C.YELLOW}        The 'Correct' field must be either 'true' or 'false'.{C.RESET}")
-            sys.exit(1)
+            raise ValidationError(f"Invalid value for 'Correct' field: '{field_content}'. Must be 'true' or 'false'.")
 
     elif field_name == 'feedback true' or field_name == 'feedback_true':
         question["feedback_true"] = field_content.replace('\n', '<br>')
@@ -325,9 +324,8 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
             if line_no and line_no > 0:
                 print(f"        Line No.: {line_no}")
             print(f"        Question: {question_text[:80]}...")
-            print(f"{C.YELLOW}        Fraction must be in format: '[correct%] [wrong%]'")
             print(f"        Example: '100 -20'{C.RESET}")
-            sys.exit(1)
+            raise ValidationError(f"Invalid fraction format: '{field_content}'. Use 'correct% wrong%'.")
 
     elif field_name == 'penalty':
         try:
@@ -518,7 +516,7 @@ def process_question_lines(question, lines, line_number_start, file_path):
                 print(f"")
                 print(f"        # This is a proper comment (starts with #)")
                 print(f"        // This is also a comment (starts with //){C.RESET}")
-                sys.exit(1)
+                raise ParseError(f"Malformed line at line {actual_line}: '{line[:80]}...'. Expected a field with a colon.")
 
     # Save the last field
     if current_field:
@@ -943,7 +941,7 @@ def parse_text_file(file_path, args):
                 print(f"        Question: {q['text'][:80]}...")
                 print(f"        Duplicates: {', '.join(duplicates)}")
                 print(f"{C.YELLOW}        Fix: Each subquestion must be unique{C.RESET}")
-                sys.exit(1)
+                raise DuplicateQuestionError(f"Duplicate question '{question_text}' at question {question_no} (line {actual_line})")
 
             # Check all pairs have both subquestion and answer
             incomplete_pairs = []
@@ -959,7 +957,7 @@ def parse_text_file(file_path, args):
                 print(f"        Question: {q['text'][:80]}...")
                 print(f"        Incomplete pairs: {incomplete_pairs}")
                 print(f"{C.YELLOW}        Fix: Each pair must have both subquestion and answer{C.RESET}")
-                sys.exit(1)
+                raise MissingCorrectOptionError(f"Question {q['question_no']} has no correct option marked.")
 
             # Set defaults if not specified
             q.setdefault("shuffle_answers", True) # True (this doesn't reveal answers)

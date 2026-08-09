@@ -1,5 +1,3 @@
-# File: setup.py
-
 #!/usr/bin/env python3
 
 import subprocess
@@ -36,8 +34,8 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="lecture-manager",
-    version="2.6.1-1",                     # bumped version
-    description="Unified media manager for YouTube lectures, Facebook content, and offline article reading via Instapaper",
+    version="2.7.0",                     # bumped version
+    description="Unified media manager for YouTube lectures, Facebook content, Instapaper offline reading, question bank, and Pomodoro timer",
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Udaya Raj Joshi",
@@ -66,6 +64,7 @@ setup(
         "beautifulsoup4>=4.9.0",
         "html2text>=2020.1.16",
         "tabulate>=0.8.9",
+        "bleach>=6.0.0",                 # HTML sanitisation for exports
 
         # Article extraction (Instapaper offline reader)
         "readability-lxml>=0.8.1",
@@ -73,6 +72,10 @@ setup(
 
         # OAuth for Instapaper Full API
         "requests-oauthlib>=1.3.0",
+
+        # Pomodoro analytics charts
+        "matplotlib>=3.0.0",
+        "numpy>=1.20.0",
 
         # Optional: for domain extraction in tags (if you implement auto-tagging)
         # "tldextract>=3.0.0",
@@ -91,8 +94,19 @@ setup(
     python_requires=">=3.8",
     classifiers=[
         "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
         "License :: OSI Approved :: MIT License",
         "Operating System :: POSIX :: Linux",
         "Operating System :: Microsoft :: Windows",
+        "Operating System :: MacOS",
+        "Environment :: Console",
+        "Environment :: Web Environment",
+        "Framework :: Flask",
+        "Topic :: Education",
+        "Topic :: Multimedia :: Video",
+        "Topic :: Office/Business",
     ],
 )

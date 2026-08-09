@@ -258,8 +258,7 @@ def run_conversion(args):
         elif input_format == "xml":
             questions = xml_to_questions(args.input, args.verbose)
         else:
-            print(f"{C.RED}[ERROR] Unsupported input format: {input_format}{C.RESET}")
-            sys.exit(1)
+            raise ParseError(f"Unsupported input format: {input_format}")
     except Exception as e:
         import traceback
         traceback.print_exc()

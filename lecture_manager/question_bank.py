@@ -830,7 +830,7 @@ def unified_question_menu():
                     print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
                     for e in errors[:5]:
                         print(f"  {e}")
-            except ConverterError as e:
+            except (ConverterError, ValidationError, ParseError, DuplicateQuestionError, IOError) as e:
                 print_colored(f"[!] {e}", COLORS.RED)
 
         elif choice == 'b':
@@ -855,7 +855,7 @@ def unified_question_menu():
                     print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
                     for e in errors[:5]:
                         print(f"  {e}")
-            except ConverterError as e:
+            except (ConverterError, ValidationError, ParseError, DuplicateQuestionError, IOError) as e:
                 print_colored(f"[!] {e}", COLORS.RED)
 
         elif choice == 'e':
@@ -872,9 +872,7 @@ def unified_question_menu():
                 # We need to override format? The parser expects -i and -o; but we want to import to DB.
                 # For advanced import, we can just call run_conversion with parsed args, which will parse and insert.
                 run_conversion(parsed)
-            except SystemExit:
-                print_colored("[!] Invalid arguments.", COLORS.RED)
-            except Exception as e:
+            except (ConverterError, ValidationError, ParseError, DuplicateQuestionError, IOError) as e:
                 print_colored(f"[!] {e}", COLORS.RED)
 
         # ----- Export -----
@@ -950,7 +948,6 @@ def unified_question_menu():
             _last_filtered_questions = filtered  # store for potential reuse
 
             from .question_converter.exam_output import create_exam_html
-            from datetime import datetime
             default_name = f"exam_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
             outfile = input(color_text(f"Output Exam HTML file (default: {default_name}): ", COLORS.MAGENTA)).strip()
             if not outfile:

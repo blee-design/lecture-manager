@@ -5,6 +5,6 @@ include lecture_manager/*.py
 include lecture.py 
 include setup.py
 include gallery-dl.conf
-# include README.md
-# include Makefile
-# include LICENSE
+include README.md
+include Makefile
+include LICENSE
