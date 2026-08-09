@@ -751,8 +751,6 @@ def import_export_submenu():
         else:
             print_colored("[!] Invalid option.", COLORS.RED)
 
-        input("\nPress Enter to continue...")
-
 # Question bank menu
 def unified_question_menu():
     global _last_filtered_questions
@@ -990,26 +988,27 @@ def unified_question_menu():
         elif choice == 'm':
             from .question_converter.converter_main import parser, run_conversion
             print("\n[Run converter with custom arguments]")
+            print("💡 If your file paths contain spaces, enclose them in quotes (e.g., -i \"my file.txt\").")
             args_str = input(color_text("Arguments (e.g., -i input.txt -o output.xml --shuffle): ", COLORS.MAGENTA)).strip()
             if not args_str:
                 continue
             import shlex
-            argv = shlex.split(args_str)
             try:
+                argv = shlex.split(args_str)
                 parsed = parser.parse_args(argv)
                 run_conversion(parsed)
             except SystemExit:
-                print_colored("[!] Invalid arguments.", COLORS.RED)
+                # The parser has already printed its error message; we just add a helpful hint.
+                print_colored("💡 If your path contains spaces, try wrapping it in quotes, e.g., -i \"my file.txt\"", COLORS.YELLOW)
+                # Continue the loop; the user can try again.
             except Exception as e:
-                print_colored(f"[!] {e}", COLORS.RED)
+                print_colored(f"[!] Unexpected error: {e}", COLORS.RED)
 
         elif choice == '0':
             break
 
         else:
             print_colored("[!] Invalid option.", COLORS.RED)
-
-        input("\nPress Enter to continue...")
 
 # ---------- Interactive functions ----------
 
