@@ -9,6 +9,8 @@ BACKUP_DIR     := ./backups
 TIMESTAMP      := $(shell date +%Y%m%d_%H%M%S)
 BACKUP_FILE    := $(BACKUP_DIR)/$(PROJECT_NAME)_backup_$(TIMESTAMP).tar.xz
 
+FLASK_DEBUG=1
+
 # --- Database settings (for backup-db) ---
 # Credentials are read from environment variables; you can set them in a .env file or pass inline.
 DB_HOST        ?= localhost
@@ -36,9 +38,8 @@ EXCLUDE := --exclude='__pycache__' \
 
 # --- Python / virtual environment ---
 PYTHON          := python3
-VENV_DIR        := venv
-PIP             := $(VENV_DIR)/bin/pip
-PYTHON_VENV     := $(VENV_DIR)/bin/python
+PIP             := pip3
+PYTHON_VENV     := python3
 FLASK_APP       := lecture_manager/web.py
 FLASK_ENV       := development
 PORT            := 5000
@@ -103,9 +104,13 @@ run:
 
 # --- Run Web Interface ---
 .PHONY: web
+# web:
+# 	@echo "$(BLUE)Starting web server on $(HOST):$(PORT)...$(NC)"
+# 	FLASK_APP=$(FLASK_APP) FLASK_ENV=$(FLASK_ENV) $(PYTHON_VENV) -m flask run --host=$(HOST) --port=$(PORT)
+#
 web:
 	@echo "$(BLUE)Starting web server on $(HOST):$(PORT)...$(NC)"
-	FLASK_APP=$(FLASK_APP) FLASK_ENV=$(FLASK_ENV) $(PYTHON_VENV) -m flask run --host=$(HOST) --port=$(PORT)
+	FLASK_APP=$(FLASK_APP) FLASK_ENV=$(FLASK_ENV) FLASK_DEBUG=1 python3 -m flask run --host=$(HOST) --port=$(PORT)
 
 # --- Pomodoro Timer ---
 .PHONY: pomodoro

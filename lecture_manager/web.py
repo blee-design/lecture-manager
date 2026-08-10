@@ -138,7 +138,15 @@ def lectures():
     search = request.args.get('search', '')
     sort_by = request.args.get('sort', 'nepali_date')
     order = request.args.get('order', 'desc')
+    paper_filter = request.args.get('paper', '')
+
     records = get_all_youtube_records()
+
+    # ---- Paper filter ----
+    if paper_filter:
+        records = [r for r in records if r.get('paper') == paper_filter]
+
+    # ---- Search filter ----
     if search:
         search_lower = search.lower()
         records = [r for r in records if
@@ -147,6 +155,8 @@ def lectures():
                    search_lower in (r.get('chapter') or '').lower() or
                    search_lower in (r.get('lecturer') or '').lower() or
                    search_lower in (r.get('video_id') or '').lower()]
+
+    # ---- Sorting ----
     reverse = (order == 'desc')
     if sort_by == 'syllabus_id':
         records.sort(key=lambda x: x.get('syllabus_id') or '', reverse=reverse)
@@ -160,7 +170,9 @@ def lectures():
         records.sort(key=lambda x: x.get('time') or '', reverse=reverse)
     else:
         records.sort(key=lambda x: x.get('nepali_date') or '', reverse=True)
-    return render_template('lectures.html', records=records, search=search, sort_by=sort_by, order=order)
+
+    return render_template('lectures.html', records=records, search=search,
+                           sort_by=sort_by, order=order, paper_filter=paper_filter)
 
 @app.route('/lecture/<int:id>')
 def lecture_detail(id):
@@ -720,5 +732,14 @@ def converter_export():
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
-def run_web_server(host='127.0.0.1', port=5000):
-    app.run(host=host, port=port, debug=False, threaded=True)
+def run_web_server(host='127.0.0.1', port=5000, debug=False):
+    try:
+        app.run(host=host, port=port, debug=debug, threaded=True)
+    except OSError as e:
+        if "Address already in use" in str(e):
+            print_colored(f"[!] Port {port} is already in use.", COLORS.RED)
+            print_colored("[i] You can stop the other server or use a different port.", COLORS.YELLOW)
+            print_colored("[i] To find and kill the process, run: fuser -k 5000/tcp", COLORS.BLUE)
+        else:
+            print_colored(f"[!] Failed to start server: {e}", COLORS.RED)
+        # input("\nPress Enter to continue...")

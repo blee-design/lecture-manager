@@ -25,6 +25,11 @@ from .instapaper import instapaper_menu
 from .question_converter import create_tables, import_from_file, get_questions, delete_question, export_to_file, run_conversion
 from .question_converter.exceptions import ConverterError
 
+#==============================================================================
+# Toggle for Flask debug mode True/False
+WEB_DEBUG = True
+#==============================================================================
+
 def show_banner():
     width = 60
     title = "YOUTUBE LECTURE MANAGER  v2.3.0"
@@ -161,7 +166,7 @@ def main():
             ("⚙️ Edit database configuration", edit_config),
         ],
         '5': [
-            ("🌐 Start web interface", lambda: run_web_server(host='0.0.0.0')),
+            ("🌐 Start web interface", lambda: run_web_server(host='0.0.0.0', debug=WEB_DEBUG)),
             ("📈 Show library dashboard", show_dashboard),
         ],
         '6': [

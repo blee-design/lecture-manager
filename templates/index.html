@@ -1,5 +1,4 @@
 <!-- index.html -->
-
 {% extends "base.html" %}
 {% block content %}
 <div class="row">
@@ -22,20 +21,20 @@
     </div>
   </div>
   <div class="col-md-4">
-  <div class="card text-white bg-warning mb-3">
-    <div class="card-body">
-      <h5 class="card-title">Orphan Files (YouTube)</h5>
-      <p class="card-text display-4">{{ orphan_yt }}</p>
+    <div class="card text-white bg-warning mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Orphan Files (YouTube)</h5>
+        <p class="card-text display-4">{{ orphan_yt }}</p>
+      </div>
     </div>
   </div>
 </div>
-</div>
+
+<!-- ===== QUICK ACTIONS (unchanged) ===== -->
 <div class="row">
   <div class="col">
     <div class="card">
-      <div class="card-header">
-        Quick Actions
-      </div>
+      <div class="card-header">Quick Actions</div>
       <div class="card-body">
         <a href="{{ url_for('add_lecture_web') }}" class="btn btn-success"><i class="bi bi-plus-circle"></i> Add YouTube Lecture</a>
         <a href="{{ url_for('tally') }}" class="btn btn-info"><i class="bi bi-list-check"></i> Tally Files</a>
@@ -47,6 +46,26 @@
     </div>
   </div>
 </div>
+
+<!-- ===== PAPER QUICK LINKS ===== -->
+<div class="row mt-4">
+  <div class="col">
+    <div class="card">
+      <div class="card-header">
+        📁 Quick Filter by Paper
+      </div>
+      <div class="card-body">
+        <a href="{{ url_for('lectures', paper='pretest') }}" class="btn btn-outline-primary">Pretest</a>
+        <a href="{{ url_for('lectures', paper='paper_i') }}" class="btn btn-outline-primary">Paper I</a>
+        <a href="{{ url_for('lectures', paper='paper_ii') }}" class="btn btn-outline-primary">Paper II</a>
+        <a href="{{ url_for('lectures', paper='paper_iii') }}" class="btn btn-outline-primary">Paper III</a>
+        <a href="{{ url_for('lectures') }}" class="btn btn-outline-secondary">All</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== CONFIG ===== -->
 <div class="row mt-4">
   <div class="col">
     <div class="card">
