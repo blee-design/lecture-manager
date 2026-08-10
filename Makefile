@@ -3,6 +3,10 @@
 # Author: Udaya Raj Joshi
 # ============================================================
 
+# --- Version management ---
+# Read version from __init__.py
+CURRENT_VERSION := $(shell grep -oP '__version__ = "\K[0-9a-zA-Z.-]+' lecture_manager/__init__.py)
+
 # --- Project settings ---
 PROJECT_NAME   := lecture-manager
 BACKUP_DIR     := ./backups
@@ -71,6 +75,20 @@ help:
 	@echo "  $(BLUE)backup$(NC)        - Create a timestamped backup tarball of the project"
 	@echo "  $(BLUE)backup-db$(NC)     - Dump the MariaDB database to a SQL file (requires DB credentials)"
 	@echo "  $(BLUE)dist$(NC)          - Build a source distribution (.tar.gz) for PyPI"
+
+.PHONY: release
+release: distclean
+	@echo "$(GREEN)Current version: $(CURRENT_VERSION)$(NC)"
+	@read -p "Enter new version (or press Enter to keep current): " VERSION; \
+	if [ -z "$$VERSION" ]; then \
+		VERSION=$(CURRENT_VERSION); \
+	fi; \
+	echo "$(BLUE)Setting version to: $$VERSION$(NC)"; \
+	sed -i 's/__version__ = ".*"/__version__ = "'"$$VERSION"'"/' lecture_manager/__init__.py; \
+	sed -i 's/version=".*"/version="'"$$VERSION"'"/' setup.py; \
+	echo "$(GREEN)Version updated to $$VERSION$(NC)"; \
+	echo "$(BLUE)Building distribution...$(NC)"; \
+	$(MAKE) dist
 
 # --- Virtual environment ---
 .PHONY: venv
