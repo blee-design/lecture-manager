@@ -54,6 +54,7 @@ setup(
         "gallery-dl>=1.20.0",
         "ffmpeg-python>=0.2.0",
         "curl-cffi>=0.5.0",
+        "tinycss2",
 
         # YouTube upload
         "google-api-python-client>=2.0.0",
