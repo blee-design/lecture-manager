@@ -9,8 +9,8 @@ VALID_QUESTION_TYPES = ["multichoice", "essay", "truefalse", "matching"]
 
 
 # -------------------- JSON PARSING --------------------
-def json_to_questions(input_file, verbose=False):  # Add verbose parameter
-    """Load questions from JSON file"""
+def json_to_questions(input_file, verbose=False):
+    """Load questions from JSON file including all metadata."""
     with open(input_file, 'r', encoding='utf-8') as f:
         json_data = json.load(f)
 
@@ -27,29 +27,32 @@ def json_to_questions(input_file, verbose=False):  # Add verbose parameter
         if q_type not in VALID_QUESTION_TYPES:
             raise UnknownQuestionTypeError(f"Unknown question type: '{q_type}' in JSON question {i}")
 
-        # Validate question type
-        if q_type not in VALID_QUESTION_TYPES:
-            raise UnknownQuestionTypeError(f"Unknown question type: '{q_type}' in JSON question {i}")
-            print(f"        Question No.: {i}")
-            print(f"        Question: {item.get('text', '')[:80]}...")
-            print(f"{C.YELLOW}        Available question types:")
-            print(f"        • multichoice - Multiple choice questions (MCQ)")
-            print(f"        • essay - Essay questions (long answer)")
-            print(f"        • truefalse - True/False questions{C.RESET}")
-
+        # Build the question dict with all fields
         question = {
+            "question_no": item.get("question_no", i),
+            "question_date": item.get("question_date", ""),
+            "institution": item.get("institution", ""),
+            "level": item.get("level", ""),
+            "paper": item.get("paper", ""),
+            "group": item.get("group", ""),
+            "subject": item.get("subject", ""),
+            "chapter": item.get("chapter", ""),
+            "marks": item.get("marks"),
+            "notes": item.get("notes", ""),
+            "source": item.get("source", ""),
             "text": combined,
             "nepali_transcription": nep,
             "english_transcription": eng,
-            "type": q_type,
             "type": q_type,
             "general_feedback": item.get("general_feedback", ""),
             "grader_info": item.get("grader_info", ""),
             "grade": item.get("grade", 1),
             "lines": item.get("lines", 15),
             "penalty": item.get("penalty", 0),
-            "question_no": item.get("question_no", i),
-            "original_question_no": item.get("question_no", i),  # Store original
+            "original_question_no": item.get("question_no", i),
+            "options": [],
+            "pairs": [],
+            "hints": [],
         }
 
         # Log question details
@@ -70,7 +73,6 @@ def json_to_questions(input_file, verbose=False):  # Add verbose parameter
                     log(f"Question {i}: Correct option {opt_idx}: {opt_preview}", "INFO", verbose)
                     break
 
-        # Handle matching questions
         elif item.get("type") == "matching":
             question["shuffle_answers"] = item.get("shuffle_answers", True)
             question["show_num_correct"] = item.get("show_num_correct", False)
@@ -87,7 +89,6 @@ def json_to_questions(input_file, verbose=False):  # Add verbose parameter
 
             log(f"Question {i}: Matching with {len(question['pairs'])} pairs", "INFO", verbose)
 
-        # True/False handling
         elif item.get("type") == "truefalse":
             question["type"] = "truefalse"
             question["options"] = [
@@ -96,8 +97,8 @@ def json_to_questions(input_file, verbose=False):  # Add verbose parameter
             ]
             question["feedback_true"] = item.get("feedback_true", "")
             question["feedback_false"] = item.get("feedback_false", "")
-            question["fraction_correct"] = item.get("fraction_correct", 100) # Default 100%
-            question["fraction_wrong"] = item.get("fraction_wrong", -20) # Default -20%
+            question["fraction_correct"] = item.get("fraction_correct", 100)
+            question["fraction_wrong"] = item.get("fraction_wrong", -20)
             log(f"Question {i}: True/False, correct: {item.get('correct_answer', True)}", "INFO", verbose)
         else:
             question["attachments"] = item.get("attachments", 0)
@@ -125,12 +126,12 @@ def convert_decimals(obj):
 
 # -------------------- JSON OUTPUT --------------------
 def create_json_output(questions, output_file, verbose=False):
-    """Convert questions list to JSON format"""
+    """Convert questions list to JSON format with all fields, safe for Decimal/datetime."""
     log(f"Creating JSON output with {len(questions)} questions", "INFO", verbose)
 
     json_data = []
     for i, q in enumerate(questions, 1):
-        # Build JSON-friendly structure
+        # Base fields common to all question types
         json_q = {
             "question_no": q.get("question_no", i),
             "type": q.get("type", "multichoice"),
@@ -145,16 +146,27 @@ def create_json_output(questions, output_file, verbose=False):
             "group": q.get("group", ""),
             "institution": q.get("institution", ""),
             "level": q.get("level", ""),
-            "paper": q.get("paper", ""),
+            "paper": q.get("paper", ""),   # already mapped to internal key
             "subject": q.get("subject", ""),
             "chapter": q.get("chapter", ""),
             "marks": q.get("marks"),
             "notes": q.get("notes", ""),
+            "attachments": q.get("attachments", 0),
+            "filetypes": q.get("filetypes", ".doc,.docx,.pdf,.png,.jpg,.jpeg"),
+            "maxbytes": q.get("maxbytes", 2097152),
+            # "question_date": q.get("question_date", ""),
+            "question_date": q.get("date", ""),
+            "source": q.get("source", ""),
+            "fraction_correct": q.get("fraction_correct", 100),
+            "fraction_wrong": q.get("fraction_wrong", -20),
+            "shuffle_answers": q.get("shuffle_answers", True),
+            "show_num_correct": q.get("show_num_correct", False),
+            "correct_feedback": q.get("correct_feedback", ""),
+            "partially_correct_feedback": q.get("partially_correct_feedback", ""),
+            "incorrect_feedback": q.get("incorrect_feedback", ""),
         }
 
         if q.get("type") == "multichoice":
-            json_q["fraction_correct"] = q.get("fraction_correct", 100)
-            json_q["fraction_wrong"] = q.get("fraction_wrong", -20)
             json_q["options"] = q.get("options", [])
             log(f"Writing Question {i}: MCQ with {len(json_q['options'])} options", "INFO", verbose)
 
@@ -182,11 +194,10 @@ def create_json_output(questions, output_file, verbose=False):
             log(f"Writing Question {i}: True/False (Correct: {correct_answer})", "INFO", verbose)
 
         else:  # essay
-            json_q["attachments"] = q.get("attachments", 0)
-            json_q["filetypes"] = q.get("filetypes", ".doc,.docx,.pdf,.png,.jpg,.jpeg")
-            json_q["maxbytes"] = q.get("maxbytes", 2*1024*1024)
             log(f"Writing Question {i}: Essay (Grade: {json_q['grade']})", "INFO", verbose)
 
+        # Convert Decimal, datetime, etc. to JSON-safe types
+        json_q = sanitize_for_json(json_q)
         json_data.append(json_q)
 
     with open(output_file, 'w', encoding='utf-8') as f:

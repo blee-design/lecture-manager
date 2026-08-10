@@ -8,7 +8,6 @@ from .utils import (
 )
 from .constants import C
 from .exceptions import ConverterError, ParseError, ValidationError, IOError
-from ..question_bank import check_duplicate
 
 # Define valid question types
 VALID_QUESTION_TYPES = ["multichoice", "essay", "truefalse", "matching"]

@@ -17,8 +17,21 @@ import shutil
 from datetime import date, datetime
 from collections import defaultdict
 from decimal import Decimal
+from types import SimpleNamespace
 from .db import get_connection
 from .utils import print_colored, color_text, COLORS, clean_field, html_to_terminal, sanitize_for_json
+from .question_converter.exceptions import (
+    ConverterError,
+    ValidationError,
+    ParseError,
+    DuplicateQuestionError,
+    IOError,
+    MissingCorrectOptionError,      # optional, but safe
+    MultipleCorrectOptionsError,    # optional
+    InsufficientOptionsError,       # optional
+    MatchingPairError,              # optional
+    UnknownQuestionTypeError,       # optional
+)
 
 _last_filtered_questions = None
 
@@ -756,6 +769,7 @@ def unified_question_menu():
     global _last_filtered_questions
     """Unified menu for all question operations – bank + converter merged."""
     from .question_converter.db_handler import get_questions as get_questions_db
+    from .question_converter.constants import C
     verbose_mode = False
 
     while True:
@@ -822,7 +836,8 @@ def unified_question_menu():
                 continue
             source = input(color_text("Source name (optional): ", COLORS.MAGENTA)).strip() or None
             try:
-                count, errors = import_from_file(filepath, 'txt', source=source)
+                args = SimpleNamespace(verbose=True, bypass_duplicate=False, bypass_option=False, questions=None)
+                count, errors = import_from_file(filepath, 'txt', source=source, args=args)   # <-- pass args
                 print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
                 if errors:
                     print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
@@ -836,8 +851,22 @@ def unified_question_menu():
             import_questions_csv()
 
         elif choice == 'c':
-            from .question_bank import import_questions_json
-            import_questions_json()
+            from .question_converter import import_from_file
+            from .question_converter.exceptions import ConverterError
+            filepath = input(color_text("JSON file path: ", COLORS.MAGENTA)).strip()
+            if not filepath:
+                continue
+            source = input(color_text("Source name (optional): ", COLORS.MAGENTA)).strip() or None
+            try:
+                args = SimpleNamespace(verbose=True, bypass_duplicate=False, bypass_option=False, questions=None)
+                count, errors = import_from_file(filepath, 'json', source=source, args=args)
+                print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
+                if errors:
+                    print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
+                    for e in errors[:5]:
+                        print(f"  {e}")
+            except (ConverterError, ValidationError, ParseError, DuplicateQuestionError, IOError) as e:
+                print_colored(f"[!] {e}", COLORS.RED)
 
         elif choice == 'd':
             from .question_converter import import_from_file
@@ -847,7 +876,8 @@ def unified_question_menu():
                 continue
             source = input(color_text("Source name (optional): ", COLORS.MAGENTA)).strip() or None
             try:
-                count, errors = import_from_file(filepath, 'xml', source=source)
+                args = SimpleNamespace(verbose=True, bypass_duplicate=False, bypass_option=False, questions=None)
+                count, errors = import_from_file(filepath, 'xml', source=source, args=args)   # <-- pass args
                 print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
                 if errors:
                     print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
@@ -886,7 +916,8 @@ def unified_question_menu():
             if not outfile:
                 outfile = default_name
             try:
-                export_to_file(questions, outfile, 'txt')
+                args = SimpleNamespace(verbose=True)
+                export_to_file(questions, outfile, 'txt', args=args)   # <-- pass args
                 print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
             except Exception as e:
                 print_colored(f"[!] {e}", COLORS.RED)
@@ -896,8 +927,22 @@ def unified_question_menu():
             export_questions_csv()
 
         elif choice == 'h':
-            from .question_bank import export_questions_json
-            export_questions_json()
+            from .question_converter import export_to_file
+            from .question_converter.db_handler import get_questions as get_questions_db
+            questions = get_questions_db()
+            if not questions:
+                print_colored("[i] No questions to export.", COLORS.YELLOW)
+                continue
+            default_name = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            outfile = input(color_text(f"Output JSON file (default: {default_name}): ", COLORS.MAGENTA)).strip()
+            if not outfile:
+                outfile = default_name
+            try:
+                args = SimpleNamespace(verbose=True)
+                export_to_file(questions, outfile, 'json', args=args)
+                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
+            except Exception as e:
+                print_colored(f"[!] {e}", COLORS.RED)
 
         elif choice == 'i':
             from .question_converter import export_to_file
@@ -911,7 +956,8 @@ def unified_question_menu():
             if not outfile:
                 outfile = default_name
             try:
-                export_to_file(questions, outfile, 'xml')
+                args = SimpleNamespace(verbose=True)
+                export_to_file(questions, outfile, 'xml', args=args)   # <-- pass args
                 print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
             except Exception as e:
                 print_colored(f"[!] {e}", COLORS.RED)
@@ -928,13 +974,13 @@ def unified_question_menu():
             if not outfile:
                 outfile = default_name
             try:
-                export_to_file(questions, outfile, 'html')
+                args = SimpleNamespace(verbose=True)
+                export_to_file(questions, outfile, 'html', args=args)   # <-- pass args
                 print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
             except Exception as e:
                 print_colored(f"[!] {e}", COLORS.RED)
 
         elif choice == 'k':
-            # Exam HTML export with filters
             filtered, cancelled = _get_filtered_questions_interactive()
             if cancelled:
                 print_colored("Cancelled.", COLORS.YELLOW)
@@ -942,9 +988,7 @@ def unified_question_menu():
             if not filtered:
                 print_colored("[i] No questions match the filters. Export cancelled.", COLORS.YELLOW)
                 continue
-
-            _last_filtered_questions = filtered  # store for potential reuse
-
+            _last_filtered_questions = filtered
             from .question_converter.exam_output import create_exam_html
             default_name = f"exam_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
             outfile = input(color_text(f"Output Exam HTML file (default: {default_name}): ", COLORS.MAGENTA)).strip()
@@ -952,7 +996,7 @@ def unified_question_menu():
                 outfile = default_name
             time_str = input(color_text("Time limit in minutes (default 90): ", COLORS.MAGENTA)).strip()
             time_min = int(time_str) if time_str.isdigit() else 90
-            create_exam_html(filtered, outfile, verbose=False, time_minutes=time_min, pass_marks=45)
+            create_exam_html(filtered, outfile, verbose=True, time_minutes=time_min, pass_marks=45)   # <-- set verbose=True
             print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
 
         elif choice == 'l':
@@ -979,6 +1023,7 @@ def unified_question_menu():
 
             try:
                 from .question_converter import export_to_file
+                args = SimpleNamespace(verbose=True)   # 👈 add verbose
                 export_to_file(filtered, outfile, fmt)
                 print_colored(f"[✓] Exported {len(filtered)} questions to {outfile}", COLORS.GREEN)
             except Exception as e:
@@ -1362,52 +1407,102 @@ def delete_question_interactive():
 
 # ---------- Export / Import (CSV) ----------
 def export_questions_csv():
-    """Export all questions to CSV (without internal IDs)."""
+    """Export all questions to CSV, including all fields and related data (options/pairs/hints) as JSON."""
     print("\n" + "═" * 50)
-    print_colored("  EXPORT QUESTIONS TO CSV", COLORS.CYAN, bold=True)
+    print_colored("  EXPORT QUESTIONS TO CSV (FULL)", COLORS.CYAN, bold=True)
     print("═" * 50)
 
+    print_colored("[i] Fetching questions from database...", COLORS.BLUE)
     rows = get_all_questions()
     if not rows:
         print_colored("[i] No questions to export.", COLORS.YELLOW)
         return
 
-    filename = input(color_text("Enter CSV filename (default: questions_export.csv): ", COLORS.MAGENTA)).strip()
+    filename = input(color_text("Enter CSV filename (default: questions_export_full.csv): ", COLORS.MAGENTA)).strip()
     if not filename:
-        filename = "questions_export.csv"
+        filename = "questions_export_full.csv"
     if not filename.endswith('.csv'):
         filename += '.csv'
 
-    # Define columns to export (excluding id, created_at, updated_at)
-    export_fields = ['question_date', 'institution', 'subject', 'paper', 'group',
-                     'marks', 'chapter', 'question_number', 'nepali_transcription',
-                     'english_transcription', 'level', 'notes']
+    import json
+    from decimal import Decimal
+    from datetime import date, datetime
 
-    # Prepare data
+    export_fields = [
+        'question_date', 'institution', 'level', 'paper', 'group',
+        'subject', 'chapter', 'question_number', 'marks',
+        'nepali_transcription', 'english_transcription', 'notes',
+        'source', 'type',
+        'general_feedback', 'fraction_correct', 'fraction_wrong',
+        'shuffle_answers', 'show_num_correct',
+        'correct_feedback', 'partially_correct_feedback', 'incorrect_feedback',
+        'response_lines', 'attachments', 'filetypes', 'maxbytes',
+        'grader_info'
+    ]
+
     data = []
-    for row in rows:
+    conn = get_connection()
+    total = len(rows)
+    print_colored(f"[i] Processing {total} questions...", COLORS.BLUE)
+
+    for idx, row in enumerate(rows, 1):
+        # Show progress every 50 questions
+        if idx % 50 == 0 or idx == total:
+            print(f"{COLORS.CYAN}  [{idx}/{total}] Processing question {row.get('question_number', '?')}...{COLORS.RESET}")
+
+        qid = row['id']
+        cursor = conn.cursor(dictionary=True)
+
+        # Fetch related data
+        cursor.execute("SELECT * FROM question_options WHERE question_id = %s ORDER BY display_order", (qid,))
+        options = cursor.fetchall()
+        cursor.execute("SELECT * FROM question_matching_pairs WHERE question_id = %s ORDER BY display_order", (qid,))
+        pairs = cursor.fetchall()
+        cursor.execute("SELECT * FROM question_hints WHERE question_id = %s ORDER BY hint_number", (qid,))
+        hints = cursor.fetchall()
+        cursor.close()
+
         out_row = {}
         for f in export_fields:
             val = row.get(f)
             if isinstance(val, (datetime, date)):
                 val = str(val)
+            if isinstance(val, Decimal):
+                val = int(val) if val % 1 == 0 else float(val)
             out_row[f] = val
+
+        out_row['options_json'] = json.dumps(options, ensure_ascii=False) if options else None
+        out_row['pairs_json'] = json.dumps(pairs, ensure_ascii=False) if pairs else None
+        out_row['hints_json'] = json.dumps(hints, ensure_ascii=False) if hints else None
+
         data.append(out_row)
 
+    conn.close()
+
+    fieldnames = export_fields + ['options_json', 'pairs_json', 'hints_json']
+    print_colored(f"[i] Writing CSV file: {filename}...", COLORS.BLUE)
     try:
         with open(filename, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=export_fields)
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(data)
         print_colored(f"[✓] Exported {len(data)} questions to {filename}", COLORS.GREEN)
         print_colored(f"[i] File size: {os.path.getsize(filename) / 1024:.2f} KB", COLORS.BLUE)
+        print_colored("[i] Options, pairs, hints are saved as JSON strings in separate columns.", COLORS.YELLOW)
+        print_colored("[i] To re-import this CSV, use the enhanced import function (option b).", COLORS.YELLOW)
     except Exception as e:
         print_colored(f"[!] Export failed: {e}", COLORS.RED)
 
 def import_questions_csv():
+    """
+    Import questions from CSV with full support for options/pairs/hints.
+    The CSV should have columns including 'options_json', 'pairs_json', 'hints_json'
+    as produced by the enhanced CSV export.
+    """
     print("\n" + "═" * 50)
-    print_colored("  IMPORT QUESTIONS FROM CSV", COLORS.CYAN, bold=True)
+    print_colored("  IMPORT QUESTIONS FROM CSV (FULL)", COLORS.CYAN, bold=True)
     print("═" * 50)
+    print("Expects a CSV with all scalar columns + options_json, pairs_json, hints_json.\n")
 
     filename = input(color_text("Enter CSV filename: ", COLORS.MAGENTA)).strip()
     if not filename or not os.path.exists(filename):
@@ -1421,27 +1516,50 @@ def import_questions_csv():
     except Exception as e:
         print_colored(f"[!] Failed to read CSV: {e}", COLORS.RED)
         return
+
     if not rows:
         print_colored("[i] No data found.", COLORS.YELLOW)
         return
 
-    # Normalize question numbers and clean empty strings
+    # Normalise rows: convert empty strings to None, parse JSON columns
     for row in rows:
-        row.pop('id', None)
-        if 'question_number' in row and row['question_number']:
-            row['question_number'] = normalize_question_number(row['question_number'])
-        if 'marks' in row and row['marks'] and row['marks'].isdigit():
-            row['marks'] = int(row['marks'])
-
-        if row.get('marks'):
-            row['marks'] = int(row['marks']) if row['marks'].isdigit() else None
-        if row.get('grade'):
-            row['grade'] = float(row['grade'])
-
-        # Convert empty strings to None for optional fields
-        for field in ['paper', 'group', 'chapter', 'notes']:
+        # Remove empty strings for optional fields
+        for field in ['paper', 'group', 'chapter', 'notes', 'source']:
             if field in row and row[field] == '':
                 row[field] = None
+
+        # Convert marks and grade to int/float
+        if row.get('marks'):
+            try:
+                row['marks'] = int(row['marks'])
+            except ValueError:
+                row['marks'] = None
+        if row.get('grade'):
+            try:
+                row['grade'] = float(row['grade'])
+            except ValueError:
+                row['grade'] = 1
+
+        # Parse JSON columns
+        for json_col in ['options_json', 'pairs_json', 'hints_json']:
+            if row.get(json_col):
+                try:
+                    row[json_col] = json.loads(row[json_col])
+                except json.JSONDecodeError:
+                    row[json_col] = None
+            else:
+                row[json_col] = None
+
+        # Map question_number -> question_no (converter expects 'question_no')
+        if 'question_number' in row:
+            row['question_no'] = row['question_number']
+
+        # Map response_lines -> lines (converter expects 'lines')
+        if 'response_lines' in row:
+            row['lines'] = row['response_lines']
+
+    from .question_converter.db_handler import insert_question
+    from .question_converter.exceptions import DuplicateQuestionError
 
     print(f"\n[i] Found {len(rows)} questions in the CSV file.")
     print("How to handle duplicates?")
@@ -1457,80 +1575,100 @@ def import_questions_csv():
     cursor = conn.cursor()
     added = 0
     updated = 0
-    no_change = 0
     skipped = 0
-
-    fields = ['question_date', 'institution', 'subject', 'paper', 'group',
-              'marks', 'chapter', 'question_number', 'nepali_transcription',
-              'english_transcription', 'level', 'notes']
-    escaped_fields = [f"`{f}`" if f == 'group' else f for f in fields]
+    errors = []
 
     total = len(rows)
     for idx, row in enumerate(rows, 1):
-        print(f"  Processing {idx}/{total}: Q{row.get('question_number', '?')} ...", end="\r")
-        date = row.get('question_date')
-        institution = row.get('institution')
-        level = row.get('level')
-        paper = row.get('paper')
-        group = row.get('group')
-        question_number = row.get('question_number')
+        if idx % 5 == 0 or idx == total:
+            qno = row.get('question_no', '?')
+            print(f"{C.CYAN}  [{idx}/{total}] Processing Q{qno}...{C.RESET}")
 
-        # ----- check duplicate using full key -----
-        dup_id = None
-        if date and institution and level and paper is not None and group is not None and question_number:
-            dup_id = check_duplicate(date, institution, level, paper, group, question_number)
+        # Build a question dict suitable for insert_question
+        q_dict = {
+            'question_date': row.get('question_date'),
+            'institution': row.get('institution'),
+            'level': row.get('level'),
+            'paper': row.get('paper'),       # already internal key
+            'group': row.get('group'),
+            'subject': row.get('subject'),
+            'chapter': row.get('chapter'),
+            'question_no': row.get('question_no'),
+            'marks': row.get('marks'),
+            'nepali_transcription': row.get('nepali_transcription'),
+            'english_transcription': row.get('english_transcription'),
+            'notes': row.get('notes'),
+            'source': row.get('source'),
+            'type': row.get('type', 'essay'),
+            'grade': row.get('grade', 1),
+            'lines': row.get('lines', 15),
+            'penalty': row.get('penalty', 0),
+            'general_feedback': row.get('general_feedback'),
+            'fraction_correct': row.get('fraction_correct', 100),
+            'fraction_wrong': row.get('fraction_wrong', -20),
+            'shuffle_answers': row.get('shuffle_answers', True),
+            'show_num_correct': row.get('show_num_correct', False),
+            'correct_feedback': row.get('correct_feedback'),
+            'partially_correct_feedback': row.get('partially_correct_feedback'),
+            'incorrect_feedback': row.get('incorrect_feedback'),
+            'attachments': row.get('attachments', 0),
+            'filetypes': row.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg'),
+            'maxbytes': row.get('maxbytes', 2097152),
+            'grader_info': row.get('grader_info'),
+            # Related data (parsed JSON)
+            'options': row.get('options_json'),
+            'pairs': row.get('pairs_json'),
+            'hints': row.get('hints_json'),
+        }
 
-        if dup_id:
+        # Remove None values (so insert_question uses defaults)
+        q_dict = {k: v for k, v in q_dict.items() if v is not None}
+
+        try:
+            if choice == '1':
+                # Skip duplicates: force=False will raise DuplicateQuestionError
+                insert_question(q_dict, source=row.get('source'), force=False)
+                added += 1
+            elif choice == '2':
+                # Overwrite: force=True will update existing
+                insert_question(q_dict, source=row.get('source'), force=True)
+                updated += 1
+            else:  # choice == '3'
+                # Abort on duplicate: we check first
+                # We'll let insert_question raise and catch to abort
+                insert_question(q_dict, source=row.get('source'), force=False)
+                added += 1
+        except DuplicateQuestionError as e:
             if choice == '1':
                 skipped += 1
-                print(f"  [{idx}/{total}] Skipped Q{question_number} (ID: {dup_id})     ")
-                continue
-            elif choice == '2':
-                updates = {}
-                for f in fields:
-                    val = row.get(f)
-                    if val is not None and val != '':
-                        updates[f] = val
-                if not updates:
-                    print(f"  [{idx}/{total}] Q{question_number} – no fields to update, skipping.")
-                    skipped += 1
-                    continue
-
-                status = update_question(dup_id, **updates)
-                if status == 'updated':
-                    updated += 1
-                    print(f"  [{idx}/{total}] Updated Q{question_number} (ID: {dup_id})     ")
-                elif status == 'no_change':
-                    no_change += 1
-                    print(f"  [{idx}/{total}] Q{question_number} already up-to-date.")
-                else:
-                    print_colored(f"  [{idx}/{total}] Error updating Q{question_number}: {status}", COLORS.RED)
-                    skipped += 1
-                continue
-            else:  # abort
-                print_colored(f"\n[!] Duplicate found for question {question_number} (ID: {dup_id}). Aborting.", COLORS.RED)
+                if idx % 5 == 0 or idx == total:
+                    print(f"{C.YELLOW}  ⏭️ Skipped duplicate: {e}{C.RESET}")
+            elif choice == '3':
+                print_colored(f"\n[!] Duplicate found. Aborting: {e}", COLORS.RED)
                 conn.rollback()
                 cursor.close()
                 conn.close()
                 return
-        else:
-            placeholders = ','.join(['%s'] * len(fields))
-            cols = ','.join(escaped_fields)
-            values = [row.get(f) for f in fields]
-            values = [v if v is not None else None for v in values]
-            try:
-                cursor.execute(f"INSERT INTO {TABLE_NAME} ({cols}) VALUES ({placeholders})", values)
-                new_id = cursor.lastrowid
-                added += 1
-                print(f"  [{idx}/{total}] Added Q{question_number} (ID: {new_id})     ")
-            except Exception as e:
-                print_colored(f"  [{idx}/{total}] Failed to insert Q{question_number}: {e}", COLORS.RED)
+            else:
+                # Should not happen for choice 2 (force=True)
                 skipped += 1
+        except Exception as e:
+            errors.append(str(e))
+            if idx % 5 == 0 or idx == total:
+                print(f"{C.RED}  ❌ Error: {e}{C.RESET}")
 
     conn.commit()
     cursor.close()
     conn.close()
-    print(f"\n[✓] Import complete: {added} added, {updated} updated, {no_change} unchanged, {skipped} skipped.")
+
+    print("\n" + "═" * 50)
+    print_colored("  IMPORT COMPLETE", COLORS.CYAN, bold=True)
+    print(f"  {COLORS.GREEN}✅ Added   : {added}{COLORS.RESET}")
+    print(f"  {COLORS.BLUE}🔄 Updated : {updated}{COLORS.RESET}")
+    print(f"  {COLORS.YELLOW}⏭️ Skipped : {skipped}{COLORS.RESET}")
+    if errors:
+        print(f"  {COLORS.RED}❌ Errors  : {len(errors)}{COLORS.RESET}")
+    print("═" * 50)
 
 def export_questions_txt():
     """Export all questions to a human‑readable TXT file (suitable for import later)."""
@@ -1712,7 +1850,8 @@ def import_questions_txt():
 
     total = len(questions)
     for idx, q in enumerate(questions, 1):
-        print(f"  Processing {idx}/{total}: Q{q.get('question_number', '?')} ...", end="\r")
+        print_colored(f"[✓] Exported {len(data)} questions to {filename}", COLORS.GREEN)
+        print_colored(f"[i] File size: {os.path.getsize(filename) / 1024:.2f} KB", COLORS.BLUE)
         date = q.get('question_date')
         institution = q.get('institution')
         level = q.get('level')
@@ -1825,6 +1964,7 @@ def export_questions_json():
         print_colored(f"[!] Export failed: {e}", COLORS.RED)
 
 def import_questions_json():
+    from .question_converter.constants import C
     print("\n" + "═" * 50)
     print_colored("  IMPORT QUESTIONS FROM JSON", COLORS.CYAN, bold=True)
     print("═" * 50)
@@ -1885,7 +2025,8 @@ def import_questions_json():
 
     total = len(rows)
     for idx, obj in enumerate(rows, 1):
-        print(f"  Processing {idx}/{total}: Q{obj.get('question_number', '?')} ...", end="\r")
+        print_colored(f"[✓] Exported {len(data)} questions to {filename}", COLORS.GREEN)
+        print_colored(f"[i] File size: {os.path.getsize(filename) / 1024:.2f} KB", COLORS.BLUE)
         date = obj.get('question_date')
         institution = obj.get('institution')
         level = obj.get('level')

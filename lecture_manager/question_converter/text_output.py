@@ -4,225 +4,136 @@ from .utils import log
 
 # -------------------- TEXT OUTPUT --------------------
 def create_text_output(questions, output_file, verbose=False):
-    """Convert questions list to text format compatible with converter.py,
-    including group markers [group: ...] when groups are present."""
+    """
+    Convert questions list to text format with full metadata (context-aware).
+    Each block is separated by '---' and includes all relevant fields.
+    """
     log(f"Creating text output with {len(questions)} questions", "INFO", verbose)
 
+    # All possible fields (metadata first, then question content)
+    metadata_fields = [
+        ('question_date', 'Date'),
+        ('institution', 'Institution'),
+        ('level', 'Level'),
+        ('paper', 'Paper'),
+        ('group', 'Group'),
+        ('subject', 'Subject'),
+        ('chapter', 'Chapter'),
+        ('marks', 'Marks'),
+        ('notes', 'Notes'),
+        ('source', 'Source'),
+    ]
+
     with open(output_file, 'w', encoding='utf-8') as f:
-        last_group = None
-        for i, q in enumerate(questions, 1):
-            group = q.get("group", "")
+        # Write header
+        f.write("# Exported Question Bank (Full Metadata)\n")
+        f.write(f"# Total: {len(questions)} questions\n")
+        f.write("# Each block is separated by '---'\n\n")
 
-            # Write group marker if group changed and not empty
-            if group != last_group:
-                if last_group is not None:
-                    f.write("\n")  # extra blank line between groups
-                if group:
-                    f.write(f"[group: {group}]\n\n")
-                last_group = group
+        for idx, q in enumerate(questions, 1):
+            if verbose and idx % 5 == 0:
+                log(f"Writing question {idx}/{len(questions)}", "INFO", verbose)
 
-            # Write question number and text
+            f.write("---\n")
+
+            # Write metadata fields (only if present and non‑empty)
+            for field, label in metadata_fields:
+                val = q.get(field)
+                if val is not None and str(val).strip():
+                    f.write(f"{label}: {val}\n")
+
+            # Question number and text
             qno = q.get("question_no")
-            if qno is not None and str(qno).strip() != '':
-                f.write(f"Question No. {qno}: {q.get('text', '')}\n")
-            else:
-                f.write(f"Question: {q.get('text', '')}\n")
+            text = q.get("text", "")
+            f.write(f"Question No. {qno}: {text}\n" if qno else f"Question: {text}\n")
 
-            # Log question writing
-            text_preview = q.get('text', '')[:50] + "..." if len(q.get('text', '')) > 50 else q.get('text', '')
-            log(f"Writing Question {i}: {text_preview}", "INFO", verbose)
-
-            # Write question type
-            q_type = q.get('type', 'multichoice')
+            # Type
+            q_type = q.get("type", "multichoice")
             f.write(f"Type: {q_type}\n")
 
-            # Handle different question types
+            # Handle specific types
             if q_type == "multichoice":
-                # Write options
                 for opt in q.get("options", []):
                     correct_marker = " *" if opt.get("correct", False) else ""
                     f.write(f"Option: {opt.get('text', '')}{correct_marker}\n")
 
-                # Write grade if not default
                 if q.get("grade", 1) != 1:
                     f.write(f"Grade: {q.get('grade', 1)}\n")
-
-                # Write penalty if not default
                 if q.get("penalty", 0) != 0:
                     f.write(f"Penalty: {q.get('penalty', 0)}\n")
-
-                # Write general feedback if exists
                 if q.get("general_feedback"):
-                    feedback_text = q.get('general_feedback', '').replace('<br>', '\n')
-                    lines = feedback_text.split('\n')
-                    for j, line in enumerate(lines):
-                        prefix = "General Feedback: " if j == 0 else "  "
-                        f.write(f"{prefix}{line}\n")
-
-                # Write fractions if not default
+                    f.write(f"General Feedback: {q.get('general_feedback')}\n")
                 if q.get("fraction_correct", 100) != 100 or q.get("fraction_wrong", -20) != -20:
                     f.write(f"Fraction: {q.get('fraction_correct', 100)} {q.get('fraction_wrong', -20)}\n")
 
             elif q_type == "truefalse":
                 # Determine correct answer
-                correct_answer = None
-                for opt in q.get("options", []):
-                    if opt.get("correct", False):
-                        correct_answer = opt.get("text", "")
-                        break
+                correct_opt = next((opt for opt in q.get("options", []) if opt.get("correct", False)), None)
+                if correct_opt:
+                    f.write(f"Correct: {correct_opt.get('text', '').lower()}\n")
 
-                if correct_answer:
-                    f.write(f"Correct: {correct_answer.lower()}\n")
-
-                # Write grade if not default
                 if q.get("grade", 1) != 1:
                     f.write(f"Grade: {q.get('grade', 1)}\n")
-
-                # Write penalty if not default
                 if q.get("penalty", 0) != 0:
                     f.write(f"Penalty: {q.get('penalty', 0)}\n")
-
-                # Write general feedback if exists
                 if q.get("general_feedback"):
-                    feedback_text = q.get('general_feedback', '').replace('<br>', '\n')
-                    lines = feedback_text.split('\n')
-                    for j, line in enumerate(lines):
-                        prefix = "General Feedback: " if j == 0 else "  "
-                        f.write(f"{prefix}{line}\n")
-
-                # Write feedback for True if exists
+                    f.write(f"General Feedback: {q.get('general_feedback')}\n")
                 if q.get("feedback_true"):
-                    feedback_text = q.get('feedback_true', '').replace('<br>', '\n')
-                    lines = feedback_text.split('\n')
-                    for j, line in enumerate(lines):
-                        prefix = "Feedback True: " if j == 0 else "  "
-                        f.write(f"{prefix}{line}\n")
-
-                # Write feedback for False if exists
+                    f.write(f"Feedback True: {q.get('feedback_true')}\n")
                 if q.get("feedback_false"):
-                    feedback_text = q.get('feedback_false', '').replace('<br>', '\n')
-                    lines = feedback_text.split('\n')
-                    for j, line in enumerate(lines):
-                        prefix = "Feedback False: " if j == 0 else "  "
-                        f.write(f"{prefix}{line}\n")
-
-                # Write fractions if not default
+                    f.write(f"Feedback False: {q.get('feedback_false')}\n")
                 if q.get("fraction_correct", 100) != 100 or q.get("fraction_wrong", -20) != -20:
                     f.write(f"Fraction: {q.get('fraction_correct', 100)} {q.get('fraction_wrong', -20)}\n")
 
             elif q_type == "matching":
-                # Write pairs
-                pairs = q.get("pairs", [])
-                for pair in pairs:
+                for pair in q.get("pairs", []):
                     f.write(f"Subquestion: {pair.get('subquestion', '')}\n")
                     f.write(f"Answer: {pair.get('answer', '')}\n")
 
-                # Write grade if not default
                 if q.get("grade", 1) != 1:
                     f.write(f"Grade: {q.get('grade', 1)}\n")
-
-                # Write penalty if not default
                 if q.get("penalty", 0) != 0:
                     f.write(f"Penalty: {q.get('penalty', 0)}\n")
-
-                # Write shuffle answers if not default (default is true)
-                if not q.get("shuffle_answers", True):
+                if q.get("shuffle_answers", True) is False:
                     f.write("Shuffle Answers: false\n")
-                elif q.get("shuffle_answers", True) is False:
-                    f.write("Shuffle Answers: false\n")
-
-                # Write show number correct if not default (default is false)
                 if q.get("show_num_correct", False):
                     f.write("Show Number Correct: true\n")
-
-                # Write general feedback if exists
                 if q.get("general_feedback"):
-                    feedback_text = q.get('general_feedback', '').replace('<br>', '\n')
-                    lines = feedback_text.split('\n')
-                    for j, line in enumerate(lines):
-                        prefix = "General Feedback: " if j == 0 else "  "
-                        f.write(f"{prefix}{line}\n")
-
-                # Write feedbacks if not default
+                    f.write(f"General Feedback: {q.get('general_feedback')}\n")
+                # Feedback for correct/partial/incorrect (if custom)
                 default_correct = "Your answer is correct."
                 default_partial = "Your answer is partially correct."
                 default_incorrect = "Your answer is incorrect."
-
                 if q.get("correct_feedback") and q.get("correct_feedback") != default_correct:
-                    feedback_text = q.get('correct_feedback', '').replace('<br>', '\n')
-                    lines = feedback_text.split('\n')
-                    for j, line in enumerate(lines):
-                        prefix = "Correct Feedback: " if j == 0 else "  "
-                        f.write(f"{prefix}{line}\n")
-
+                    f.write(f"Correct Feedback: {q.get('correct_feedback')}\n")
                 if q.get("partially_correct_feedback") and q.get("partially_correct_feedback") != default_partial:
-                    feedback_text = q.get('partially_correct_feedback', '').replace('<br>', '\n')
-                    lines = feedback_text.split('\n')
-                    for j, line in enumerate(lines):
-                        prefix = "Partially Correct Feedback: " if j == 0 else "  "
-                        f.write(f"{prefix}{line}\n")
-
+                    f.write(f"Partially Correct Feedback: {q.get('partially_correct_feedback')}\n")
                 if q.get("incorrect_feedback") and q.get("incorrect_feedback") != default_incorrect:
-                    feedback_text = q.get('incorrect_feedback', '').replace('<br>', '\n')
-                    lines = feedback_text.split('\n')
-                    for j, line in enumerate(lines):
-                        prefix = "Incorrect Feedback: " if j == 0 else "  "
-                        f.write(f"{prefix}{line}\n")
-
-                # Write hints
-                hints = q.get("hints", [])
-                for hint_idx, hint in enumerate(hints, 1):
-                    if hint.get("text"):
-                        hint_text = hint.get("text", "").replace('<br>', '\n')
-                        lines = hint_text.split('\n')
-                        for j, line in enumerate(lines):
-                            prefix = f"Hint {hint_idx}: " if j == 0 else "  "
-                            f.write(f"{prefix}{line}\n")
-
-                    # Write hint options if not default (default is false)
+                    f.write(f"Incorrect Feedback: {q.get('incorrect_feedback')}\n")
+                for hint in q.get("hints", []):
+                    f.write(f"Hint: {hint.get('text', '')}\n")
                     if hint.get("clear_incorrect", False):
-                        f.write(f"Hint {hint_idx} Clear Incorrect: true\n")
-
+                        f.write("Hint Clear Incorrect: true\n")
                     if hint.get("show_num_correct", False):
-                        f.write(f"Hint {hint_idx} Show Number Correct: true\n")
+                        f.write("Hint Show Number Correct: true\n")
 
-            elif q_type == "essay":
-                # Write grade if not default
+            else:  # essay
                 if q.get("grade", 1) != 1:
                     f.write(f"Grade: {q.get('grade', 1)}\n")
-
-                # Write lines if not default
                 if q.get("lines", 15) != 15:
                     f.write(f"Lines: {q.get('lines', 15)}\n")
-
-                # Write attachments if exists
                 if q.get("attachments", 0) > 0:
                     f.write(f"Attachments: {q.get('attachments')}\n")
                     f.write(f"FileTypes: {q.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg')}\n")
                     max_mb = q.get("maxbytes", 2*1024*1024) / (1024*1024)
                     f.write(f"MaxFileSizeMB: {max_mb}\n")
-
-                # Write general feedback if exists
                 if q.get("general_feedback"):
-                    feedback_text = q.get('general_feedback', '').replace('<br>', '\n')
-                    lines = feedback_text.split('\n')
-                    for j, line in enumerate(lines):
-                        prefix = "General Feedback: " if j == 0 else "  "
-                        f.write(f"{prefix}{line}\n")
-
-                # Write grader information if exists
+                    f.write(f"General Feedback: {q.get('general_feedback')}\n")
                 if q.get("grader_info"):
-                    grader_text = q.get('grader_info', '').replace('<br>', '\n')
-                    lines = grader_text.split('\n')
-                    for j, line in enumerate(lines):
-                        prefix = "Grader Information: " if j == 0 else "  "
-                        f.write(f"{prefix}{line}\n")
+                    f.write(f"Grader Information: {q.get('grader_info')}\n")
 
-            else:
-                log(f"Question {i}: Unknown type '{q_type}'", "WARN", verbose)
+            f.write("\n")  # blank line between questions
 
-            # Add blank line between questions
-            f.write("\n")
-            log(f"Question {i}: Successfully written", "OK", verbose)
+        f.write("---\n")  # final separator
 
     log(f"Text file created: {output_file}", "SUCCESS", verbose)
