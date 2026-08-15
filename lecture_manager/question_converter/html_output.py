@@ -298,6 +298,10 @@ def create_html_output(questions, output_file, verbose=False, shuffle_applied=Fa
         if shuffle_applied and q.get("group"):
             full_questions_html += f'<div class="metadata-item"><span class="metadata-label">Original Group:</span><span class="metadata-value">{q["group"]}</span></div>'
 
+        full_questions_html += f'''
+        <div class="metadata-item"><span class="metadata-label">ID:</span><span class="metadata-value">{q.get('id', 'N/A')}</span></div>
+        '''
+
         full_questions_html += '</div></div></div>'
 
     if group_opened:

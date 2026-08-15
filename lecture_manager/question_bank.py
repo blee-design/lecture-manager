@@ -1429,6 +1429,7 @@ def export_questions_csv():
     from datetime import date, datetime
 
     export_fields = [
+        'id',
         'question_date', 'institution', 'level', 'paper', 'group',
         'subject', 'chapter', 'question_number', 'marks',
         'nepali_transcription', 'english_transcription', 'notes',
@@ -1523,6 +1524,8 @@ def import_questions_csv():
 
     # Normalise rows: convert empty strings to None, parse JSON columns
     for row in rows:
+        # Ignore the 'id' column if it exists
+        row.pop('id', None)
         # Remove empty strings for optional fields
         for field in ['paper', 'group', 'chapter', 'notes', 'source']:
             if field in row and row[field] == '':
@@ -1589,7 +1592,7 @@ def import_questions_csv():
             'question_date': row.get('question_date'),
             'institution': row.get('institution'),
             'level': row.get('level'),
-            'paper': row.get('paper'),       # already internal key
+            'paper': row.get('paper'),
             'group': row.get('group'),
             'subject': row.get('subject'),
             'chapter': row.get('chapter'),
@@ -1671,7 +1674,7 @@ def import_questions_csv():
     print("═" * 50)
 
 def export_questions_txt():
-    """Export all questions to a human‑readable TXT file (suitable for import later)."""
+    """Export all questions to a human‑readable TXT file."""
     print("\n" + "═" * 50)
     print_colored("  EXPORT QUESTIONS TO TXT", COLORS.CYAN, bold=True)
     print("═" * 50)
@@ -1687,14 +1690,11 @@ def export_questions_txt():
     if not filename.endswith('.txt'):
         filename += '.txt'
 
-    # Order fields for readability
     field_order = [
         'question_date', 'institution', 'level', 'paper', 'group',
         'subject', 'chapter', 'question_number', 'marks',
         'nepali_transcription', 'english_transcription', 'notes'
     ]
-
-    # Map keys to nice labels
     labels = {
         'question_date': 'Date',
         'institution': 'Institution',
@@ -1717,9 +1717,14 @@ def export_questions_txt():
             f.write("# Each block is separated by '---'\n\n")
 
             for row in rows:
-                # Write context fields if they are present and have changed (simplify: always write all)
-                # To make the file compact, only write non‑empty fields.
-                lines = []
+                # Start of block
+                f.write("---\n")
+
+                # Write ID first (if present)
+                if row.get('id'):
+                    f.write(f"ID: {row['id']}\n")
+
+                # Write all non‑empty fields
                 for key in field_order:
                     val = row.get(key)
                     if val is not None and val != '':
@@ -1727,16 +1732,17 @@ def export_questions_txt():
                             val = str(val)
                         elif isinstance(val, (date, datetime)):
                             val = str(val)
-                        lines.append(f"{labels.get(key, key)}: {val}")
+                        f.write(f"{labels.get(key, key)}: {val}\n")
 
                 # Ensure question number is always present
                 if 'question_number' not in row or not row['question_number']:
-                    lines.append("Question Number: (missing)")
+                    f.write("Question Number: (missing)\n")
 
-                f.write("\n---\n")
-                f.write("\n".join(lines))
+                # Blank line to separate blocks
                 f.write("\n")
-            f.write("\n---\n")  # final separator
+
+            # Final separator
+            f.write("---\n")
 
         print_colored(f"[✓] Exported {len(rows)} questions to {filename}", COLORS.GREEN)
         print_colored(f"[i] File size: {os.path.getsize(filename) / 1024:.2f} KB", COLORS.BLUE)
@@ -1932,7 +1938,7 @@ def export_questions_json():
     for row in rows:
         clean_row = row.copy()
         # Remove internal fields
-        clean_row.pop('id', None)
+        # clean_row.pop('id', None)
         clean_row.pop('created_at', None)
         clean_row.pop('updated_at', None)
         export_data.append(sanitize_for_json(clean_row))

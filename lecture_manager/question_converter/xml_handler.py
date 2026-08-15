@@ -622,12 +622,12 @@ def create_moodle_xml(questions, output_file, verbose=False):
         text_preview = q.get('text', '')[:50] + "..." if len(q.get('text', '')) > 50 else q.get('text', '')
         log(f"Processing Question {i}: {text_preview}", "INFO", verbose)
 
-        # Question comment block
+        # Question comment block (added to the quiz itself)
         quiz.appendChild(doc.createComment(" ================================================= "))
         quiz.appendChild(doc.createComment(f" Question No. {i} "))
         quiz.appendChild(doc.createComment(" ================================================= "))
 
-        # Question element
+        # Create the question element based on type
         if q["type"] == "multichoice":
             question_elem = create_mcq_question(doc, q, i)
             log(f"Question {i}: Created MCQ element", "INFO", verbose)
@@ -641,6 +641,10 @@ def create_moodle_xml(questions, output_file, verbose=False):
             question_elem = create_essay_question(doc, q, i)
             log(f"Question {i}: Created essay element", "INFO", verbose)
 
+        # Add a comment with the database ID inside the question element
+        question_elem.appendChild(doc.createComment(f" Database ID: {q.get('id', 'N/A')} "))
+
+        # Append the question to the quiz
         quiz.appendChild(question_elem)
 
         # Add ONE-LINE GAP after each question for readability

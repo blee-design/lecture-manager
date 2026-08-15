@@ -133,6 +133,7 @@ def create_json_output(questions, output_file, verbose=False):
     for i, q in enumerate(questions, 1):
         # Base fields common to all question types
         json_q = {
+            "id": q.get("id"),
             "question_no": q.get("question_no", i),
             "type": q.get("type", "multichoice"),
             "text": q.get("text", ""),
