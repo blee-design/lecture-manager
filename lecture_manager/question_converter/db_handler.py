@@ -1,13 +1,22 @@
 import sys
+import time
+from collections import Counter
 from types import SimpleNamespace
-from .constants import C
+
+from .constants import C          # <-- add this
 from .utils import log
-from ..utils import print_colored, COLORS
+from ..utils import print_colored, COLORS, color_text
 from ..db import get_connection
 from .exceptions import DuplicateQuestionError, ConverterError
 from .text_parser import parse_text_file
 from .xml_handler import xml_to_questions
 from .json_handler import json_to_questions
+
+try:
+    from tqdm import tqdm
+    use_tqdm = True
+except ImportError:
+    use_tqdm = False
 
 def map_paper_value(paper_str):
     """Convert human‑readable paper names to internal enum keys."""
@@ -346,6 +355,8 @@ def import_from_file(file_path, format, source=None, args=None):
 
     log(f"📂 Importing from {file_path} (format: {format})", "INFO", args.verbose)
 
+    start_time = time.time()
+
     # Parse questions
     if format == 'txt':
         questions, bypass_used, skipped_lines = parse_text_file(file_path, args)
@@ -354,50 +365,89 @@ def import_from_file(file_path, format, source=None, args=None):
     elif format == 'json':
         questions = json_to_questions(file_path, args.verbose)
     else:
-        raise ValueError(f"Unsupported import format: {format}")   # <-- this ensures 'questions' is always assigned
+        raise ValueError(f"Unsupported import format: {format}")
 
     total = len(questions)
+    if total == 0:
+        print_colored("⚠️  No questions found in the file.", COLORS.YELLOW)
+        return 0, []
+
+    # Count types
+    type_counts = Counter(q.get('type', 'essay') for q in questions)
+
     count = 0
     skipped = 0
     errors = []
 
+    print_colored(f"\n📥 Starting import of {total} questions...", COLORS.CYAN)
+    if source:
+        print_colored(f"   Source: {source}", COLORS.BLUE)
     if args.verbose:
-        print(f"{C.CYAN}📝 Starting import of {total} questions...{C.RESET}")
+        print_colored(f"   Types: {', '.join(f'{k}: {v}' for k, v in type_counts.items())}", COLORS.BLUE)
 
-    for idx, q in enumerate(questions, 1):
-        if args.verbose and (idx % 5 == 0 or idx == total):
-            print(f"{C.CYAN}  [{idx}/{total}] Processing question {q.get('question_no', '?')}...{C.RESET}")
+    iterator = tqdm(questions, desc="Importing", unit="q") if use_tqdm and args.verbose else questions
 
+    for idx, q in enumerate(iterator, 1):
         try:
             insert_question(q, source=source, force=args.bypass_duplicate)
             count += 1
+            if not use_tqdm and args.verbose and idx % 5 == 0:
+                print(f"  [{idx}/{total}] Processed {idx} questions...")
         except DuplicateQuestionError as e:
-            if args.verbose:
-                print(f"{C.YELLOW}  ⏭️ Skipped duplicate: {e}{C.RESET}")
+            msg = f"    {C.YELLOW}⏭️  Skipped duplicate: {e}{C.RESET}"
+            if use_tqdm and args.verbose:
+                tqdm.write(msg)
+            elif args.verbose:
+                print(msg)
             skipped += 1
         except Exception as e:
-            if args.verbose:
-                print(f"{C.RED}  ❌ Error: {e}{C.RESET}")
             errors.append(str(e))
+            msg = f"    {C.RED}❌ Error: {e}{C.RESET}"
+            if use_tqdm and args.verbose:
+                tqdm.write(msg)
+            elif args.verbose:
+                print(msg)
 
-    # Final summary
-    if args.verbose:
-        print(f"\n{C.GREEN}✅ Import complete: {count} inserted, {skipped} skipped, {len(errors)} errors.{C.RESET}")
-        if errors:
-            print(f"{C.YELLOW}  First 5 errors:{C.RESET}")
-            for e in errors[:5]:
-                print(f"    {e}")
-            if len(errors) > 5:
-                print(f"    ... and {len(errors)-5} more")
+    elapsed = time.time() - start_time
+
+    # ---- Summary ----
+    print("\n" + "═" * 60)
+    print_colored("  📋 IMPORT SUMMARY", COLORS.CYAN, bold=True)
+    print("═" * 60)
+    print(f"  {COLORS.GREEN}✅ Inserted   : {count}{COLORS.RESET}")
+    print(f"  {COLORS.YELLOW}⏭️  Skipped    : {skipped}{COLORS.RESET}")
+    if errors:
+        print(f"  {COLORS.RED}❌ Errors     : {len(errors)}{COLORS.RESET}")
+    else:
+        print(f"  {COLORS.GREEN}❌ Errors     : 0{COLORS.RESET}")
+    print(f"  ⏱️  Time       : {elapsed:.2f}s")
+    print(f"  📊 Success rate: {count/total*100:.1f}%" if total else "  📊 Success rate: N/A")
+    print("═" * 60)
+
+    if args.verbose and errors:
+        print_colored(f"\n  First 5 errors:", COLORS.YELLOW)
+        for e in errors[:5]:
+            print(f"    {e}")
+        if len(errors) > 5:
+            print(f"    ... and {len(errors)-5} more")
 
     return count, errors
 
 def export_to_file(questions, output_file, format, args=None):
-    """
-    Export a list of questions (as converter dicts) to a file.
-    """
     if args is None:
         args = type('Args', (), {'verbose': False})()
+
+    import time
+    start_time = time.time()
+
+    log(f"📤 Exporting {len(questions)} questions to {output_file} (format: {format})", "INFO", args.verbose)
+
+    # Count types
+    from collections import Counter
+    type_counts = Counter(q.get('type', 'essay') for q in questions)
+
+    if args.verbose:
+        print_colored(f"   Types: {', '.join(f'{k}: {v}' for k, v in type_counts.items())}", COLORS.BLUE)
 
     if format == 'xml':
         from .xml_handler import create_moodle_xml
@@ -413,3 +463,15 @@ def export_to_file(questions, output_file, format, args=None):
         create_text_output(questions, output_file, args.verbose)
     else:
         raise ValueError(f"Unsupported export format: {format}")
+
+    elapsed = time.time() - start_time
+
+    # ---- Summary ----
+    print("\n" + "═" * 60)
+    print_colored("  📤 EXPORT SUMMARY", COLORS.CYAN, bold=True)
+    print("═" * 60)
+    print(f"  📁 Output file: {output_file}")
+    print(f"  📊 Questions  : {len(questions)}")
+    print(f"  🏷️  Format     : {format}")
+    print(f"  ⏱️  Time       : {elapsed:.2f}s")
+    print("═" * 60)

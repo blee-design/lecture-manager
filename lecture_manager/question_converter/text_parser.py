@@ -7,7 +7,15 @@ from .utils import (
     filter_questions, find_line_in_file, format_passage_in_question
 )
 from .constants import C
-from .exceptions import ConverterError, ParseError, ValidationError, IOError
+from .exceptions import (
+    ConverterError, ParseError, ValidationError, IOError,
+    DuplicateQuestionError, MissingCorrectOptionError,
+    MultipleCorrectOptionsError, InsufficientOptionsError,
+    MatchingPairError, UnknownQuestionTypeError, UndefinedPassageError,
+    InvalidFilterError
+)
+
+DEFAULT_QUESTION_TYPE = "essay"
 
 # Define valid question types
 VALID_QUESTION_TYPES = ["multichoice", "essay", "truefalse", "matching"]
@@ -24,7 +32,9 @@ VALID_FIELD_NAMES = {
     'hint', 'hint clear incorrect', 'hint show number correct',
     # Bank TXT fields
     'nepali', 'english', 'marks', 'chapter', 'source',
-    'id'
+    'id',
+    # Metadata fields (for inline context)
+    'date', 'institution', 'level', 'paper', 'group', 'subject', 'notes',
 }
 
 # ----- PASSAGE FEATURE: extract passages from content -----
@@ -467,6 +477,20 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
     elif field_name == 'id':
         # Ignore ID on import – just a reference for export
         pass
+    elif field_name == 'date':
+        question['question_date'] = field_content
+    elif field_name == 'institution':
+        question['institution'] = field_content
+    elif field_name == 'level':
+        question['level'] = field_content
+    elif field_name == 'paper':
+        question['paper'] = field_content
+    elif field_name == 'group':
+        question['group'] = field_content
+    elif field_name == 'subject':
+        question['subject'] = field_content
+    elif field_name == 'notes':
+        question['notes'] = field_content
 
 def process_question_lines(question, lines, line_number_start, file_path):
     """Process lines for a question, handling multi-line fields"""
@@ -527,479 +551,213 @@ def process_question_lines(question, lines, line_number_start, file_path):
 
 # The parse_text_file function to better track skipped lines
 def parse_text_file(file_path, args):
-    """Parse text file with support for multi-line fields - STRICTER VERSION"""
+    """Parse text file with flexible block detection – supports metadata before question line."""
     questions = []
     seen_questions = set()
     bypass_used = {"duplicate": [], "option": []}
+    skipped_lines = 0
+    global_context = {}
 
-    # Track skipped sections for logging
-    skipped_sections = []
-    skipped_lines = 0  # Initialize skipped_lines variable
+    with open(file_path, 'r', encoding='utf-8-sig') as f:
+        content = f.read().replace('\ufeff', '')
 
-    # Read entire file and handle BOM
-    with open(file_path, 'r', encoding='utf-8-sig') as f:  # Changed to utf-8-sig to handle BOM
-        content = f.read()
-
-    # Remove any remaining BOM characters throughout the content
-    content = content.replace('\ufeff', '')
-
-    # ----- PASSAGE FEATURE: extract passages before splitting sections -----
     passages, remaining_content = extract_passages(content, args.verbose)
     if args.verbose and passages:
         log(f"Extracted {len(passages)} passage(s): {list(passages.keys())}", "INFO", True)
-    # ---------------------------------------------------------------------
 
-    log("Initializing parser", "INIT", args.verbose)
-    log(f"Input file: {file_path}", "INFO", args.verbose)
-    log("Strict validation enabled", "INFO", args.verbose)
-
-    # Count total lines in the file for statistics
-    total_lines = len(remaining_content.split('\n'))
-    log(f"Input file has {total_lines} total lines (after removing passage definitions)", "INFO", args.verbose)
-
-    # Split content by blank lines (simpler approach)
-    raw_sections = remaining_content.strip().split('\n\n')
+    raw_blocks = re.split(r'\n---+\s*\n', remaining_content)
+    raw_blocks = [b.strip() for b in raw_blocks if b.strip()]
 
     question_no = 0
-    current_question = None
-    current_group = ""  # ----- GROUP FEATURE -----
 
-    for section_idx, section in enumerate(raw_sections):
-        # Skip empty sections
-        if not section.strip():
-            skipped_sections.append(f"Section {section_idx+1}: Empty section")
-            # Count lines in empty section (at least 1)
-            section_lines = max(1, len(section.split('\n')))
-            skipped_lines += section_lines
-            continue
-
-        # Keep original lines (including leading spaces), skip empty lines
-        raw_lines = section.split('\n')
-        lines = []
-        for line in raw_lines:
-            if line.strip() == '':
-                continue
-            lines.append(line)          # keep the line as is (preserve leading spaces)
-
+    for block in raw_blocks:
+        lines = [line.strip() for line in block.split('\n') if line.strip()]
         if not lines:
-            skipped_sections.append(f"Section {section_idx+1}: No content after stripping")
-            # Count lines in section
-            section_lines = max(1, len(section.split('\n')))
-            skipped_lines += section_lines
+            skipped_lines += 1
             continue
 
-        # Look for "Question:" pattern even in comment lines
-        first_line = lines[0]
-        first_line_clean = first_line.strip()
-
-        # ----- GROUP FEATURE: detect group markers -----
-        if re.match(r'^\[group\s*[:]?\s*(.*?)\]$', first_line_clean, re.IGNORECASE):
-            # Extract group name: match after 'group' and optional colon, up to the closing bracket
-            match = re.match(r'^\[group\s*[:]?\s*(.*?)\]$', first_line_clean, re.IGNORECASE)
-            if match:
-                current_group = match.group(1).strip()
-                log(f"Group detected: {current_group}", "INFO", args.verbose)
-                # This is a valid structural element, not a skipped line.
-                # Just skip processing it as a question.
-                continue
-
-        # --------------------------------------------
-
-        # Check for various comment formats
-        is_comment = False
-        comment_patterns = ['#', '###', '---', '***', '//', '/*']
-
-        # Check if line starts with a comment pattern
-        for pattern in comment_patterns:
-            if first_line_clean.startswith(pattern):
-                is_comment = True
+        # Find the question line (anywhere in the block)
+        question_line_idx = None
+        for idx, line in enumerate(lines):
+            if re.match(r'^(Question\s+(No\.?\s*|Number\s*)?\d*)|(Question:)', line, re.IGNORECASE):
+                question_line_idx = idx
                 break
 
-        # Check if this comment line contains a question pattern
-        question_in_comment = False
-        question_patterns = [
-            r'Question\s+No\.?\s*\d+\s*:',  # Question No. X:
-            r'Question\s*:',                 # Question:
-            r'Question\s+',                  # Question (without colon)
-        ]
-
-        for q_pattern in question_patterns:
-            if re.search(q_pattern, first_line_clean, re.IGNORECASE):
-                question_in_comment = True
-                break
-
-        # If it starts with a comment but contains a question pattern, try to parse it
-        if is_comment and question_in_comment:
-            # Try to extract the question from comment line
-            temp_line = first_line_clean
-
-            # Remove comment prefixes one by one
-            for pattern in comment_patterns:
-                if temp_line.startswith(pattern):
-                    # Remove the comment prefix and any following spaces or backticks
-                    temp_line = re.sub(r'^' + re.escape(pattern) + r'[\s`]*', '', temp_line)
-
-            # Check if the cleaned line is a valid question
-            temp_line_stripped = temp_line.strip()
-            is_valid_question = False
-
-            # Pattern 1: "Question No. X: text" or "Question No.X: text"
-            if re.match(r'^Question\s+No\.?\s*\d+\s*:', temp_line_stripped, re.IGNORECASE):
-                is_valid_question = True
-            # Pattern 2: "Question: text"
-            elif temp_line_stripped.lower().startswith('question:'):
-                is_valid_question = True
-            # Pattern 3: "Question text" (without colon, but starting with Question)
-            elif temp_line_stripped.lower().startswith('question '):
-                # Try to extract if it has a colon somewhere
-                if ':' in temp_line_stripped:
-                    parts = temp_line_stripped.split(':', 1)
-                    if parts[0].lower().startswith('question'):
-                        is_valid_question = True
-                else:
-                    # Just "Question" followed by text
-                    is_valid_question = True
-
-            if is_valid_question:
-                log(f"Found question in comment line, attempting to parse: {first_line_clean[:50]}...", "INFO", args.verbose)
-                first_line = temp_line  # Replace with cleaned line
-                first_line_clean = temp_line_stripped
-                is_comment = False  # No longer treat as comment
-            else:
-                log(f"Skipping comment section (no valid question found): {first_line_clean[:50]}...", "INFO", args.verbose)
-                skipped_sections.append(f"Section {section_idx+1}: Comment without valid question")
-                # Count lines in comment section
-                section_lines = max(1, len(section.split('\n')))
-                skipped_lines += section_lines
-                continue
-        elif is_comment and not question_in_comment:
-            # It's just a regular comment, skip it
-            log(f"Skipping comment section: {first_line_clean[:50]}...", "INFO", args.verbose)
-            skipped_sections.append(f"Section {section_idx+1}: Comment section")
-            # Count lines in comment section
-            section_lines = max(1, len(section.split('\n')))
-            skipped_lines += section_lines
+        if question_line_idx is None:
+            # Global context block
+            for line in lines:
+                if ':' in line:
+                    key, val = line.split(':', 1)
+                    global_context[key.strip().lower()] = val.strip()
+            skipped_lines += len(lines)
             continue
 
-        # Check if this section starts with a Question (multiple patterns)
-        first_line_clean = first_line.strip()
+        # --- This block is a question ---
+        question_no += 1
+        q_line = lines[question_line_idx]
 
-        # Check multiple question patterns
-        is_question = False
-        question_text = ""
-
-        # Pattern 1: "Question No. X: text" or "Question No.X: text"
-        if re.match(r'^Question\s+No\.?\s*\d+\s*:', first_line_clean, re.IGNORECASE):
-            is_question = True
-            # Extract question number and text
-            match = re.match(r'^Question\s+No\.?\s*(\d+)\s*:\s*(.*)', first_line_clean, re.IGNORECASE)
-            if match:
-                q_num = match.group(1)
-                question_text = match.group(2)
-                log(f"Detected 'Question No. {q_num}:' format", "INFO", args.verbose)
-            else:
-                # Fallback: just extract everything after the first colon
-                parts = first_line_clean.split(':', 1)
-                if len(parts) > 1:
-                    question_text = parts[1].strip()
-
-        # Pattern 2: "Question: text"
-        elif first_line_clean.lower().startswith('question:'):
-            is_question = True
-            question_text = first_line_clean.split(':', 1)[1].strip()
-
-        # Pattern 3: "Question text" (without colon, but starting with Question)
-        elif first_line_clean.lower().startswith('question '):
-            # Try to extract if it has a colon somewhere
-            if ':' in first_line_clean:
-                parts = first_line_clean.split(':', 1)
-                if parts[0].lower().startswith('question'):
-                    is_question = True
-                    question_text = parts[1].strip()
-            else:
-                # Just "Question" followed by text
-                is_question = True
-                question_text = first_line_clean[8:].strip()
-
-        if is_question:
-            # Save previous question if exists
-            if current_question:
-                questions.append(current_question)
-
-            question_no += 1
-
-            # ----- PASSAGE FEATURE: remove marker from the whole line first -----
-            line_without_marker, passage_id = remove_passage_marker(first_line_clean, passages, args.verbose)
-
-            # Now extract the actual question text from the line without the marker
-            extracted_question = ""
-            # Pattern 1: "Question No. X: text"
-            match = re.match(r'^Question\s+No\.?\s*(\d+)\s*:\s*(.*)', line_without_marker, re.IGNORECASE)
-            if match:
-                extracted_question = match.group(2).strip()
-            # Pattern 2: "Question: text"
-            elif line_without_marker.lower().startswith('question:'):
-                extracted_question = line_without_marker.split(':', 1)[1].strip()
-            # Pattern 3: "Question text" (without colon)
-            elif line_without_marker.lower().startswith('question '):
-                if ':' in line_without_marker:
-                    parts = line_without_marker.split(':', 1)
-                    if parts[0].lower().startswith('question'):
-                        extracted_question = parts[1].strip()
-                else:
-                    extracted_question = line_without_marker[8:].strip()
-
-            # If we found a passage identifier, expand it now
-            if passage_id:
-                passage_content = passages.get(passage_id, "")
-                extracted_question = format_passage_in_question(passage_id, passage_content, extracted_question)
-
-            question_text = extracted_question
-            # ----------------------------------------------------------------
-
-            # Check for duplicates (using the expanded question text)
-            key = normalize_text(question_text)
-            if key in seen_questions:
-                if args.bypass_duplicate:
-                    log(f"Duplicate question detected (bypassed)", "WARN", args.verbose)
-                    bypass_used["duplicate"].append(question_no)
-                else:
-                    # Find actual line number
-                    actual_line = find_line_in_file(file_path, question_text)
-                    raise DuplicateQuestionError(f"Duplicate question '{question_text}' at question {question_no} (line {actual_line})")
-                    raise DuplicateQuestionError(f"Question already exists with ID {dup_id} for {date} {institution} {level} {paper} {group} Q{question_number}")
-                    print(f"{C.YELLOW}        Fix: Remove duplicate or use --bypass-duplicate{C.RESET}")
-            seen_questions.add(key)
-
-            # Create new question
-            current_question = {
-                "text": question_text,
-                "type": "multichoice",  # Default, can be overridden by Type field
-                "options": [],
-                "general_feedback": "",
-                "grader_info": "",
-                "fraction_correct": 100,
-                "fraction_wrong": -20,
-                "penalty": 0,
-                "grade": 1,
-                "lines": 15,
-                "question_no": question_no,
-                "original_question_no": question_no,  # Store original number
-                "attachments": 0,
-                "filetypes": ".doc,.docx,.pdf,.png,.jpg,.jpeg",
-                "maxbytes": 2*1024*1024,
-                "group": current_group   # ----- GROUP FEATURE -----
-            }
-
-            # Process remaining lines in this section
-            if len(lines) > 1:
-                process_question_lines(current_question, lines[1:], section_idx * 2 + 2, file_path)
-
-        elif current_question:
-            # This is continuation of current question (multi-line fields)
-            # But first check if this line is a comment within a question
-            line = lines[0].strip()
-            if (line.startswith('#') or
-                line.startswith('###') or
-                line.startswith('---') or
-                line.startswith('***') or
-                line.startswith('//')):
-                log(f"Skipping comment within question: {line[:50]}...", "INFO", args.verbose)
-                # Count this comment line as skipped
-                skipped_lines += 1
-                # Skip this line but continue processing the question
-                if len(lines) > 1:
-                    process_question_lines(current_question, lines[1:], section_idx * 2 + 2, file_path)
-            else:
-                process_question_lines(current_question, lines, section_idx * 2 + 1, file_path)
+        # Extract question number and text
+        q_text = ""
+        q_no = question_no
+        match = re.match(r'^Question\s+(No\.?\s*|Number\s*)?(\d+)\s*:\s*(.*)', q_line, re.IGNORECASE)
+        if match:
+            q_no = int(match.group(2))
+            q_text = match.group(3).strip()
         else:
-            # This section doesn't start with a recognizable question format
-            # Check if it's just a comment/section header we missed
-            line = first_line_clean
-            if (line.startswith('#') or
-                line.startswith('###') or
-                line.startswith('---') or
-                line.startswith('***')):
-                log(f"Skipping comment/header: {first_line_clean[:50]}...", "INFO", args.verbose)
-                skipped_sections.append(f"Section {section_idx+1}: Header/comment")
-                # Count lines in header section
-                section_lines = max(1, len(section.split('\n')))
-                skipped_lines += section_lines
-                continue
+            if q_line.lower().startswith('question:'):
+                q_text = q_line.split(':', 1)[1].strip()
             else:
-                # Not a comment and not a question - this is malformed!
-                actual_line = find_line_in_file(file_path, line)
-                raise ParseError(f"Malformed section at line {actual_line}: '{line[:80]}...' (does not start with 'Question')")
-                print(f"        Line No.: {actual_line}")
-                print(f"        Line: '{line[:80]}...'")
-                print(f"{C.YELLOW}        Expected: 'Question: <text>' or 'Question No. X: <text>'")
-                print(f"        Also accepted: Comment lines starting with #, ###, ---, or ***")
+                q_text = re.sub(r'^Question\s+', '', q_line, flags=re.IGNORECASE).strip()
 
-    # Add the last question
-    if current_question:
-        questions.append(current_question)
+        # Collect all field lines (before and after the question line)
+        field_lines = lines[:question_line_idx] + lines[question_line_idx+1:]
 
-    # Log skipped sections if verbose
-    if args.verbose and skipped_sections:
-        log(f"Skipped {len(skipped_sections)} sections ({skipped_lines} lines):", "INFO", True)
-        for section in skipped_sections[:5]:  # Show first 5
-            log(f"  - {section}", "INFO", True)
-        if len(skipped_sections) > 5:
-            log(f"  ... and {len(skipped_sections) - 5} more sections", "INFO", True)
+        # Initialise question dict with DEFAULT_QUESTION_TYPE
+        question_dict = {
+            "text": q_text,
+            "type": DEFAULT_QUESTION_TYPE,
+            "options": [],
+            "general_feedback": "",
+            "grader_info": "",
+            "fraction_correct": 100,
+            "fraction_wrong": -20,
+            "penalty": 0,
+            "grade": 1,
+            "lines": 15,
+            "question_no": q_no,
+            "original_question_no": q_no,
+            "attachments": 0,
+            "filetypes": ".doc,.docx,.pdf,.png,.jpg,.jpeg",
+            "maxbytes": 2*1024*1024,
+            "group": "",
+            "question_date": "",
+            "institution": "",
+            "level": "",
+            "paper": "",
+            "subject": "",
+            "chapter": "",
+            "marks": None,
+            "notes": "",
+            "source": "",
+            "nepali_transcription": "",
+            "english_transcription": "",
+            "correct_answer": None,
+            "feedback_true": "",
+            "feedback_false": "",
+            "shuffle_answers": True,
+            "show_num_correct": False,
+            "correct_feedback": "Your answer is correct.",
+            "partially_correct_feedback": "Your answer is partially correct.",
+            "incorrect_feedback": "Your answer is incorrect.",
+            "hints": [],
+            "pairs": [],
+        }
 
-    # Validate all questions have valid types
+        # Apply global context with key mapping
+        KEY_MAP = {
+            'date': 'question_date',
+            'institution': 'institution',
+            'level': 'level',
+            'paper': 'paper',
+            'group': 'group',
+            'subject': 'subject',
+            'notes': 'notes',
+            'source': 'source',
+            'marks': 'marks',
+            'chapter': 'chapter',
+        }
+        mapped_context = {}
+        for key, val in global_context.items():
+            mapped_key = KEY_MAP.get(key, key)
+            mapped_context[mapped_key] = val
+        question_dict.update(mapped_context)
+
+        # Process field lines using save_field_to_question
+        current_field = None
+        field_content = []
+        for line in field_lines:
+            if ':' in line and not line[0].isspace():
+                if current_field:
+                    save_field_to_question(question_dict, current_field, '\n'.join(field_content), 0)
+                parts = line.split(':', 1)
+                current_field = parts[0].strip().lower()
+                field_content = [parts[1].strip()] if parts[1].strip() else []
+            else:
+                if current_field:
+                    field_content.append(line.strip())
+        if current_field:
+            save_field_to_question(question_dict, current_field, '\n'.join(field_content), 0)
+
+        # --- Auto-detect question type from fields ---
+        if question_dict.get('options') and question_dict['type'] not in ('truefalse', 'matching'):
+            question_dict['type'] = 'multichoice'
+        elif question_dict.get('pairs') and question_dict['type'] != 'matching':
+            question_dict['type'] = 'matching'
+        elif question_dict.get('correct_answer') is not None and question_dict['type'] != 'truefalse':
+            question_dict['type'] = 'truefalse'
+        if question_dict['type'] == 'multichoice' and not question_dict.get('options'):
+            question_dict['type'] = DEFAULT_QUESTION_TYPE
+
+        # Duplicate check
+        key = normalize_text(q_text)
+        if key in seen_questions:
+            if args.bypass_duplicate:
+                bypass_used["duplicate"].append(q_no)
+                log(f"Duplicate question {q_no} bypassed", "WARN", args.verbose)
+            else:
+                raise DuplicateQuestionError(f"Duplicate question at question {q_no}")
+        seen_questions.add(key)
+
+        questions.append(question_dict)
+
+    # ---- Post‑processing validation (outside the loop) ----
     for q in questions:
-        if not validate_question_type(q["type"], q["question_no"], 0, q["text"]):
-            sys.exit(1)
+        q_type = q.get("type", DEFAULT_QUESTION_TYPE)
 
-    # Validate MCQs and provide helpful error messages
-    for q in questions:
-        if q["type"] == "multichoice":
-            correct_count = sum(1 for o in q["options"] if o["correct"])
-
+        if q_type == "multichoice":
+            correct_count = sum(1 for o in q.get("options", []) if o.get("correct", False))
             if correct_count == 0:
-                # No correct option found
-                actual_line = find_line_in_file(file_path, q["text"])
                 raise MissingCorrectOptionError(f"Question {q['question_no']} has no correct option marked.")
-                print(f"        Line No.: ~{actual_line}")
-                print(f"        Question: {q['text'][:80]}...")
-                print(f"{C.YELLOW}        Fix: Mark exactly ONE option as correct using:")
-                print(f"        • Asterisk (*) at end: 'Option: Kathmandu *'")
-                print(f"        • [Correct] marker: 'Option: Kathmandu [Correct]'")
-                print(f"        • [OK] marker: 'Option: Kathmandu [OK]'")
-                print(f"        • [Right] marker: 'Option: Kathmandu [Right]'")
-                print(f"        Note: Markers must be OUTSIDE LaTeX math blocks")
-                print(f"        Example: 'Option: Solve \\(x^2 = 4\\) to get *' (correct)")
-                print(f"        Example: 'Option: Solve \\(x^2 = 4 *\\)' (WRONG - inside LaTeX){C.RESET}")
-
-            elif correct_count > 1:
-                actual_line = find_line_in_file(file_path, q["text"])
+            if correct_count > 1:
                 raise MultipleCorrectOptionsError(f"Question {q['question_no']} has {correct_count} correct options.")
-                print(f"        Line No.: ~{actual_line}")
-                print(f"        Question: {q['text'][:80]}...")
-                print(f"{C.YELLOW}        Fix: Remove extra correct markers, keep only ONE")
-                print(f"        Check all options and remove *, [Correct], [OK], [Right] from extras{C.RESET}")
-
-            if len(q["options"]) < 4:
+            if len(q.get("options", [])) < 4:
                 if args.bypass_option:
                     while len(q["options"]) < 4:
                         q["options"].append({"text": f"Option {len(q['options'])+1}", "correct": False})
-                    log(f"Question {q['question_no']} auto-filled missing options due to --bypass-option", "WARN", args.verbose)
                     bypass_used["option"].append(q['question_no'])
                 else:
-                    actual_line = find_line_in_file(file_path, q["text"])
                     raise InsufficientOptionsError(f"Question {q['question_no']} has {len(q['options'])} options (need 4).")
-                    print(f"        Line No.: ~{actual_line}")
-                    print(f"        Question: {q['text'][:80]}...")
-                    print(f"        OR use --bypass-option to auto-fill missing options{C.RESET}")
-                    sys.exit(1)
 
-            elif len(q["options"]) > 4:
-                log(f"Question {q['question_no']} has {len(q['options'])} options (more than 4)", "WARN", args.verbose)
-
-        # Validate and set up True/False questions
-        elif q["type"] == "truefalse":
-            # Ensure fractions are set
-            q.setdefault("fraction_correct", 100)
-            q.setdefault("fraction_wrong", -20)
-
-            # If options not set up yet, set them up now
+        elif q_type == "truefalse":
             if "options" not in q or len(q.get("options", [])) != 2:
                 if "correct_answer" not in q:
-                    # Default to True if not specified
                     q["correct_answer"] = True
-                    log(f"Question {q.get('question_no', '?')}: No correct answer specified for True/False, defaulting to True", "WARN", args.verbose)
                 setup_truefalse_options(q)
-            else:
-                # Ensure correct_answer exists based on options
-                true_option = next((opt for opt in q["options"] if opt.get("text", "").lower() == "true"), None)
-                if true_option and "correct_answer" not in q:
-                    q["correct_answer"] = true_option.get("correct", True)
 
-    # Add validation for matching questions
-    for q in questions:
-        if q["type"] == "matching":
-            # Check if we have pairs
+        elif q_type == "matching":
             if "pairs" not in q or len(q.get("pairs", [])) < 2:
-                actual_line = find_line_in_file(file_path, q["text"])
                 raise MatchingPairError(f"Matching question {q['question_no']} has only {len(q.get('pairs', []))} pairs (need at least 2).")
-                print(f"        Line No.: ~{actual_line}")
-                print(f"        Question: {q['text'][:80]}...")
-                print(f"{C.YELLOW}        Fix: Add at least 2 subquestion/answer pairs")
-                print(f"        Example:")
-                print(f"        Subquestion: France")
-                print(f"        Answer: Paris")
-                print(f"        Subquestion: Germany")
-                print(f"        Answer: Berlin{C.RESET}")
-                sys.exit(1)
-
-            # Check for unique subquestions
             subquestions = [p["subquestion"] for p in q.get("pairs", [])]
             duplicates = set([sq for sq in subquestions if subquestions.count(sq) > 1])
             if duplicates:
-                actual_line = find_line_in_file(file_path, q["text"])
-                print(f"{C.RED}[ERROR] Duplicate subquestions in matching question{C.RESET}")
-                print(f"        Question No.: {q['question_no']}")
-                print(f"        Line No.: ~{actual_line}")
-                print(f"        Question: {q['text'][:80]}...")
-                print(f"        Duplicates: {', '.join(duplicates)}")
-                print(f"{C.YELLOW}        Fix: Each subquestion must be unique{C.RESET}")
-                raise DuplicateQuestionError(f"Duplicate question '{question_text}' at question {question_no} (line {actual_line})")
-
-            # Check all pairs have both subquestion and answer
-            incomplete_pairs = []
+                raise DuplicateQuestionError(f"Duplicate subquestions in matching question {q['question_no']}: {', '.join(duplicates)}")
             for i, pair in enumerate(q.get("pairs", []), 1):
                 if not pair.get("subquestion") or not pair.get("answer"):
-                    incomplete_pairs.append(i)
+                    raise MatchingPairError(f"Incomplete pair {i} in matching question {q['question_no']}")
 
-            if incomplete_pairs:
-                actual_line = find_line_in_file(file_path, q["text"])
-                print(f"{C.RED}[ERROR] Incomplete pairs in matching question{C.RESET}")
-                print(f"        Question No.: {q['question_no']}")
-                print(f"        Line No.: ~{actual_line}")
-                print(f"        Question: {q['text'][:80]}...")
-                print(f"        Incomplete pairs: {incomplete_pairs}")
-                print(f"{C.YELLOW}        Fix: Each pair must have both subquestion and answer{C.RESET}")
-                raise MissingCorrectOptionError(f"Question {q['question_no']} has no correct option marked.")
-
-            # Set defaults if not specified
-            q.setdefault("shuffle_answers", True) # True (this doesn't reveal answers)
-            q.setdefault("show_num_correct", False)
-            q.setdefault("correct_feedback", "Your answer is correct.")
-            q.setdefault("partially_correct_feedback", "Your answer is partially correct.")
-            q.setdefault("incorrect_feedback", "Your answer is incorrect.")
-
-            log(f"Question {q['question_no']}: Validated matching question with {len(q['pairs'])} pairs", "INFO", args.verbose)
-
-    # Log with detailed information about marks/grade - ONLY ONCE, after all validation
-    # This is the main verbose output section that shows question details
+    # ---- Log parsed question details ----
     if args.verbose:
-        log(f"--- Question Details ({len(questions)} questions) ---", "INFO", True)
         for q in questions:
-            if q["type"] == "multichoice":
-                correct_opt = next((opt for opt in q["options"] if opt["correct"]), None)
-                log(f"Question {q['question_no']}: {q['text'][:50]}... (MCQ, Grade: {q.get('grade', 1)}, Correct: '{correct_opt['text'][:30] if correct_opt else 'N/A'}...')", "OK", True)
-            elif q["type"] == "truefalse":
-                correct_opt = next((opt for opt in q["options"] if opt.get("correct", False)), None)
-                log(f"Question {q['question_no']}: {q['text'][:50]}... (True/False, Grade: {q.get('grade', 1)}, Correct: {correct_opt.get('text', 'N/A') if correct_opt else 'N/A'})", "OK", True)
-            else:
-                log(f"Question {q['question_no']}: {q['text'][:50]}... (Essay, Grade: {q.get('grade', 1)}, Lines: {q.get('lines', 15)})", "OK", True)
+            q_type = q.get('type', DEFAULT_QUESTION_TYPE)
+            q_no = q.get('question_no', '?')
+            text_preview = q.get('text', '')[:40] + "..." if len(q.get('text', '')) > 40 else q.get('text', '')
+            log(f"  ✅ Parsed Q{q_no}: {q_type} – {text_preview}", "OK", True)
+            if q_type == 'multichoice':
+                log(f"     Options: {len(q.get('options', []))}, Correct: {sum(1 for o in q.get('options', []) if o.get('correct', False))}", "INFO", True)
+            elif q_type == 'matching':
+                log(f"     Pairs: {len(q.get('pairs', []))}", "INFO", True)
 
-    # Calculate skipped lines statistics
-    total_processed_lines = 0
-    for q in questions:
-        # Estimate lines per question (question text + options + metadata)
-        lines_per_q = 3  # Base for question text and type
-        if q["type"] == "multichoice":
-            lines_per_q += len(q.get("options", []))
-        lines_per_q += 1 if q.get("general_feedback") else 0
-        total_processed_lines += lines_per_q
-
-    # If we have filtering, adjust skipped lines
-    if args.questions:
-        original_question_count = len(questions) + skipped_lines // 5  # Rough estimate
-        log(f"Estimated {original_question_count} original questions before filtering", "INFO", args.verbose)
-
-    log(f"Statistics: Processed {len(questions)} questions, skipped {skipped_lines} lines", "SUMMARY", args.verbose)
+    if args.verbose:
+        log(f"Parsed {len(questions)} questions, skipped {skipped_lines} lines", "SUMMARY", True)
 
     return questions, bypass_used, skipped_lines

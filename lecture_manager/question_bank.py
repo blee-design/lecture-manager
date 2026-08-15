@@ -83,6 +83,15 @@ def create_question_table():
     conn.close()
     print_colored("[✓] Question table ready.", COLORS.GREEN)
 
+def search_questions_by_chapter(chapter_pattern):
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM questions WHERE chapter LIKE %s", (f"%{chapter_pattern}%",))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
 def _should_clear_english(nepali, english):
     """Return True if english is non‑empty and identical to nepali (ignoring case/trim)."""
     if not english or not nepali:
@@ -366,8 +375,8 @@ def get_questions_by_criteria(date=None, institution=None, level=None, paper=Non
         conditions.append("question_number LIKE %s")
         params.append(f"{question_number}%")
     if chapter:
-        conditions.append("chapter LIKE %s")
-        params.append(f"{chapter}%")
+        conditions.append("LOWER(chapter) LIKE LOWER(%s)")
+        params.append(f"%{chapter}%")
 
     sql = f"SELECT * FROM {TABLE_NAME}"
     if conditions:
@@ -710,10 +719,13 @@ def quick_lookup_interactive():
         # --- Full-text search ---
         results = get_all_questions(search=raw)
         if not results:
-            print_colored("[i] No matches.", COLORS.YELLOW)
-            current_results = None
-            current_query = None
-            continue
+            # Try searching by chapter (for syllabus codes like P1-B4.1)
+            results = search_questions_by_chapter(raw)
+            if not results:
+                print_colored("[i] No matches.", COLORS.YELLOW)
+                current_results = None
+                current_query = None
+                continue
 
         # Store results for sticky browsing
         current_results = results
@@ -1674,9 +1686,9 @@ def import_questions_csv():
     print("═" * 50)
 
 def export_questions_txt():
-    """Export all questions to a human‑readable TXT file."""
+    """Export all questions to a human‑readable TXT file with progress and summary."""
     print("\n" + "═" * 50)
-    print_colored("  EXPORT QUESTIONS TO TXT", COLORS.CYAN, bold=True)
+    print_colored("  📤 EXPORT TO TXT", COLORS.CYAN, bold=True)
     print("═" * 50)
 
     rows = get_all_questions()
@@ -1684,6 +1696,7 @@ def export_questions_txt():
         print_colored("[i] No questions to export.", COLORS.YELLOW)
         return
 
+    # Prompt for filename
     filename = input(color_text("Enter TXT filename (default: questions_export.txt): ", COLORS.MAGENTA)).strip()
     if not filename:
         filename = "questions_export.txt"
@@ -1692,8 +1705,7 @@ def export_questions_txt():
 
     field_order = [
         'question_date', 'institution', 'level', 'paper', 'group',
-        'subject', 'chapter', 'question_number', 'marks',
-        'nepali_transcription', 'english_transcription', 'notes'
+        'subject', 'chapter', 'marks', 'notes', 'source'
     ]
     labels = {
         'question_date': 'Date',
@@ -1703,30 +1715,68 @@ def export_questions_txt():
         'group': 'Group',
         'subject': 'Subject',
         'chapter': 'Chapter',
-        'question_number': 'Question Number',
         'marks': 'Marks',
-        'nepali_transcription': 'Nepali',
-        'english_transcription': 'English',
-        'notes': 'Notes'
+        'notes': 'Notes',
+        'source': 'Source'
     }
+
+    # Try tqdm for progress bar
+    try:
+        from tqdm import tqdm
+        use_tqdm = True
+    except ImportError:
+        use_tqdm = False
+        print_colored("[i] Install tqdm for a nicer progress bar: pip install tqdm", COLORS.BLUE)
+
+    total = len(rows)
+    start_time = time.time()
+
+    print_colored(f"\n📤 Exporting {total} questions to {filename}...", COLORS.CYAN)
+
+    # Count types (we'll fetch each question individually)
+    type_counts = {}
+    exported = 0
+    skipped = 0
 
     try:
         with open(filename, 'w', encoding='utf-8') as f:
-            f.write("# Exported Question Bank\n")
-            f.write(f"# Total: {len(rows)} questions\n")
-            f.write("# Each block is separated by '---'\n\n")
+            f.write("# Exported Question Bank (with IDs)\n")
+            f.write(f"# Total: {total} questions\n")
+            f.write("# Each block is separated by '---'\n")
+            f.write("# The 'Question No.' line must come first in each block.\n\n")
 
-            for row in rows:
-                # Start of block
+            iterator = tqdm(rows, desc="Writing questions") if use_tqdm else rows
+
+            for idx, row in enumerate(iterator, 1):
+                # Fetch full question with options/pairs/hints
+                q = get_question_by_id(row['id'])
+                if not q:
+                    print_colored(f"[!] Skipping question {row['id']} (not found)", COLORS.YELLOW)
+                    skipped += 1
+                    continue
+
+                # Update type count
+                q_type = q.get('type', 'essay')
+                type_counts[q_type] = type_counts.get(q_type, 0) + 1
+
+                # ---- Write question block ----
                 f.write("---\n")
 
-                # Write ID first (if present)
-                if row.get('id'):
-                    f.write(f"ID: {row['id']}\n")
+                # 1. Question line (must be first)
+                qno = q.get('question_number', '')
+                q_text = q.get('nepali_transcription') or q.get('english_transcription') or ''
+                if qno:
+                    f.write(f"Question No. {qno}: {q_text}\n")
+                else:
+                    f.write(f"Question: {q_text}\n")
 
-                # Write all non‑empty fields
+                # 2. ID
+                if q.get('id'):
+                    f.write(f"ID: {q['id']}\n")
+
+                # 3. Metadata fields
                 for key in field_order:
-                    val = row.get(key)
+                    val = q.get(key)
                     if val is not None and val != '':
                         if key == 'marks' and val:
                             val = str(val)
@@ -1734,20 +1784,116 @@ def export_questions_txt():
                             val = str(val)
                         f.write(f"{labels.get(key, key)}: {val}\n")
 
-                # Ensure question number is always present
-                if 'question_number' not in row or not row['question_number']:
-                    f.write("Question Number: (missing)\n")
+                # 4. Nepali and English transcriptions (if they differ)
+                nep = q.get('nepali_transcription', '').strip()
+                eng = q.get('english_transcription', '').strip()
+                if nep:
+                    f.write(f"Nepali: {nep}\n")
+                if eng:
+                    f.write(f"English: {eng}\n")
 
-                # Blank line to separate blocks
-                f.write("\n")
+                # 5. Type
+                f.write(f"Type: {q_type}\n")
 
-            # Final separator
-            f.write("---\n")
+                # 6. Type‑specific fields
+                if q_type == "multichoice":
+                    for opt in q.get('options', []):
+                        marker = " *" if opt.get('correct', False) else ""
+                        f.write(f"Option: {opt.get('text', '')}{marker}\n")
+                    if q.get('grade', 1) != 1:
+                        f.write(f"Grade: {q.get('grade', 1)}\n")
+                    if q.get('penalty', 0) != 0:
+                        f.write(f"Penalty: {q.get('penalty', 0)}\n")
+                    if q.get('fraction_correct', 100) != 100 or q.get('fraction_wrong', -20) != -20:
+                        f.write(f"Fraction: {q.get('fraction_correct', 100)} {q.get('fraction_wrong', -20)}\n")
 
-        print_colored(f"[✓] Exported {len(rows)} questions to {filename}", COLORS.GREEN)
-        print_colored(f"[i] File size: {os.path.getsize(filename) / 1024:.2f} KB", COLORS.BLUE)
+                elif q_type == "truefalse":
+                    # Determine correct answer
+                    for opt in q.get('options', []):
+                        if opt.get('correct', False):
+                            f.write(f"Correct: {opt.get('text', '').lower()}\n")
+                            break
+                    if q.get('grade', 1) != 1:
+                        f.write(f"Grade: {q.get('grade', 1)}\n")
+                    if q.get('penalty', 0) != 0:
+                        f.write(f"Penalty: {q.get('penalty', 0)}\n")
+                    if q.get('feedback_true'):
+                        f.write(f"Feedback True: {q.get('feedback_true')}\n")
+                    if q.get('feedback_false'):
+                        f.write(f"Feedback False: {q.get('feedback_false')}\n")
+                    if q.get('fraction_correct', 100) != 100 or q.get('fraction_wrong', -20) != -20:
+                        f.write(f"Fraction: {q.get('fraction_correct', 100)} {q.get('fraction_wrong', -20)}\n")
+
+                elif q_type == "matching":
+                    for pair in q.get('pairs', []):
+                        f.write(f"Subquestion: {pair.get('subquestion', '')}\n")
+                        f.write(f"Answer: {pair.get('answer', '')}\n")
+                    if q.get('grade', 1) != 1:
+                        f.write(f"Grade: {q.get('grade', 1)}\n")
+                    if q.get('penalty', 0) != 0:
+                        f.write(f"Penalty: {q.get('penalty', 0)}\n")
+                    if q.get('shuffle_answers', True) is False:
+                        f.write("Shuffle Answers: false\n")
+                    if q.get('show_num_correct', False):
+                        f.write("Show Number Correct: true\n")
+                    if q.get('correct_feedback') and q.get('correct_feedback') != "Your answer is correct.":
+                        f.write(f"Correct Feedback: {q.get('correct_feedback')}\n")
+                    if q.get('partially_correct_feedback') and q.get('partially_correct_feedback') != "Your answer is partially correct.":
+                        f.write(f"Partially Correct Feedback: {q.get('partially_correct_feedback')}\n")
+                    if q.get('incorrect_feedback') and q.get('incorrect_feedback') != "Your answer is incorrect.":
+                        f.write(f"Incorrect Feedback: {q.get('incorrect_feedback')}\n")
+                    for hint in q.get('hints', []):
+                        f.write(f"Hint: {hint.get('text', '')}\n")
+                        if hint.get('clear_incorrect', False):
+                            f.write("Hint Clear Incorrect: true\n")
+                        if hint.get('show_num_correct', False):
+                            f.write("Hint Show Number Correct: true\n")
+
+                else:  # essay
+                    if q.get('grade', 1) != 1:
+                        f.write(f"Grade: {q.get('grade', 1)}\n")
+                    if q.get('lines', 15) != 15:
+                        f.write(f"Lines: {q.get('lines', 15)}\n")
+                    if q.get('attachments', 0) > 0:
+                        f.write(f"Attachments: {q.get('attachments')}\n")
+                        f.write(f"FileTypes: {q.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg')}\n")
+                        max_mb = q.get('maxbytes', 2 * 1024 * 1024) / (1024 * 1024)
+                        f.write(f"MaxFileSizeMB: {max_mb:.0f}\n")
+                    if q.get('grader_info'):
+                        f.write(f"Grader Information: {q.get('grader_info')}\n")
+
+                # 7. General feedback (common)
+                if q.get('general_feedback'):
+                    f.write(f"General Feedback: {q.get('general_feedback')}\n")
+
+                f.write("\n")  # blank line between questions
+                exported += 1
+
+                # Show progress (if not using tqdm)
+                if not use_tqdm and (idx % 5 == 0 or idx == total):
+                    print(f"  [{idx}/{total}] Processed {idx} questions...")
+
+            f.write("---\n")  # final separator
+
     except Exception as e:
         print_colored(f"[!] Export failed: {e}", COLORS.RED)
+        return
+
+    elapsed = time.time() - start_time
+    file_size = os.path.getsize(filename) / 1024  # KB
+
+    # ---- Summary ----
+    print("\n" + "═" * 60)
+    print_colored("  📤 EXPORT SUMMARY", COLORS.CYAN, bold=True)
+    print("═" * 60)
+    print(f"  📁 Output file: {filename}")
+    print(f"  📊 Questions  : {exported} (skipped: {skipped})")
+    print(f"  🏷️  Format     : TXT")
+    print(f"  💾 File size  : {file_size:.2f} KB")
+    print(f"  ⏱️  Time       : {elapsed:.2f}s")
+    if type_counts:
+        print(f"  📈 Types      : {', '.join(f'{k}: {v}' for k, v in type_counts.items())}")
+    print("═" * 60)
 
 # ---------- Import from Text File ----------
 def import_questions_txt():
