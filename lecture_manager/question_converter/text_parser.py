@@ -1,5 +1,3 @@
-# File text_parser.py
-
 import sys
 import re
 from .utils import (
@@ -35,6 +33,7 @@ VALID_FIELD_NAMES = {
     'id',
     # Metadata fields (for inline context)
     'date', 'institution', 'level', 'paper', 'group', 'subject', 'notes',
+    'question_number', 'question number',
 }
 
 # ----- PASSAGE FEATURE: extract passages from content -----
@@ -474,6 +473,9 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
     elif field_name == 'source':
         question['source'] = field_content
         log(f"  Question {question.get('question_no', '?')}: Set source to {field_content}", "INFO", True)
+    elif field_name in ('question_number', 'question number'):
+        question['question_number'] = field_content
+        log(f"  Question {question.get('question_no', '?')}: Set question number to {field_content}", "INFO", True)
     elif field_name == 'id':
         # Ignore ID on import – just a reference for export
         pass
@@ -653,6 +655,10 @@ def parse_text_file(file_path, args):
             "pairs": [],
         }
 
+        # Ensure question_number is set from the line number if not provided later
+        if not question_dict.get('question_number'):
+            question_dict['question_number'] = str(q_no).zfill(2)
+
         # Apply global context with key mapping
         KEY_MAP = {
             'date': 'question_date',
@@ -698,16 +704,27 @@ def parse_text_file(file_path, args):
         if question_dict['type'] == 'multichoice' and not question_dict.get('options'):
             question_dict['type'] = DEFAULT_QUESTION_TYPE
 
-        # Duplicate check
-        key = normalize_text(q_text)
-        if key in seen_questions:
+        # --- Build composite key for duplicate detection ---
+        # Use the same fields as the database uniqueness constraint
+        dup_key = (
+            question_dict.get('question_date', ''),
+            question_dict.get('institution', ''),
+            question_dict.get('level', ''),
+            question_dict.get('paper', ''),
+            question_dict.get('group', ''),
+            question_dict.get('question_number', '')
+        )
+        # Only fall back to text if ALL fields are empty (should rarely happen)
+        if all(not v for v in dup_key):
+            dup_key = normalize_text(q_text)
+
+        if dup_key in seen_questions:
             if args.bypass_duplicate:
                 bypass_used["duplicate"].append(q_no)
                 log(f"Duplicate question {q_no} bypassed", "WARN", args.verbose)
             else:
                 raise DuplicateQuestionError(f"Duplicate question at question {q_no}")
-        seen_questions.add(key)
-
+        seen_questions.add(dup_key)
         questions.append(question_dict)
 
     # ---- Post‑processing validation (outside the loop) ----
