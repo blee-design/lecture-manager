@@ -540,8 +540,13 @@ class PomodoroApp:
     def load_tasks(self):
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT id, task_text, priority, completed FROM pomodoro_tasks ORDER BY "
-                       "CASE priority WHEN 1 THEN 0 WHEN 0 THEN 2 ELSE 1 END, priority")
+        cursor.execute("""
+            SELECT id, task_text, priority, completed FROM pomodoro_tasks
+            ORDER BY
+                CASE priority WHEN 1 THEN 0 WHEN 0 THEN 2 ELSE 1 END,
+                priority,
+                task_text ASC   -- <-- added alphabetical sorting
+        """)
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -927,23 +932,18 @@ class PomodoroApp:
         label = self.task_var.get()
         if not label:
             return None
-
-        # Try exact match first
+        # Try exact match from combo_label_to_id
         if label in self.combo_label_to_id:
             return self.combo_label_to_id[label]
-
-        # Fallback: extract task text (remove "[Px] " prefix)
+        # Fallback: fuzzy match (same as in log_session)
         import re
         match = re.match(r'^\[P\d+\]\s*(.*)$', label)
         if match:
             task_text = match.group(1).strip()
-            # Search for a task with that text (case‑insensitive)
             for lbl, tid in self.combo_label_to_id.items():
-                # Extract text from the stored label
                 m = re.match(r'^\[P\d+\]\s*(.*)$', lbl)
                 if m and m.group(1).strip().lower() == task_text.lower():
                     return tid
-
         return None
 
     def get_current_streak(self):
@@ -1558,16 +1558,20 @@ class PomodoroApp:
         try:
             conn = get_connection()
             cursor = conn.cursor()
+            current_task_id = self.get_current_task_id()  # helper to get selected task ID
             cursor.execute("""
                 REPLACE INTO pomodoro_state
-                (id, current_phase, remaining_seconds, notes, subject, cycles_completed, updated_at)
-                VALUES (1, %s, %s, %s, %s, %s, NOW())
+                (id, current_phase, remaining_seconds, notes, subject, cycles_completed,
+                session_type, task_id)   -- added two new columns
+                VALUES (1, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 self.current_phase,
                 self.remaining_seconds,
                 self.notes_text.get("1.0", tk.END).strip(),
                 self.subject_var.get().strip(),
-                self.cycles_completed
+                self.cycles_completed,
+                self.type_var.get().strip(),   # session_type
+                current_task_id                # task_id (can be None)
             ))
             conn.commit()
             cursor.close()
@@ -1607,7 +1611,7 @@ class PomodoroApp:
             return None
 
     def restore_state_if_any(self):
-        state = self.load_state()   # now returns None if the state is not from today
+        state = self.load_state()
         if not state:
             return
 
@@ -1619,22 +1623,46 @@ class PomodoroApp:
             f"Notes: {state.get('notes', '')[:100]}...")
         answer = messagebox.askyesno("Resume Session", msg)
         if answer:
-            # Restore everything from the saved state
+            # Restore core state
             self.current_phase = state['current_phase']
             self.remaining_seconds = state['remaining_seconds']
-            self.cycles_completed = state['cycles_completed']   # this is today's count
+            self.cycles_completed = state['cycles_completed']
 
             if state.get('subject'):
                 self.subject_var.set(state['subject'])
             else:
                 self.subject_var.set('')
 
+            # ---------- NEW: Restore session type ----------
+            if state.get('session_type'):
+                self.type_var.set(state['session_type'])
+            else:
+                self.type_var.set('study')  # default
+
+            # ---------- NEW: Restore task ----------
+            task_id = state.get('task_id')
+            if task_id:
+                # Find the task in self.tasks (which should be already loaded)
+                task = next((t for t in self.tasks if t['id'] == task_id), None)
+                if task:
+                    label = f"[P{task['priority']}] {task['task_text']}"
+                    # Ensure the combo has this label; if not, add it temporarily?
+                    # Actually, the combo values are built from tasks, so it should exist.
+                    self.task_var.set(label)
+                    self.current_task_id = task_id
+                else:
+                    # Task may have been deleted; leave as default
+                    self.current_task_id = None
+            else:
+                self.current_task_id = None
+
+            # Restore notes
             self.notes_text.delete("1.0", tk.END)
             self.notes_text.insert("1.0", state.get('notes', ''))
             self.phase_label.config(text=self.current_phase.capitalize())
             self.update_display()
 
-            # Set the timer as paused (ready to resume when user clicks Start)
+            # Set timer as paused (ready to resume when user clicks Start)
             self.paused = True
             self.timer_running = False
             self.start_btn.config(state=tk.NORMAL)
@@ -1642,17 +1670,14 @@ class PomodoroApp:
 
             messagebox.showinfo("Restored", "Session restored. Click Start to resume.")
         else:
-            # User declines – clear the old state and reset cycles to today's actual count
+            # User declines – clear old state and reset cycles to today's count
             self.clear_state()
-            # Recompute cycles based on today's logs (should be 0 or whatever was logged today)
             self.today_count = self.count_today_pomodoros()
             self.cycles_completed = self.today_count
-            # If we are not resuming, we should also reset the timer display to work phase
             self.current_phase = "work"
             self.remaining_seconds = self.config["work_min"] * 60
             self.phase_label.config(text="Work")
             self.update_display()
-            # Update progress bars (today's count already updated)
             self.update_progress()
 
     def schedule_state_save(self):

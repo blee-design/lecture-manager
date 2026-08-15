@@ -525,6 +525,16 @@ def migrate_table():
         cursor.execute("INSERT INTO pomodoro_state (id, current_phase, remaining_seconds) VALUES (1, 'work', 0)")
         print_colored("[✓] Created pomodoro_state table.", COLORS.GREEN)
 
+    cursor.execute("SHOW COLUMNS FROM pomodoro_state LIKE 'session_type'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE pomodoro_state ADD COLUMN session_type VARCHAR(50) NULL")
+        print_colored("[✓] Added 'session_type' column to pomodoro_state.", COLORS.GREEN)
+
+    cursor.execute("SHOW COLUMNS FROM pomodoro_state LIKE 'task_id'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE pomodoro_state ADD COLUMN task_id INT NULL")
+        print_colored("[✓] Added 'task_id' column to pomodoro_state.", COLORS.GREEN)
+
     # --- Add subject_id and session_type to pomodoro_log ---
     cursor.execute("SHOW COLUMNS FROM pomodoro_log LIKE 'subject_id'")
     if not cursor.fetchone():
