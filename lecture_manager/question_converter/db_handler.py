@@ -12,12 +12,6 @@ from .text_parser import parse_text_file
 from .xml_handler import xml_to_questions
 from .json_handler import json_to_questions
 
-try:
-    from tqdm import tqdm
-    use_tqdm = True
-except ImportError:
-    use_tqdm = False
-
 def map_paper_value(paper_str):
     """Convert human‑readable paper names to internal enum keys."""
     if not paper_str:
@@ -385,28 +379,21 @@ def import_from_file(file_path, format, source=None, args=None):
     if args.verbose:
         print_colored(f"   Types: {', '.join(f'{k}: {v}' for k, v in type_counts.items())}", COLORS.BLUE)
 
-    iterator = tqdm(questions, desc="Importing", unit="q") if use_tqdm and args.verbose else questions
+        for idx, q in enumerate(questions, 1):
+            if args.verbose and (idx % 5 == 0 or idx == total or total <= 5):
+                print(f"  [{idx}/{total}] Processing question {q.get('question_no', '?')}...")
 
-    for idx, q in enumerate(iterator, 1):
-        try:
-            insert_question(q, source=source, force=args.bypass_duplicate)
-            count += 1
-            if not use_tqdm and args.verbose and idx % 5 == 0:
-                print(f"  [{idx}/{total}] Processed {idx} questions...")
-        except DuplicateQuestionError as e:
-            msg = f"    {C.YELLOW}⏭️  Skipped duplicate: {e}{C.RESET}"
-            if use_tqdm and args.verbose:
-                tqdm.write(msg)
-            elif args.verbose:
-                print(msg)
-            skipped += 1
-        except Exception as e:
-            errors.append(str(e))
-            msg = f"    {C.RED}❌ Error: {e}{C.RESET}"
-            if use_tqdm and args.verbose:
-                tqdm.write(msg)
-            elif args.verbose:
-                print(msg)
+            try:
+                insert_question(q, source=source, force=args.bypass_duplicate)
+                count += 1
+            except DuplicateQuestionError as e:
+                if args.verbose:
+                    print(f"    {C.YELLOW}⏭️  Skipped duplicate: {e}{C.RESET}")
+                skipped += 1
+            except Exception as e:
+                errors.append(str(e))
+                if args.verbose:
+                    print(f"    {C.RED}❌ Error: {e}{C.RESET}")
 
     elapsed = time.time() - start_time
 
@@ -436,19 +423,18 @@ def import_from_file(file_path, format, source=None, args=None):
 def export_to_file(questions, output_file, format, args=None):
     if args is None:
         args = type('Args', (), {'verbose': False})()
-
     import time
     start_time = time.time()
-
     log(f"📤 Exporting {len(questions)} questions to {output_file} (format: {format})", "INFO", args.verbose)
 
+    total = len(questions)
     # Count types
     from collections import Counter
     type_counts = Counter(q.get('type', 'essay') for q in questions)
-
     if args.verbose:
         print_colored(f"   Types: {', '.join(f'{k}: {v}' for k, v in type_counts.items())}", COLORS.BLUE)
 
+    # Perform export
     if format == 'xml':
         from .xml_handler import create_moodle_xml
         create_moodle_xml(questions, output_file, args.verbose)
@@ -465,8 +451,7 @@ def export_to_file(questions, output_file, format, args=None):
         raise ValueError(f"Unsupported export format: {format}")
 
     elapsed = time.time() - start_time
-
-    # ---- Summary ----
+    # ---- Summary (unchanged) ----
     print("\n" + "═" * 60)
     print_colored("  📤 EXPORT SUMMARY", COLORS.CYAN, bold=True)
     print("═" * 60)

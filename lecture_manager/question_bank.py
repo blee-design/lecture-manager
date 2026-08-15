@@ -1459,9 +1459,11 @@ def export_questions_csv():
     print_colored(f"[i] Processing {total} questions...", COLORS.BLUE)
 
     for idx, row in enumerate(rows, 1):
-        # Show progress every 50 questions
-        if idx % 50 == 0 or idx == total:
-            print(f"{COLORS.CYAN}  [{idx}/{total}] Processing question {row.get('question_number', '?')}...{COLORS.RESET}")
+        # Show progress every 10 questions (or first/last)
+        if idx % 10 == 0 or idx == 1 or idx == total:
+            qid = row.get('id', '?')
+            qno = row.get('question_number', '?')
+            print(f"{COLORS.CYAN}  [{idx}/{total}] Processing ID {qid} (Q{qno})...{COLORS.RESET}")
 
         qid = row['id']
         cursor = conn.cursor(dictionary=True)
@@ -1696,7 +1698,6 @@ def export_questions_txt():
         print_colored("[i] No questions to export.", COLORS.YELLOW)
         return
 
-    # Prompt for filename
     filename = input(color_text("Enter TXT filename (default: questions_export.txt): ", COLORS.MAGENTA)).strip()
     if not filename:
         filename = "questions_export.txt"
@@ -1720,14 +1721,6 @@ def export_questions_txt():
         'source': 'Source'
     }
 
-    # Try tqdm for progress bar
-    try:
-        from tqdm import tqdm
-        use_tqdm = True
-    except ImportError:
-        use_tqdm = False
-        print_colored("[i] Install tqdm for a nicer progress bar: pip install tqdm", COLORS.BLUE)
-
     total = len(rows)
     start_time = time.time()
 
@@ -1745,9 +1738,7 @@ def export_questions_txt():
             f.write("# Each block is separated by '---'\n")
             f.write("# The 'Question No.' line must come first in each block.\n\n")
 
-            iterator = tqdm(rows, desc="Writing questions") if use_tqdm else rows
-
-            for idx, row in enumerate(iterator, 1):
+            for idx, row in enumerate(rows, 1):
                 # Fetch full question with options/pairs/hints
                 q = get_question_by_id(row['id'])
                 if not q:
@@ -1869,8 +1860,8 @@ def export_questions_txt():
                 f.write("\n")  # blank line between questions
                 exported += 1
 
-                # Show progress (if not using tqdm)
-                if not use_tqdm and (idx % 5 == 0 or idx == total):
+                # Show progress every 5 questions
+                if idx % 5 == 0 or idx == total:
                     print(f"  [{idx}/{total}] Processed {idx} questions...")
 
             f.write("---\n")  # final separator
@@ -2079,39 +2070,38 @@ def export_questions_json():
     if not filename.endswith('.json'):
         filename += '.json'
 
-    # Remove internal fields and convert Decimal to float/int
+    total = len(rows)
+    print_colored(f"[i] Processing {total} questions...", COLORS.BLUE)
+
     export_data = []
-    for row in rows:
+    for idx, row in enumerate(rows, 1):
+        if idx % 10 == 0 or idx == 1 or idx == total:
+            qid = row.get('id', '?')
+            qno = row.get('question_number', '?')
+            print(f"{COLORS.CYAN}  [{idx}/{total}] Processing ID {qid} (Q{qno})...{COLORS.RESET}")
+
         clean_row = row.copy()
-        # Remove internal fields
-        # clean_row.pop('id', None)
+        # Keep the id
         clean_row.pop('created_at', None)
         clean_row.pop('updated_at', None)
-        export_data.append(sanitize_for_json(clean_row))
-
-        # Convert date to string if it's a date/datetime
+        # Convert date/datetime to string
         if 'question_date' in clean_row and clean_row['question_date']:
             if hasattr(clean_row['question_date'], 'isoformat'):
                 clean_row['question_date'] = clean_row['question_date'].isoformat()
             else:
                 clean_row['question_date'] = str(clean_row['question_date'])
-
-        # Convert Decimal to float for all numeric fields
+        # Convert Decimal to float/int
         for key, value in clean_row.items():
             if isinstance(value, Decimal):
-                # If it's a whole number, convert to int, else float
-                if value % 1 == 0:
-                    clean_row[key] = int(value)
-                else:
-                    clean_row[key] = float(value)
-
-        # export_data.append(clean_row) # sanitize_for_json already handles it.
+                clean_row[key] = int(value) if value % 1 == 0 else float(value)
+        export_data.append(sanitize_for_json(clean_row))
 
     try:
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(export_data, f, indent=2, ensure_ascii=False)
+        file_size = os.path.getsize(filename) / 1024
         print_colored(f"[✓] Exported {len(export_data)} questions to {filename}", COLORS.GREEN)
-        print_colored(f"[i] File size: {os.path.getsize(filename) / 1024:.2f} KB", COLORS.BLUE)
+        print_colored(f"[i] File size: {file_size:.2f} KB", COLORS.BLUE)
     except Exception as e:
         print_colored(f"[!] Export failed: {e}", COLORS.RED)
 
