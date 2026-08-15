@@ -3,6 +3,7 @@
 import os
 import subprocess
 import shutil
+import tempfile
 from .db import get_connection, TABLE_NAME, get_record_by_any_id
 from .utils import print_colored, COLORS, compute_md5, ROOT_DIR
 from .file_manager import get_target_path
@@ -38,12 +39,13 @@ def get_file_path_for_record(record):
                     return os.path.join(root, f)
     return None
 
-def compress_file(filepath):
+def compress_file(filepath, record=None):
     """
     Compress a single video file to 480p H.264 (CRF 28).
+    Uses a system temporary directory to avoid orphaned files.
     Returns a dict with status and message.
     """
-    # 1. Check resolution
+    # 1. Check resolution (unchanged)
     try:
         cmd = ['ffprobe', '-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', filepath]
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -65,16 +67,19 @@ def compress_file(filepath):
     if height <= 480:
         return {'status': 'skipped', 'message': f'Already {width}x{height} (≤480p), skipping'}
 
-    # 2. Prepare output paths and ffmpeg command
+    # 2. Prepare output paths
     dirname = os.path.dirname(filepath)
     basename = os.path.basename(filepath)
-    temp_output = os.path.join(dirname, f"temp_{os.urandom(4).hex()}.mkv")
+
+    # Create a temporary directory outside the library
+    temp_dir = tempfile.mkdtemp(prefix="lecture_compress_")
+    temp_output = os.path.join(temp_dir, f"temp_{os.urandom(4).hex()}.mkv")
 
     cmd = [
         'ffmpeg', '-i', filepath,
         '-c:v', 'libx264',
         '-crf', '28',
-        '-preset', 'medium', # medium, slow, fast
+        '-preset', 'medium',
         '-vf', 'scale=854:-2',
         '-c:a', 'aac',
         '-b:a', '128k',
@@ -82,8 +87,6 @@ def compress_file(filepath):
         '-y',
         temp_output
     ]
-    # this is example which creates 660MB into 320MB
-    # ffmpeg -i ea328ccd46284546917555b787658124.mkv -c:v libx265 -crf 28 -preset medium -c:a aac compressed_video.mkv
 
     print(f"  Compressing: {basename}")
 
@@ -99,27 +102,34 @@ def compress_file(filepath):
         if proc is not None and proc.poll() is None:
             proc.terminate()
             proc.wait()
-        if os.path.exists(temp_output):
-            os.remove(temp_output)
+        # Clean up temp directory
+        shutil.rmtree(temp_dir, ignore_errors=True)
         print_colored("\n[!] Compression cancelled by user.", COLORS.YELLOW)
         return {'status': 'failed', 'message': 'Cancelled by user'}
     except Exception as e:
-        # Clean up temp file on any other error
-        if os.path.exists(temp_output):
-            os.remove(temp_output)
+        # Clean up temp directory on any other error
+        shutil.rmtree(temp_dir, ignore_errors=True)
         return {'status': 'failed', 'message': f'ffmpeg error: {e}'}
 
-    # 4. Compute new hash and rename
+    # 4. Compute new hash and rename to final location
     new_hash = compute_md5(temp_output)
     new_filename = f"{new_hash}.mkv"
     new_filepath = os.path.join(dirname, new_filename)
 
     try:
+        # Ensure the target directory exists (it should, but just in case)
+        os.makedirs(dirname, exist_ok=True)
+        # Move the temp file to the final location
         shutil.move(temp_output, new_filepath)
+        # Remove the original file
         if os.path.exists(filepath) and filepath != new_filepath:
             os.remove(filepath)
     except Exception as e:
+        shutil.rmtree(temp_dir, ignore_errors=True)
         return {'status': 'failed', 'message': f'Move error: {e}'}
+
+    # Clean up temp directory (now empty)
+    shutil.rmtree(temp_dir, ignore_errors=True)
 
     # 5. Update database
     try:
@@ -196,7 +206,8 @@ def compress_single_by_id(identifier):
         return {'status': 'failed', 'message': f'Could not locate file for record {identifier}'}
 
     print_colored(f"Found file: {filepath}", COLORS.BLUE)
-    return compress_file(filepath)
+    # Pass the record to compress_file so we can use it if needed
+    return compress_file(filepath, record)
 
 def list_largest_files(n=5):
     """Find and list the n largest video files with height > 480.
