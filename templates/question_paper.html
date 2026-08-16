@@ -64,6 +64,19 @@
                             {% endif %}
                           </div>
 
+                          <!-- Syllabus Code badges -->
+                          <div class="mb-2">
+                            {% if q.marks %}
+                              <span class="badge bg-warning text-dark fs-6 me-2">...</span>
+                            {% endif %}
+                            {% if q.chapter %}
+                              <span class="badge bg-secondary me-2">{{ q.chapter }}</span>
+                            {% endif %}
+                            {% if q.syllabus_code %}
+                              <span class="badge bg-info">{{ q.syllabus_code }}</span>
+                            {% endif %}
+                          </div>
+
                           <!-- Question text: Nepali (English) in one line -->
                           <div class="question-text">
                             {% if q.nepali_transcription %}

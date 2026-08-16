@@ -40,6 +40,7 @@
         <th><a href="{{ url_for('question_list', sort='level', order='asc') }}">Level</a></th>
         <th><a href="{{ url_for('question_list', sort='subject', order='asc') }}">Subject</a></th>
         <th><a href="{{ url_for('question_list', sort='paper', order='asc') }}">Paper</a></th>
+        <th><a href="{{ url_for('question_list', sort='syllabus_code', order='asc') }}">Syllabus Code</a></th>
         <th>Group</th>
         <th>Q.No.</th>
         <th>Marks</th>
@@ -54,6 +55,7 @@
         <td>{{ q.level }}</td>
         <td>{{ q.subject }}</td>
         <td>{{ q.paper or '' }}</td>
+        <td>{{ q.syllabus_code or '' }}</td>
         <td>{{ q.group or '' }}</td>
         <td>{{ q.question_number }}</td>
         <td>{{ q.marks if q.marks else '' }}</td>

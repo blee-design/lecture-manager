@@ -34,6 +34,11 @@
           <dd class="col-sm-8">{{ question.chapter }}</dd>
           {% endif %}
 
+          {% if question.syllabus_code %}
+          <dt class="col-sm-4">Syllabus Code</dt>
+          <dd class="col-sm-8">{{ question.syllabus_code }}</dd>
+          {% endif %}
+
           {% if question.marks %}
           <dt class="col-sm-4">Marks</dt>
           <dd class="col-sm-8"><span class="badge bg-warning text-dark">{{ question.marks }}</span></dd>

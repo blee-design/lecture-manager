@@ -537,6 +537,8 @@ def _display_single_question(q):
     print(f"  Subject: {color_text(subject, COLORS.CYAN)}")
     if chapter:
         print(f"  Chapter: {color_text(chapter, COLORS.GREEN)}")
+    if q.get('syllabus_code'):
+        print(f"  Syllabus Code: {color_text(q['syllabus_code'], COLORS.MAGENTA)}")
 
     q_no = normalize_question_number(q.get('question_number'))
     from .utils import html_to_terminal
@@ -605,6 +607,8 @@ def _display_paper(questions):
 
                 if chapter:
                     print(f"        {color_text('Chapter:', COLORS.GREEN)} {chapter}")
+                if q.get('syllabus_code'):
+                    print(f"        {color_text('Syllabus Code:', COLORS.MAGENTA)} {q['syllabus_code']}")
 
                 # ---- Combined question (Nepali + English) ----
                 question_text = nepali
