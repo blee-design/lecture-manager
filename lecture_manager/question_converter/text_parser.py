@@ -33,7 +33,7 @@ VALID_FIELD_NAMES = {
     'id',
     # Metadata fields (for inline context)
     'date', 'institution', 'level', 'paper', 'group', 'subject', 'notes',
-    'question_number', 'question number',
+    'question_number', 'question number',    'syllabus code',
 }
 
 # ----- PASSAGE FEATURE: extract passages from content -----
@@ -469,10 +469,18 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
             log(f"  Question {question.get('question_no', '?')}: Invalid marks value, set to NULL", "WARN", True)
     elif field_name == 'chapter':
         question['chapter'] = field_content
-        log(f"  Question {question.get('question_no', '?')}: Set chapter to {field_content}", "INFO", True)
+        if 'syllabus_code' not in question or not question['syllabus_code']:
+            import re
+            match = re.search(r'\(([^)]+)\)', field_content)
+            if match:
+                question['syllabus_code'] = match.group(1).strip()
+                log(f"  Question {question.get('question_no', '?')}: Auto‑extracted syllabus code: {question['syllabus_code']}", "INFO", True)
     elif field_name == 'source':
         question['source'] = field_content
         log(f"  Question {question.get('question_no', '?')}: Set source to {field_content}", "INFO", True)
+    elif field_name == 'syllabus code':
+        question['syllabus_code'] = field_content
+        log(f"  Question {question.get('question_no', '?')}: Set syllabus code to {field_content}", "INFO", True)
     elif field_name in ('question_number', 'question number'):
         question['question_number'] = field_content
         log(f"  Question {question.get('question_no', '?')}: Set question number to {field_content}", "INFO", True)

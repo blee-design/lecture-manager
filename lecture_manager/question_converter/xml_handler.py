@@ -641,8 +641,9 @@ def create_moodle_xml(questions, output_file, verbose=False):
             question_elem = create_essay_question(doc, q, i)
             log(f"Question {i}: Created essay element", "INFO", verbose)
 
-        # Add a comment with the database ID inside the question element
+        # Add a comment with the database ID and Syllabus code inside the question element
         question_elem.appendChild(doc.createComment(f" Database ID: {q.get('id', 'N/A')} "))
+        question_elem.appendChild(doc.createComment(f" Syllabus Code: {q.get('syllabus_code', 'N/A')} "))
 
         # Append the question to the quiz
         quiz.appendChild(question_elem)

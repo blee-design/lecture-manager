@@ -233,7 +233,7 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                  response_lines=15, attachments=0,
                  filetypes='.doc,.docx,.pdf,.png,.jpg,.jpeg',
                  maxbytes=2097152, grader_info=None,
-                 q_type='essay'):   # <-- NEW parameter
+                 syllabus_code=None, q_type='essay'):
     # Check duplicate
     if not force:
         existing = check_duplicate(date, institution, level, paper, group, question_number)
@@ -288,15 +288,15 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
          general_feedback, fraction_correct, fraction_wrong, shuffle_answers,
          show_num_correct, correct_feedback, partially_correct_feedback,
          incorrect_feedback, response_lines, attachments, filetypes, maxbytes,
-         grader_info, type)
+         grader_info, type, syllabus_code)   -- added
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (date, institution, subject, paper, group, marks, chapter,
           question_number, nepali, english, level, notes,
           general_feedback, fraction_correct, fraction_wrong,
           shuffle_answers, show_num_correct,
           correct_feedback, partially_correct_feedback, incorrect_feedback,
-          response_lines, attachments, filetypes, maxbytes, grader_info, q_type))
+          response_lines, attachments, filetypes, maxbytes, grader_info, q_type, syllabus_code))
     conn.commit()
     qid = cursor.lastrowid
 
@@ -347,7 +347,7 @@ def get_question_by_id(qid):
     conn.close()
     return q
 
-def get_questions_by_criteria(date=None, institution=None, level=None, paper=None, group=None, subject=None, question_number=None, chapter=None):
+def get_questions_by_criteria(date=None, institution=None, level=None, paper=None, group=None, subject=None, question_number=None, chapter=None, syllabus_code=None):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     conditions = []
@@ -358,7 +358,7 @@ def get_questions_by_criteria(date=None, institution=None, level=None, paper=Non
         params.append(date)
     if institution:
         conditions.append("institution LIKE %s")
-        params.append(f"{institution}%")          # prefix match → uses index
+        params.append(f"{institution}%")
     if level:
         conditions.append("level LIKE %s")
         params.append(f"{level}%")
@@ -377,6 +377,10 @@ def get_questions_by_criteria(date=None, institution=None, level=None, paper=Non
     if chapter:
         conditions.append("LOWER(chapter) LIKE LOWER(%s)")
         params.append(f"%{chapter}%")
+    # ---- NEW ----
+    if syllabus_code:
+        conditions.append("syllabus_code LIKE %s")
+        params.append(f"%{syllabus_code}%")
 
     sql = f"SELECT * FROM {TABLE_NAME}"
     if conditions:
@@ -722,10 +726,13 @@ def quick_lookup_interactive():
             # Try searching by chapter (for syllabus codes like P1-B4.1)
             results = search_questions_by_chapter(raw)
             if not results:
-                print_colored("[i] No matches.", COLORS.YELLOW)
-                current_results = None
-                current_query = None
-                continue
+                # Try searching by syllabus_code
+                results = get_questions_by_criteria(syllabus_code=raw)
+                if not results:
+                    print_colored("[i] No matches.", COLORS.YELLOW)
+                    current_results = None
+                    current_query = None
+                    continue
 
         # Store results for sticky browsing
         current_results = results
@@ -1209,7 +1216,7 @@ def advanced_search_interactive():
     print("Leave value blank to clear that criterion.")
     print("After setting criteria, choose '9. Search' to run the search.\n")
 
-    fields = ['date', 'institution', 'level', 'paper', 'group', 'subject', 'question_number', 'chapter']
+    fields = ['date', 'institution', 'level', 'paper', 'group', 'subject', 'question_number', 'chapter', 'syllabus_code']
     display_names = {
         'date': 'question_date',
         'institution': 'institution',
@@ -1218,7 +1225,8 @@ def advanced_search_interactive():
         'group': 'group',
         'subject': 'subject',
         'question_number': 'question_number',
-        'chapter': 'chapter'
+        'chapter': 'chapter',
+        'syllabus_code': 'syllabus_code'
     }
     criteria = {f: '' for f in fields}
 
@@ -1238,11 +1246,11 @@ def advanced_search_interactive():
                 display = color_text(display_val, COLORS.GREEN)
             print(f"  {i:2}. {display_name:18}: {display}")
         print("─" * 50)
-        print("  9. " + color_text("Search with current criteria", COLORS.CYAN, bold=True))
+        print("  90. " + color_text("Search with current criteria", COLORS.CYAN, bold=True))
         print("  0. " + color_text("Return to Question Bank menu", COLORS.YELLOW))
         choice = input(color_text("\nChoose a field to edit (1-8), 9 to search, or 0 to return: ", COLORS.MAGENTA)).strip()
 
-        if choice == '9':
+        if choice == '90':
             kwargs = {}
             for field in fields:
                 val = criteria[field].strip()
@@ -1447,6 +1455,7 @@ def export_questions_csv():
         'nepali_transcription', 'english_transcription', 'notes',
         'source', 'type',
         'general_feedback', 'fraction_correct', 'fraction_wrong',
+        'syllabus_code',
         'shuffle_answers', 'show_num_correct',
         'correct_feedback', 'partially_correct_feedback', 'incorrect_feedback',
         'response_lines', 'attachments', 'filetypes', 'maxbytes',
@@ -1774,6 +1783,9 @@ def export_questions_txt():
                         elif isinstance(val, (date, datetime)):
                             val = str(val)
                         f.write(f"{labels.get(key, key)}: {val}\n")
+                    # Add syllabus_code if present
+                    if q.get('syllabus_code'):
+                        f.write(f"Syllabus Code: {q['syllabus_code']}\n")
 
                 # 4. Nepali and English transcriptions (if they differ)
                 nep = q.get('nepali_transcription', '').strip()

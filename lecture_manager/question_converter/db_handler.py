@@ -145,7 +145,7 @@ def insert_question(q_dict, source=None, force=False):
         english=q_dict.get('english_transcription') or q_dict.get('english', ''),
         level=level,
         notes=q_dict.get('notes'),
-        force=True,   # we already checked duplicate
+        force=True,
         options=q_dict.get('options'),
         pairs=q_dict.get('pairs'),
         hints=q_dict.get('hints'),
@@ -161,7 +161,9 @@ def insert_question(q_dict, source=None, force=False):
         attachments=q_dict.get('attachments', 0),
         filetypes=q_dict.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg'),
         maxbytes=q_dict.get('maxbytes', 2097152),
-        grader_info=q_dict.get('grader_info')
+        grader_info=q_dict.get('grader_info'),
+        syllabus_code=q_dict.get('syllabus_code'),
+        q_type=q_dict.get('type', 'essay')
     )
 
 def _convert_to_db_fields(q_dict):

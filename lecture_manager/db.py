@@ -365,6 +365,28 @@ def migrate_table():
         cursor.execute("ALTER TABLE questions ADD COLUMN type ENUM('multichoice','essay','truefalse','matching') DEFAULT 'essay'")
         print_colored("[✓] Added 'type' column to questions table.", COLORS.GREEN)
 
+    # ---- Add syllabus_code column to questions ----
+    cursor.execute("SHOW COLUMNS FROM questions LIKE 'syllabus_code'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE questions ADD COLUMN syllabus_code VARCHAR(50) NULL")
+        print_colored("[✓] Added 'syllabus_code' column.", COLORS.GREEN)
+        cursor.execute("ALTER TABLE questions ADD INDEX idx_syllabus_code (syllabus_code)")
+        print_colored("[✓] Added index on 'syllabus_code'.", COLORS.GREEN)
+
+        # ---- Backfill syllabus_code from chapter field ----
+        cursor.execute("SELECT id, chapter FROM questions WHERE syllabus_code IS NULL AND chapter IS NOT NULL AND chapter != ''")
+        rows = cursor.fetchall()
+        updated = 0
+        for qid, chapter in rows:
+            if chapter:
+                import re
+                match = re.search(r'\(([^)]+)\)', chapter)
+                if match:
+                    code = match.group(1).strip()
+                    cursor.execute("UPDATE questions SET syllabus_code = %s WHERE id = %s", (code, qid))
+                    updated += 1
+        print_colored(f"[✓] Backfilled {updated} syllabus codes from chapter field.", COLORS.GREEN)
+
     # ---------- Full‑text index for question search ----------
     cursor.execute("SHOW INDEX FROM questions WHERE Key_name = 'ft_search'")
     if not cursor.fetchone():

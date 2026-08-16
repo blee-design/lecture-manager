@@ -289,6 +289,13 @@ def create_html_output(questions, output_file, verbose=False, shuffle_applied=Fa
             if q.get("hints"):
                 full_questions_html += f'<div class="metadata-item"><span class="metadata-label">Hints Count:</span><span class="metadata-value">{len(q.get("hints", []))}</span></div>'
 
+        full_questions_html += f'''
+        <div class="metadata-item"><span class="metadata-label">ID:</span><span class="metadata-value">{q.get('id', 'N/A')}</span></div>
+        '''
+        full_questions_html += f'''
+        <div class="metadata-item"><span class="metadata-label">Syllabus Code:</span><span class="metadata-value">{q.get('syllabus_code', '')}</span></div>
+        '''
+
         original_no = q.get("original_question_no", q_no)
         if "original_question_no" in q and original_no != q_no:
             full_questions_html += f'<div class="metadata-item"><span class="metadata-label">Original Position:</span><span class="metadata-value">{original_no} (shuffled to {q_no})</span></div>'
@@ -297,10 +304,6 @@ def create_html_output(questions, output_file, verbose=False, shuffle_applied=Fa
 
         if shuffle_applied and q.get("group"):
             full_questions_html += f'<div class="metadata-item"><span class="metadata-label">Original Group:</span><span class="metadata-value">{q["group"]}</span></div>'
-
-        full_questions_html += f'''
-        <div class="metadata-item"><span class="metadata-label">ID:</span><span class="metadata-value">{q.get('id', 'N/A')}</span></div>
-        '''
 
         full_questions_html += '</div></div></div>'
 
