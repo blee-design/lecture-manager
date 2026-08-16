@@ -13,29 +13,37 @@ from .xml_handler import xml_to_questions
 from .json_handler import json_to_questions
 
 def map_paper_value(paper_str):
-    """Convert human‑readable paper names to internal enum keys."""
     if not paper_str:
         return None
     paper_str = paper_str.strip()
-    mapping = {
+    lower = paper_str.lower()
+
+    # Direct exact mapping
+    exact_map = {
         'pretest': 'pretest',
         'pretest officer': 'pretest',
         'paper_i': 'paper_i',
+        'paper i': 'paper_i',
+        'paper 1': 'paper_i',
         'first paper': 'paper_i',
         'first paper: economics': 'paper_i',
         'paper_ii': 'paper_ii',
+        'paper ii': 'paper_ii',
+        'paper 2': 'paper_ii',
         'second paper': 'paper_ii',
         'second paper: management': 'paper_ii',
         'paper_iii': 'paper_iii',
+        'paper iii': 'paper_iii',
+        'paper 3': 'paper_iii',
         'third paper': 'paper_iii',
         'third paper: research methodologies, ict and banking laws & regulation': 'paper_iii',
     }
-    lower = paper_str.lower()
-    for key, val in mapping.items():
-        if key in lower:
-            return val
-    # If no mapping, keep original (may cause mismatch, but better than losing data)
-    return paper_str
+
+    if lower in exact_map:
+        return exact_map[lower]
+
+    # If no match, return None to avoid invalid ENUM values
+    return None
 
 # -------------------- Table Creation --------------------
 def create_tables():
