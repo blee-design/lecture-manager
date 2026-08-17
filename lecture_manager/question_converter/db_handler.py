@@ -4,7 +4,7 @@ from collections import Counter
 from types import SimpleNamespace
 
 from .constants import C          # <-- add this
-from .utils import log
+from .utils import log, filter_questions
 from ..utils import print_colored, COLORS, color_text
 from ..db import get_connection
 from .exceptions import DuplicateQuestionError, ConverterError
@@ -103,7 +103,6 @@ def insert_question(q_dict, source=None, force=False):
     from ..question_bank import add_question, check_duplicate
 
     def clean_value(val):
-        """Convert empty strings or None to None (for SQL NULL)."""
         if val is None:
             return None
         if isinstance(val, str):
@@ -115,8 +114,7 @@ def insert_question(q_dict, source=None, force=False):
     date = clean_value(q_dict.get('question_date'))
     institution = clean_value(q_dict.get('institution'))
     level = clean_value(q_dict.get('level'))
-    paper = clean_value(q_dict.get('paper'))
-    paper = map_paper_value(paper)
+    paper = map_paper_value(clean_value(q_dict.get('paper')))
     group = clean_value(q_dict.get('group'))
 
     qno = q_dict.get('question_no')
@@ -370,6 +368,14 @@ def import_from_file(file_path, format, source=None, args=None):
         questions = json_to_questions(file_path, args.verbose)
     else:
         raise ValueError(f"Unsupported import format: {format}")
+
+    # --- Apply question filter if specified ---
+    if args.questions:
+        original_count = len(questions)
+        questions = filter_questions(questions, args.questions, args.verbose)
+        filtered_out = original_count - len(questions)
+        if args.verbose and filtered_out > 0:
+            log(f"Filtered out {filtered_out} questions, keeping {len(questions)}", "INFO", args.verbose)
 
     total = len(questions)
     if total == 0:

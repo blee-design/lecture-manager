@@ -57,6 +57,9 @@ lecture-manager-*.py
 !requirements.txt   # keep requirements.txt if you have it
 !setup.py           # keep setup.py
 
+# Misc
+*.zip
+
 # Combined/backup files
 lm.py
 lecture-manager.py  # if it's just a symlink or entry point, keep it; but if it's redundant, ignore

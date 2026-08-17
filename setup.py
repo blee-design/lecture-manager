@@ -78,6 +78,10 @@ setup(
         "matplotlib>=3.0.0",
         "numpy>=1.20.0",
 
+        # Build modules
+        "build",
+        "twine",
+
         # Optional: for domain extraction in tags (if you implement auto-tagging)
         # "tldextract>=3.0.0",
     ],

@@ -1,5 +1,3 @@
-# lecture_manager/question_bank.py
-
 """
 Question Bank Module – Student‑friendly Quick Lookup
 - Type: "YYYY-MM-DD Institution Level [QNo]" to view a single question or whole paper.
@@ -234,6 +232,14 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                  filetypes='.doc,.docx,.pdf,.png,.jpg,.jpeg',
                  maxbytes=2097152, grader_info=None,
                  syllabus_code=None, q_type='essay'):
+    # Convert empty strings to None for nullable fields
+    if paper == '':
+        paper = None
+    if group == '':
+        group = None
+    if notes == '':
+        notes = None
+
     # Check duplicate
     if not force:
         existing = check_duplicate(date, institution, level, paper, group, question_number)
@@ -494,24 +500,31 @@ def check_duplicate(date, institution, level, paper, group, question_number, exc
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     try:
-        sql = """
-            SELECT id FROM questions
-            WHERE question_date = %s
-            AND institution = %s
-            AND level = %s
-            AND paper = %s
-            AND `group` = %s
-            AND question_number = %s
-            LIMIT 1
-        """
-        params = [date, institution, level, paper, group, question_number]
+        conditions = []
+        params = []
+
+        def add_condition(field, value):
+            if value is None:
+                conditions.append(f"{field} IS NULL")
+            else:
+                conditions.append(f"{field} = %s")
+                params.append(value)
+
+        add_condition("question_date", date)
+        add_condition("institution", institution)
+        add_condition("level", level)
+        add_condition("paper", paper)
+        add_condition("`group`", group)
+        add_condition("question_number", question_number)
+
+        sql = "SELECT id FROM questions WHERE " + " AND ".join(conditions)
         if exclude_id:
             sql += " AND id != %s"
             params.append(exclude_id)
+        sql += " LIMIT 1"
+
         cursor.execute(sql, params)
         row = cursor.fetchone()
-        while cursor.fetchone():
-            pass
         return row['id'] if row else None
     finally:
         cursor.close()
@@ -858,15 +871,29 @@ def unified_question_menu():
             if not filepath:
                 continue
             source = input(color_text("Source name (optional): ", COLORS.MAGENTA)).strip() or None
+
+            print("\nHow to handle duplicates?")
+            print("  1. Skip duplicates (keep existing)")
+            print("  2. Overwrite existing (by duplicate key)")
+            dup_choice = input(color_text("Choose (1-2): ", COLORS.MAGENTA)).strip()
+            if dup_choice not in ('1', '2'):
+                print_colored("[!] Invalid choice. Aborting.", COLORS.RED)
+                continue
+
+            force = (dup_choice == '2')
+            args = SimpleNamespace(verbose=True, bypass_duplicate=force,
+                                bypass_option=False, questions=None)
             try:
-                args = SimpleNamespace(verbose=True, bypass_duplicate=False, bypass_option=False, questions=None)
-                count, errors = import_from_file(filepath, 'txt', source=source, args=args)   # <-- pass args
-                print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
-                if errors:
-                    print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
-                    for e in errors[:5]:
-                        print(f"  {e}")
-            except (ConverterError, ValidationError, ParseError, DuplicateQuestionError, IOError) as e:
+                count, errors = import_from_file(filepath, 'txt', source=source, args=args)
+                if count == 0 and not errors:
+                    print_colored("[i] No questions were imported.", COLORS.YELLOW)
+                else:
+                    print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
+                    if errors:
+                        print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
+                        for e in errors[:5]:
+                            print(f"  {e}")
+            except ConverterError as e:
                 print_colored(f"[!] {e}", COLORS.RED)
 
         elif choice == 'b':
@@ -880,15 +907,29 @@ def unified_question_menu():
             if not filepath:
                 continue
             source = input(color_text("Source name (optional): ", COLORS.MAGENTA)).strip() or None
+
+            print("\nHow to handle duplicates?")
+            print("  1. Skip duplicates (keep existing)")
+            print("  2. Overwrite existing (by duplicate key)")
+            dup_choice = input(color_text("Choose (1-2): ", COLORS.MAGENTA)).strip()
+            if dup_choice not in ('1', '2'):
+                print_colored("[!] Invalid choice. Aborting.", COLORS.RED)
+                continue
+
+            force = (dup_choice == '2')
+            args = SimpleNamespace(verbose=True, bypass_duplicate=force,
+                                bypass_option=False, questions=None)
             try:
-                args = SimpleNamespace(verbose=True, bypass_duplicate=False, bypass_option=False, questions=None)
                 count, errors = import_from_file(filepath, 'json', source=source, args=args)
-                print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
-                if errors:
-                    print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
-                    for e in errors[:5]:
-                        print(f"  {e}")
-            except (ConverterError, ValidationError, ParseError, DuplicateQuestionError, IOError) as e:
+                if count == 0 and not errors:
+                    print_colored("[i] No questions were imported.", COLORS.YELLOW)
+                else:
+                    print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
+                    if errors:
+                        print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
+                        for e in errors[:5]:
+                            print(f"  {e}")
+            except ConverterError as e:
                 print_colored(f"[!] {e}", COLORS.RED)
 
         elif choice == 'd':
@@ -898,33 +939,113 @@ def unified_question_menu():
             if not filepath:
                 continue
             source = input(color_text("Source name (optional): ", COLORS.MAGENTA)).strip() or None
+
+            print("\nHow to handle duplicates?")
+            print("  1. Skip duplicates (keep existing)")
+            print("  2. Overwrite existing (by duplicate key)")
+            dup_choice = input(color_text("Choose (1-2): ", COLORS.MAGENTA)).strip()
+            if dup_choice not in ('1', '2'):
+                print_colored("[!] Invalid choice. Aborting.", COLORS.RED)
+                continue
+
+            force = (dup_choice == '2')
+            args = SimpleNamespace(verbose=True, bypass_duplicate=force,
+                                bypass_option=False, questions=None)
             try:
-                args = SimpleNamespace(verbose=True, bypass_duplicate=False, bypass_option=False, questions=None)
-                count, errors = import_from_file(filepath, 'xml', source=source, args=args)   # <-- pass args
-                print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
-                if errors:
-                    print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
-                    for e in errors[:5]:
-                        print(f"  {e}")
-            except (ConverterError, ValidationError, ParseError, DuplicateQuestionError, IOError) as e:
+                count, errors = import_from_file(filepath, 'xml', source=source, args=args)
+                if count == 0 and not errors:
+                    print_colored("[i] No questions were imported.", COLORS.YELLOW)
+                else:
+                    print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
+                    if errors:
+                        print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
+                        for e in errors[:5]:
+                            print(f"  {e}")
+            except ConverterError as e:
                 print_colored(f"[!] {e}", COLORS.RED)
 
         elif choice == 'e':
-            # Advanced import with --questions filter (reuse converter's option)
-            from .question_converter.converter_main import parser, run_conversion
-            print("\n[Advanced import]")
-            args_str = input(color_text("Arguments (e.g., -i input.txt --questions 1,5,10 --bypass-duplicate): ", COLORS.MAGENTA)).strip()
+            from .question_converter.converter_main import parser
+            from .question_converter import import_from_file
+            from .question_converter.exceptions import ConverterError, DuplicateQuestionError, ParseError
+            import shlex
+            import os
+
+            print("\n" + "═" * 50)
+            print_colored("  ADVANCED IMPORT (with filters)", COLORS.CYAN, bold=True)
+            print("═" * 50)
+            print("You can use the same arguments as the converter, e.g.:")
+            print("  -i input.txt --questions 1,5,10 --bypass-duplicate")
+            print("  -i input.xml --questions 3..7")
+            print("  -i input.json --questions 2,4,6")
+            print("The input file format is auto-detected from extension.")
+            print("The questions will be imported into the database.\n")
+
+            args_str = input(color_text("Arguments: ", COLORS.MAGENTA)).strip()
             if not args_str:
                 continue
-            import shlex
-            argv = shlex.split(args_str)
+
             try:
+                argv = shlex.split(args_str)
                 parsed = parser.parse_args(argv)
-                # We need to override format? The parser expects -i and -o; but we want to import to DB.
-                # For advanced import, we can just call run_conversion with parsed args, which will parse and insert.
-                run_conversion(parsed)
-            except (ConverterError, ValidationError, ParseError, DuplicateQuestionError, IOError) as e:
+
+                input_file = parsed.input
+                if not os.path.exists(input_file):
+                    print_colored(f"[!] Input file not found: {input_file}", COLORS.RED)
+                    continue
+
+                # Auto-detect format from extension
+                ext = os.path.splitext(input_file)[1].lower().lstrip('.')
+                if ext in ('txt', 'text'):
+                    fmt = 'txt'
+                elif ext == 'xml':
+                    fmt = 'xml'
+                elif ext == 'json':
+                    fmt = 'json'
+                else:
+                    print_colored(f"[!] Unsupported file extension: {ext}. Please use .txt, .xml, or .json.", COLORS.RED)
+                    continue
+
+                # Optional source name
+                source = input(color_text("Source name (optional, press Enter to skip): ", COLORS.MAGENTA)).strip() or None
+
+                # Prepare args for import_from_file
+                import_args = SimpleNamespace(
+                    verbose=parsed.verbose,
+                    bypass_duplicate=parsed.bypass_duplicate,
+                    bypass_option=parsed.bypass_option,
+                    questions=parsed.questions
+                )
+
+                print_colored(f"\n📥 Importing from {input_file} (format: {fmt})", COLORS.BLUE)
+                if import_args.questions:
+                    print_colored(f"   Filter: {import_args.questions}", COLORS.BLUE)
+                if import_args.bypass_duplicate:
+                    print_colored("   Duplicates will be overwritten (--bypass-duplicate)", COLORS.YELLOW)
+                else:
+                    print_colored("   Duplicates will be skipped (use --bypass-duplicate to overwrite)", COLORS.YELLOW)
+
+                count, errors = import_from_file(input_file, fmt, source=source, args=import_args)
+
+                if count == 0 and not errors:
+                    print_colored("[i] No questions were imported.", COLORS.YELLOW)
+                else:
+                    print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
+                    if errors:
+                        print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
+                        for e in errors[:5]:
+                            print(f"  {e}")
+
+            except SystemExit:
+                # argparse raised an error (e.g., missing -i)
+                print_colored("[!] Invalid arguments. Please check your syntax.", COLORS.RED)
+                print("  Example: -i questions.txt --questions 1,5,10")
+            except (ConverterError, ParseError, DuplicateQuestionError) as e:
                 print_colored(f"[!] {e}", COLORS.RED)
+            except Exception as e:
+                print_colored(f"[!] Unexpected error: {e}", COLORS.RED)
+                import traceback
+                traceback.print_exc()
 
         # ----- Export -----
         elif choice == 'f':

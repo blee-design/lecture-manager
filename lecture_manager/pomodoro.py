@@ -105,6 +105,9 @@ class PomodoroApp:
         self.pauses = []
         self.pause_start_time = None
 
+        self.edit_log_var = tk.BooleanVar(value=False)
+        self.save_log_btn = None
+
         self.sound_func = self._beep
 
         self.build_ui()
@@ -528,13 +531,32 @@ class PomodoroApp:
         ttk.Checkbutton(task_btn_frame, text="Show completed", variable=self.show_completed_var, command=self.refresh_task_list).pack(side=tk.LEFT, padx=10)
 
         # -- Study Log --
-        log_frame = ttk.LabelFrame(right, text="📜 Study Log", padding="10")
+        log_frame = ttk.LabelFrame(right, padding="10")
         log_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=0)   # header row – fixed height
+        log_frame.rowconfigure(1, weight=1)   # log text – expands
+        log_frame.rowconfigure(2, weight=0)   # save button – fixed height
 
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=12, wrap=tk.WORD, state=tk.DISABLED, bg="#2c3e50", fg="#ecf0f1")
-        self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # Header with checkbox
+        header_frame = ttk.Frame(log_frame)
+        header_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0,5))
+        header_frame.columnconfigure(0, weight=0)
+        header_frame.columnconfigure(1, weight=1)
+        ttk.Label(header_frame, text="📜 Study Log", font=("Helvetica", 10, "bold")).grid(row=0, column=0, sticky=tk.W)
+        self.edit_log_cb = ttk.Checkbutton(header_frame, text="✏️ Edit logs", variable=self.edit_log_var,
+                                           command=self.toggle_edit_mode)
+        self.edit_log_cb.grid(row=0, column=1, sticky=tk.E)
+
+        # Log text widget (initially disabled)
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=12, wrap=tk.WORD, state=tk.DISABLED,
+                                                  bg="#2c3e50", fg="#ecf0f1")
+        self.log_text.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Save button (hidden initially)
+        self.save_log_btn = ttk.Button(log_frame, text="💾 Save Log Changes", command=self.save_log_changes)
+        self.save_log_btn.grid(row=2, column=0, pady=5, sticky=tk.E)
+        self.save_log_btn.grid_remove()  # hidden by default
 
     # ---------- TASK MANAGEMENT (unchanged from original) ----------
     def load_tasks(self):
@@ -707,6 +729,119 @@ class PomodoroApp:
         self.tasks = self.load_tasks()
         self.refresh_task_list()
         self.update_task_combo()
+
+    def save_log_changes(self):
+        """Parse the log text and replace all log entries in the database."""
+        content = self.log_text.get("1.0", tk.END).strip()
+        if not content:
+            messagebox.showinfo("No content", "The log is empty. Nothing to save.")
+            return
+
+        if not messagebox.askyesno("Save Log",
+                                "This will REPLACE all log entries with the edited text.\n"
+                                "Make sure the format is exactly as displayed.\n\n"
+                                "Continue?"):
+            return
+
+        import re
+
+        # Split by the separator line: "----------------------------------------"
+        blocks = content.split("-" * 40 + "\n")
+        new_entries = []
+
+        for block in blocks:
+            block = block.strip()
+            if not block:
+                continue
+            lines = block.split('\n')
+            if not lines:
+                continue
+
+            # First line: "2024-01-01 10:00:00 - 25 min [Task: ...] (study)"
+            first_line = lines[0].strip()
+            match = re.match(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - (\d+) min', first_line)
+            if not match:
+                continue
+            timestamp_str = match.group(1)
+            duration = int(match.group(2))
+
+            # Optional task and session type
+            task_name = None
+            session_type = "study"
+            task_match = re.search(r'\[Task:\s*(.*?)\]', first_line)
+            if task_match:
+                task_name = task_match.group(1).strip()
+            type_match = re.search(r'\((\w+)\)', first_line)
+            if type_match:
+                session_type = type_match.group(1)
+
+            # Notes: the rest of the lines after the first, excluding the separator
+            notes_lines = []
+            for line in lines[1:]:
+                if line.strip().startswith("-" * 40):
+                    break
+                if line.strip().startswith("Notes:"):
+                    notes_lines.append(line.strip()[6:].strip())
+                elif notes_lines:
+                    notes_lines.append(line.strip())
+            notes = "\n".join(notes_lines) if notes_lines else None
+
+            entry = {
+                "timestamp": timestamp_str,
+                "duration_min": duration,
+                "phase": "work",
+                "subject": None,
+                "notes": notes,
+                "session_type": session_type,
+                "task_name": task_name
+            }
+            new_entries.append(entry)
+
+        if not new_entries:
+            messagebox.showinfo("No entries", "No valid entries found to save.")
+            return
+
+        # Delete all existing work sessions and insert new ones
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM pomodoro_log WHERE phase = 'work'")
+            for entry in new_entries:
+                # Resolve task_id from task_name
+                task_id = None
+                if entry["task_name"]:
+                    cursor.execute("SELECT id FROM pomodoro_tasks WHERE task_text = %s", (entry["task_name"],))
+                    row = cursor.fetchone()
+                    if row:
+                        task_id = row[0]
+                cursor.execute("""
+                    INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, notes, task_id, session_type)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (entry["timestamp"], entry["phase"], entry["duration_min"],
+                    entry["subject"], entry["notes"], task_id, entry["session_type"]))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            messagebox.showinfo("Success", f"Saved {len(new_entries)} log entries.")
+            # Refresh the log display
+            self.log = self.load_log()
+            self.refresh_log()
+            # Turn off edit mode
+            self.edit_log_var.set(False)
+            self.toggle_edit_mode()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save logs: {e}")
+
+    def toggle_edit_mode(self):
+        """Enable/disable editing of the study log."""
+        if self.edit_log_var.get():
+            # Enable editing
+            self.log_text.config(state=tk.NORMAL)
+            self.save_log_btn.grid()          # show save button
+        else:
+            # Disable editing and hide save button
+            self.log_text.config(state=tk.DISABLED)
+            self.save_log_btn.grid_remove()   # hide save button
 
     def toggle_complete(self):
         selection = self.task_listbox.curselection()
@@ -1526,6 +1661,7 @@ class PomodoroApp:
     def refresh_log(self):
         self.log_text.config(state=tk.NORMAL)
         self.log_text.delete("1.0", tk.END)
+
         if not self.log:
             self.log_text.insert(tk.END, "No study sessions logged yet.")
         else:
@@ -1535,14 +1671,16 @@ class PomodoroApp:
                     line += f" [Task: {entry['task_name']}]"
                 elif entry.get('subject'):
                     line += f" [{entry['subject']}]"
-                # --- Add session type ---
                 if entry.get('session_type'):
                     line += f" ({entry['session_type']})"
                 self.log_text.insert(tk.END, line + "\n")
                 if entry['notes']:
                     self.log_text.insert(tk.END, f"  Notes: {entry['notes']}\n")
                 self.log_text.insert(tk.END, "-" * 40 + "\n")
-        self.log_text.config(state=tk.DISABLED)
+
+        # --- REPLACE THE OLD STATE LINE WITH THIS ---
+        # Set state based on edit mode (editable if checkbox is checked)
+        self.log_text.config(state=tk.NORMAL if self.edit_log_var.get() else tk.DISABLED)
         self.log_text.see(tk.END)
         self.log_text.update_idletasks()
 
