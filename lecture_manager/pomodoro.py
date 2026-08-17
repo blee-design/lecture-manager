@@ -1685,11 +1685,51 @@ class PomodoroApp:
         self.log_text.update_idletasks()
 
     def _beep(self):
+        # Try multiple fallback methods
         try:
+            # 1. Terminal bell (ASCII)
             print('\a', end='', flush=True)
+            return
         except Exception:
-            # Fallback for unusual environments
             pass
+
+        try:
+            # 2. Tkinter bell (uses the windowing system)
+            self.root.bell()
+            return
+        except Exception:
+            pass
+
+        try:
+            # 3. Use 'beep' command (if installed)
+            import subprocess
+            subprocess.run(['beep'], check=False, timeout=1)
+            return
+        except Exception:
+            pass
+
+        try:
+            # 4. Play a system sound with paplay (PulseAudio)
+            # You can use a built-in sound file like /usr/share/sounds/freedesktop/stereo/bell.oga
+            import subprocess
+            sound_file = '/usr/share/sounds/freedesktop/stereo/bell.oga' # If you have a sound file (e.g., /path/to/beep.wav), you can play it
+            subprocess.run(['paplay', sound_file], check=False, timeout=1)
+            return
+        except Exception:
+            pass
+
+        try:
+            # 5. Use aplay with a generated sine wave (requires sox or speaker-test)
+            import subprocess
+            # Generate a short beep using speaker-test (usually installed)
+            subprocess.run(['speaker-test', '-t', 'sine', '-f', '1000', '-l', '1'],
+                        check=False, timeout=1)
+            return
+        except Exception:
+            pass
+
+        # 6. Last resort: visual flash (optional)
+        # You could flash the window or show a messagebox
 
     # ---------- STATE PERSISTENCE ----------
     def save_state(self):
