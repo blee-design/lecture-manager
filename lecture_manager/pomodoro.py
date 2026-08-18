@@ -817,37 +817,47 @@ class PomodoroApp:
                 cursor.close()
                 conn.close()
 
+            # Resolve subject_id from subject text
+            subject_id = None
+            if subject:
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM subjects WHERE name = %s", (subject,))
+                row = cursor.fetchone()
+                if row:
+                    subject_id = row[0]
+                else:
+                    messagebox.showwarning("Subject not found", f"Subject '{subject}' not found. It will be set to NULL.")
+                cursor.close()
+                conn.close()
+
             # Now update or insert
             conn = get_connection()
             cursor = conn.cursor()
             if log_id:
-                # Check if ID exists
                 cursor.execute("SELECT id FROM pomodoro_log WHERE id = %s", (log_id,))
                 if cursor.fetchone():
-                    # Update existing - only count if row actually changes
                     cursor.execute("""
                         UPDATE pomodoro_log
-                        SET timestamp = %s, duration_min = %s, subject = %s,
+                        SET timestamp = %s, duration_min = %s, subject = %s, subject_id = %s,
                             notes = %s, task_id = %s, session_type = %s
                         WHERE id = %s
-                    """, (timestamp_str, duration, subject, notes, task_id, session_type, log_id))
+                    """, (timestamp_str, duration, subject, subject_id, notes, task_id, session_type, log_id))
                     if cursor.rowcount > 0:
                         updated += 1
                     else:
                         unchanged += 1
                 else:
-                    # ID doesn't exist – insert as new
                     cursor.execute("""
-                        INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, notes, task_id, session_type)
-                        VALUES (%s, 'work', %s, %s, %s, %s, %s)
-                    """, (timestamp_str, duration, subject, notes, task_id, session_type))
+                        INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, subject_id, notes, task_id, session_type)
+                        VALUES (%s, 'work', %s, %s, %s, %s, %s, %s)
+                    """, (timestamp_str, duration, subject, subject_id, notes, task_id, session_type))
                     inserted += 1
             else:
-                # No ID – insert new
                 cursor.execute("""
-                    INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, notes, task_id, session_type)
-                    VALUES (%s, 'work', %s, %s, %s, %s, %s)
-                """, (timestamp_str, duration, subject, notes, task_id, session_type))
+                    INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, subject_id, notes, task_id, session_type)
+                    VALUES (%s, 'work', %s, %s, %s, %s, %s, %s)
+                """, (timestamp_str, duration, subject, subject_id, notes, task_id, session_type))
                 inserted += 1
             conn.commit()
             cursor.close()
@@ -1730,21 +1740,21 @@ class PomodoroApp:
 
     def _beep(self):
         """Try multiple methods to produce a beep/notification."""
-        # 1. Terminal bell (ASCII) – works in most terminals
+        # 1. Terminal bell (ASCII)
         try:
             print('\a', end='', flush=True)
             return
         except Exception:
             pass
 
-        # 2. Tkinter's bell (uses X11 beep)
+        # 2. Tkinter's bell (X11 beep)
         try:
             self.root.bell()
             return
         except Exception:
             pass
 
-        # 3. Use system 'beep' command (install with: sudo apt install beep)
+        # 3. System 'beep' command (if installed)
         try:
             import subprocess
             subprocess.run(['beep'], check=False, timeout=1)
@@ -1752,16 +1762,16 @@ class PomodoroApp:
         except Exception:
             pass
 
-        # 4. Use PulseAudio's paplay with a standard sound file
+        # 4. PulseAudio paplay with a standard sound file
         try:
             import subprocess
-            sound_file = '/usr/share/sounds/freedesktop/stereo/bell.oga'
-            subprocess.run(['paplay', sound_file], check=False, timeout=1)
+            subprocess.run(['paplay', '/usr/share/sounds/freedesktop/stereo/bell.oga'],
+                        check=False, timeout=1)
             return
         except Exception:
             pass
 
-        # 5. Generate a short sine wave with speaker-test (part of alsa-utils)
+        # 5. ALSA speaker-test (generates a sine wave)
         try:
             import subprocess
             subprocess.run(['speaker-test', '-t', 'sine', '-f', '1000', '-l', '1'],
@@ -1770,9 +1780,34 @@ class PomodoroApp:
         except Exception:
             pass
 
-        # 6. Visual flash – last resort (optional)
-        # You can blink the window title or show a message, but we'll just pass.
-        pass
+        # 6. Visual fallback – flash window title + popup
+        try:
+            # Flash the window title
+            original_title = self.root.title()
+            self.root.title("🔔 TIME'S UP! 🔔")
+            # Schedule title restoration after 3 seconds
+            self.root.after(3000, lambda: self.root.title(original_title))
+
+            # Show a small popup that auto-closes
+            popup = tk.Toplevel(self.root)
+            popup.title("Pomodoro")
+            popup.geometry("300x100")
+            popup.resizable(False, False)
+            popup.attributes('-topmost', True)   # keep on top
+            ttk.Label(popup, text="⏰ Time's up!", font=("Helvetica", 18)).pack(pady=20)
+            popup.after(3000, popup.destroy)
+            # Bring popup to front
+            popup.lift()
+            popup.focus_force()
+            return
+        except Exception:
+            pass
+
+        # 7. Last resort: just show a message box (blocks everything)
+        try:
+            messagebox.showinfo("Pomodoro", "⏰ Time's up! (no sound available)")
+        except Exception:
+            pass
 
     # ---------- STATE PERSISTENCE ----------
     def save_state(self):

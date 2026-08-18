@@ -628,6 +628,35 @@ def migrate_table():
     );
     """)
 
+    # Ensure subjects table exists and is populated
+    cursor.execute("SHOW TABLES LIKE 'subjects'")
+    if not cursor.fetchone():
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS subjects (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL UNIQUE,
+            paper ENUM('pretest','paper_i','paper_ii','paper_iii') NULL,
+            chapter VARCHAR(50) NULL,
+            active BOOLEAN DEFAULT TRUE,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+        print_colored("[✓] Created subjects table.", COLORS.GREEN)
+
+    # ---- Add unique index on subjects.name to prevent duplicates ----
+    cursor.execute("SHOW INDEX FROM subjects WHERE Key_name = 'idx_name'")
+    if not cursor.fetchone():
+        print_colored("[i] Adding unique index on subjects.name...", COLORS.YELLOW)
+        try:
+            cursor.execute("ALTER TABLE subjects ADD UNIQUE INDEX idx_name (name)")
+            print_colored("[✓] Added unique index on subjects.name", COLORS.GREEN)
+        except mysql.connector.Error as e:
+            if e.errno == 1062:
+                print_colored("[!] Cannot add unique index: duplicate subject names exist.", COLORS.RED)
+                print("   Please remove duplicates manually and restart the system.")
+            else:
+                print_colored(f"[!] Failed to add unique index: {e}", COLORS.RED)
+
     # 4. Add pause_count and pause_total_sec to pomodoro_log (optional, for quick stats)
     cursor.execute("SHOW COLUMNS FROM pomodoro_log LIKE 'pause_count'")
     if not cursor.fetchone():
