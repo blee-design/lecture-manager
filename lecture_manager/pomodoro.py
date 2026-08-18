@@ -731,23 +731,26 @@ class PomodoroApp:
         self.update_task_combo()
 
     def save_log_changes(self):
-        """Parse the log text and replace all log entries in the database."""
+        """Parse the log text and update only changed entries."""
         content = self.log_text.get("1.0", tk.END).strip()
         if not content:
             messagebox.showinfo("No content", "The log is empty. Nothing to save.")
             return
 
         if not messagebox.askyesno("Save Log",
-                                "This will REPLACE all log entries with the edited text.\n"
-                                "Make sure the format is exactly as displayed.\n\n"
+                                "This will update only the changed entries.\n"
+                                "Entries without an ID (new ones) will be inserted.\n\n"
                                 "Continue?"):
             return
 
         import re
 
-        # Split by the separator line: "----------------------------------------"
+        # Split by the separator line
         blocks = content.split("-" * 40 + "\n")
-        new_entries = []
+        updated = 0
+        inserted = 0
+        unchanged = 0
+        errors = []
 
         for block in blocks:
             block = block.strip()
@@ -757,25 +760,39 @@ class PomodoroApp:
             if not lines:
                 continue
 
-            # First line: "2024-01-01 10:00:00 - 25 min [Task: ...] (study)"
+            # First line: "[#87] 2024-01-01 10:00:00 - 25 min ..."
             first_line = lines[0].strip()
-            match = re.match(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - (\d+) min', first_line)
+
+            # Extract log ID
+            id_match = re.search(r'^\[#(\d+)\]', first_line)
+            log_id = int(id_match.group(1)) if id_match else None
+
+            # Extract timestamp and duration
+            match = re.match(r'^(?:\[\#\d+\]\s*)?(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - (\d+) min', first_line)
             if not match:
+                errors.append(f"Invalid format in block: {first_line[:50]}...")
                 continue
             timestamp_str = match.group(1)
             duration = int(match.group(2))
 
-            # Optional task and session type
+            # Optional task, subject, session type
             task_name = None
+            subject = None
             session_type = "study"
+
             task_match = re.search(r'\[Task:\s*(.*?)\]', first_line)
             if task_match:
                 task_name = task_match.group(1).strip()
+
+            subject_match = re.search(r'\[Subject:\s*(.*?)\]', first_line)
+            if subject_match:
+                subject = subject_match.group(1).strip()
+
             type_match = re.search(r'\((\w+)\)', first_line)
             if type_match:
                 session_type = type_match.group(1)
 
-            # Notes: the rest of the lines after the first, excluding the separator
+            # Notes
             notes_lines = []
             for line in lines[1:]:
                 if line.strip().startswith("-" * 40):
@@ -786,51 +803,79 @@ class PomodoroApp:
                     notes_lines.append(line.strip())
             notes = "\n".join(notes_lines) if notes_lines else None
 
-            entry = {
-                "timestamp": timestamp_str,
-                "duration_min": duration,
-                "phase": "work",
-                "subject": None,
-                "notes": notes,
-                "session_type": session_type,
-                "task_name": task_name
-            }
-            new_entries.append(entry)
+            # Resolve task_id from task_name
+            task_id = None
+            if task_name:
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM pomodoro_tasks WHERE task_text = %s", (task_name,))
+                row = cursor.fetchone()
+                if row:
+                    task_id = row[0]
+                else:
+                    messagebox.showwarning("Task not found", f"Task '{task_name}' not found. It will be set to NULL.")
+                cursor.close()
+                conn.close()
 
-        if not new_entries:
-            messagebox.showinfo("No entries", "No valid entries found to save.")
-            return
-
-        # Delete all existing work sessions and insert new ones
-        try:
+            # Now update or insert
             conn = get_connection()
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM pomodoro_log WHERE phase = 'work'")
-            for entry in new_entries:
-                # Resolve task_id from task_name
-                task_id = None
-                if entry["task_name"]:
-                    cursor.execute("SELECT id FROM pomodoro_tasks WHERE task_text = %s", (entry["task_name"],))
-                    row = cursor.fetchone()
-                    if row:
-                        task_id = row[0]
+            if log_id:
+                # Check if ID exists
+                cursor.execute("SELECT id FROM pomodoro_log WHERE id = %s", (log_id,))
+                if cursor.fetchone():
+                    # Update existing - only count if row actually changes
+                    cursor.execute("""
+                        UPDATE pomodoro_log
+                        SET timestamp = %s, duration_min = %s, subject = %s,
+                            notes = %s, task_id = %s, session_type = %s
+                        WHERE id = %s
+                    """, (timestamp_str, duration, subject, notes, task_id, session_type, log_id))
+                    if cursor.rowcount > 0:
+                        updated += 1
+                    else:
+                        unchanged += 1
+                else:
+                    # ID doesn't exist – insert as new
+                    cursor.execute("""
+                        INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, notes, task_id, session_type)
+                        VALUES (%s, 'work', %s, %s, %s, %s, %s)
+                    """, (timestamp_str, duration, subject, notes, task_id, session_type))
+                    inserted += 1
+            else:
+                # No ID – insert new
                 cursor.execute("""
                     INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, notes, task_id, session_type)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """, (entry["timestamp"], entry["phase"], entry["duration_min"],
-                    entry["subject"], entry["notes"], task_id, entry["session_type"]))
+                    VALUES (%s, 'work', %s, %s, %s, %s, %s)
+                """, (timestamp_str, duration, subject, notes, task_id, session_type))
+                inserted += 1
             conn.commit()
             cursor.close()
             conn.close()
-            messagebox.showinfo("Success", f"Saved {len(new_entries)} log entries.")
-            # Refresh the log display
-            self.log = self.load_log()
-            self.refresh_log()
-            # Turn off edit mode
-            self.edit_log_var.set(False)
-            self.toggle_edit_mode()
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to save logs: {e}")
+
+        # Show errors if any (indented correctly)
+        if errors:
+            messagebox.showerror("Errors", f"Encountered errors:\n" + "\n".join(errors[:5]))
+
+        # Refresh log display
+        self.log = self.load_log()
+        self.refresh_log()
+        # Turn off edit mode
+        self.edit_log_var.set(False)
+        self.toggle_edit_mode()
+
+        # --- Natural language summary ---
+        if updated == 0 and inserted == 0:
+            msg = "No changes were made. Everything is already up to date."
+        else:
+            parts = []
+            if updated > 0:
+                parts.append(f"updated {updated} entr{'y' if updated == 1 else 'ies'}")
+            if inserted > 0:
+                parts.append(f"added {inserted} new entr{'y' if inserted == 1 else 'ies'}")
+            msg = "Successfully " + " and ".join(parts) + "."
+
+        messagebox.showinfo("Done", msg)
 
     def toggle_edit_mode(self):
         """Enable/disable editing of the study log."""
@@ -1162,6 +1207,7 @@ class PomodoroApp:
         log = []
         for row in rows:
             log.append({
+                "id": row["id"],
                 "timestamp": row["timestamp"].strftime("%Y-%m-%d %H:%M:%S"),
                 "phase": row["phase"],
                 "duration_min": row["duration_min"],
@@ -1666,11 +1712,11 @@ class PomodoroApp:
             self.log_text.insert(tk.END, "No study sessions logged yet.")
         else:
             for entry in reversed(self.log[-50:]):
-                line = f"{entry['timestamp']} - {entry['duration_min']} min"
+                line = f"[#{entry['id']}] {entry['timestamp']} - {entry['duration_min']} min"
                 if entry.get('task_name'):
                     line += f" [Task: {entry['task_name']}]"
-                elif entry.get('subject'):
-                    line += f" [{entry['subject']}]"
+                if entry.get('subject'):
+                    line += f" [Subject: {entry['subject']}]"
                 if entry.get('session_type'):
                     line += f" ({entry['session_type']})"
                 self.log_text.insert(tk.END, line + "\n")
@@ -1678,8 +1724,6 @@ class PomodoroApp:
                     self.log_text.insert(tk.END, f"  Notes: {entry['notes']}\n")
                 self.log_text.insert(tk.END, "-" * 40 + "\n")
 
-        # --- REPLACE THE OLD STATE LINE WITH THIS ---
-        # Set state based on edit mode (editable if checkbox is checked)
         self.log_text.config(state=tk.NORMAL if self.edit_log_var.get() else tk.DISABLED)
         self.log_text.see(tk.END)
         self.log_text.update_idletasks()
