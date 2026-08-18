@@ -68,6 +68,15 @@
 
 ---
 
+### 🔊 Sound / Beep
+
+The Pomodoro timer uses a beep to signal session end. If you don't hear a sound:
+
+- In Konsole, enable the audible bell in Settings → Notifications.
+- Or install `beep`: `sudo apt install beep`
+- On some systems, the `paplay` or `speaker-test` fallbacks will work without extra setup.
+
+
 ## 🚀 Quick Start
 
 ### Prerequisites

@@ -1685,51 +1685,50 @@ class PomodoroApp:
         self.log_text.update_idletasks()
 
     def _beep(self):
-        # Try multiple fallback methods
+        """Try multiple methods to produce a beep/notification."""
+        # 1. Terminal bell (ASCII) – works in most terminals
         try:
-            # 1. Terminal bell (ASCII)
             print('\a', end='', flush=True)
             return
         except Exception:
             pass
 
+        # 2. Tkinter's bell (uses X11 beep)
         try:
-            # 2. Tkinter bell (uses the windowing system)
             self.root.bell()
             return
         except Exception:
             pass
 
+        # 3. Use system 'beep' command (install with: sudo apt install beep)
         try:
-            # 3. Use 'beep' command (if installed)
             import subprocess
             subprocess.run(['beep'], check=False, timeout=1)
             return
         except Exception:
             pass
 
+        # 4. Use PulseAudio's paplay with a standard sound file
         try:
-            # 4. Play a system sound with paplay (PulseAudio)
-            # You can use a built-in sound file like /usr/share/sounds/freedesktop/stereo/bell.oga
             import subprocess
-            sound_file = '/usr/share/sounds/freedesktop/stereo/bell.oga' # If you have a sound file (e.g., /path/to/beep.wav), you can play it
+            sound_file = '/usr/share/sounds/freedesktop/stereo/bell.oga'
             subprocess.run(['paplay', sound_file], check=False, timeout=1)
             return
         except Exception:
             pass
 
+        # 5. Generate a short sine wave with speaker-test (part of alsa-utils)
         try:
-            # 5. Use aplay with a generated sine wave (requires sox or speaker-test)
             import subprocess
-            # Generate a short beep using speaker-test (usually installed)
             subprocess.run(['speaker-test', '-t', 'sine', '-f', '1000', '-l', '1'],
-                        check=False, timeout=1)
+                        check=False, timeout=1, stderr=subprocess.DEVNULL)
             return
         except Exception:
             pass
 
-        # 6. Last resort: visual flash (optional)
-        # You could flash the window or show a messagebox
+        # 6. Visual flash – last resort (optional)
+        # You can blink the window title or show a message, but we'll just pass.
+        pass
 
     # ---------- STATE PERSISTENCE ----------
     def save_state(self):
@@ -1863,7 +1862,6 @@ class PomodoroApp:
             self.save_state()
         if hasattr(self, 'root') and self.root.winfo_exists():
             self._after_id = self.root.after(5000, self.schedule_state_save)
-
 
     def refresh_badges(self):
         """Recalculate badges from current logs and remove those that no longer qualify."""

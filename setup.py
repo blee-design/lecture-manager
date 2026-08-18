@@ -6,11 +6,12 @@ import os
 from setuptools import setup, find_packages
 from setuptools.command.install import install
 
-class InstallWithDeno(install):
-    """Custom install command that also installs Deno if not present."""
+class InstallWithDependencies(install):
+    """Custom install command that also installs Deno and beep if not present."""
     def run(self):
         install.run(self)
         self.install_deno()
+        self.install_beep()
 
     def install_deno(self):
         try:
@@ -27,6 +28,38 @@ class InstallWithDeno(install):
             except subprocess.CalledProcessError as e:
                 print(f"❌ Failed to install Deno: {e}")
                 print("   Please install manually: https://deno.land/#installation")
+
+    def install_beep(self):
+        """Check for 'beep' command; if missing, ask to install via apt."""
+        try:
+            subprocess.run(['beep', '--version'], capture_output=True, check=True)
+            print("✅ 'beep' is already installed.")
+            return
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print("⚠️  'beep' command not found.")
+
+        # Only attempt apt installation on Debian/Ubuntu
+        if not os.path.exists('/usr/bin/apt'):
+            print("ℹ️  'beep' not available. The Pomodoro timer will use other fallback sounds.")
+            print("   For better sound, install 'beep' manually (apt install beep) or enable terminal bell.")
+            return
+
+        print("   'beep' is recommended for audible notifications.")
+        answer = input("   Do you want to install 'beep' using apt? (y/N): ").strip().lower()
+        if answer != 'y':
+            print("   Skipping beep installation. You can install it later with: sudo apt install beep")
+            return
+
+        try:
+            subprocess.run(['sudo', 'apt', 'install', '-y', 'beep'], check=True)
+            print("✅ 'beep' installed successfully.")
+            # Note: beep may require special permissions; you may need to add user to 'audio' group
+            print("   If 'beep' doesn't work, try: sudo usermod -aG audio $USER")
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to install beep: {e}")
+            print("   Please install manually: sudo apt install beep")
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
 
 # Read README
 with open("README.md", "r", encoding="utf-8") as fh:
@@ -83,7 +116,7 @@ setup(
         "twine",
 
         # Optional: for domain extraction in tags (if you implement auto-tagging)
-        # "tldextract>=3.0.0",
+       "tldextract>=3.0.0",
     ],
     extras_require={
         "dev": ["pytest", "black", "flake8"],
@@ -94,7 +127,7 @@ setup(
         ],
     },
     cmdclass={
-        'install': InstallWithDeno,
+        'install': InstallWithDependencies,
     },
     python_requires=">=3.8",
     classifiers=[
