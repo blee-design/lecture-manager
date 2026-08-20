@@ -365,27 +365,38 @@ def migrate_table():
         cursor.execute("ALTER TABLE questions ADD COLUMN type ENUM('multichoice','essay','truefalse','matching') DEFAULT 'essay'")
         print_colored("[✓] Added 'type' column to questions table.", COLORS.GREEN)
 
-    # ---- Add syllabus_code column to questions ----
+    # ---- Handle syllabus_code column (support multiple codes) ----
     cursor.execute("SHOW COLUMNS FROM questions LIKE 'syllabus_code'")
+    col = cursor.fetchone()
+    if not col:
+        cursor.execute("ALTER TABLE questions ADD COLUMN syllabus_code TEXT NULL")
+        print_colored("[✓] Added 'syllabus_code' column (TEXT).", COLORS.GREEN)
+    else:
+        # If it's VARCHAR(50), change to TEXT
+        if col[1].lower() == 'varchar(50)':
+            cursor.execute("ALTER TABLE questions MODIFY syllabus_code TEXT NULL")
+            print_colored("[✓] Changed syllabus_code to TEXT.", COLORS.GREEN)
+
+    # ---- Add index only if missing ----
+    cursor.execute("SHOW INDEX FROM questions WHERE Key_name = 'idx_syllabus_code'")
     if not cursor.fetchone():
-        cursor.execute("ALTER TABLE questions ADD COLUMN syllabus_code VARCHAR(50) NULL")
-        print_colored("[✓] Added 'syllabus_code' column.", COLORS.GREEN)
-        cursor.execute("ALTER TABLE questions ADD INDEX idx_syllabus_code (syllabus_code)")
+        # For TEXT columns, we need a prefix length
+        cursor.execute("ALTER TABLE questions ADD INDEX idx_syllabus_code (syllabus_code(191))")
         print_colored("[✓] Added index on 'syllabus_code'.", COLORS.GREEN)
 
-        # ---- Backfill syllabus_code from chapter field ----
-        cursor.execute("SELECT id, chapter FROM questions WHERE syllabus_code IS NULL AND chapter IS NOT NULL AND chapter != ''")
-        rows = cursor.fetchall()
-        updated = 0
-        for qid, chapter in rows:
-            if chapter:
-                import re
-                match = re.search(r'\(([^)]+)\)', chapter)
-                if match:
-                    code = match.group(1).strip()
-                    cursor.execute("UPDATE questions SET syllabus_code = %s WHERE id = %s", (code, qid))
-                    updated += 1
-        print_colored(f"[✓] Backfilled {updated} syllabus codes from chapter field.", COLORS.GREEN)
+    # ---- Backfill multiple codes from chapter field ----
+    cursor.execute("SELECT id, chapter FROM questions WHERE syllabus_code IS NULL AND chapter IS NOT NULL AND chapter != ''")
+    rows = cursor.fetchall()
+    updated = 0
+    for qid, chapter in rows:
+        if chapter:
+            import re
+            codes = re.findall(r'\(([^)]+)\)', chapter)  # extracts all parenthesised groups
+            if codes:
+                code_str = ', '.join(codes)
+                cursor.execute("UPDATE questions SET syllabus_code = %s WHERE id = %s", (code_str, qid))
+                updated += 1
+    print_colored(f"[✓] Backfilled {updated} syllabus codes from chapter field.", COLORS.GREEN)
 
     # ---------- Full‑text index for question search ----------
     cursor.execute("SHOW INDEX FROM questions WHERE Key_name = 'ft_search'")

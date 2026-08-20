@@ -469,12 +469,13 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
             log(f"  Question {question.get('question_no', '?')}: Invalid marks value, set to NULL", "WARN", True)
     elif field_name == 'chapter':
         question['chapter'] = field_content
-        if 'syllabus_code' not in question or not question['syllabus_code']:
-            import re
-            match = re.search(r'\(([^)]+)\)', field_content)
-            if match:
-                question['syllabus_code'] = match.group(1).strip()
-                log(f"  Question {question.get('question_no', '?')}: Auto‑extracted syllabus code: {question['syllabus_code']}", "INFO", True)
+        # Extract all syllabus codes inside parentheses, e.g., (P1-A2.2 & P3-C1.5)
+        import re
+        codes = re.findall(r'\(([^)]+)\)', field_content)
+        if codes:
+            # Join all codes with comma and space
+            question['syllabus_code'] = ', '.join(codes)
+            log(f"  Question {question.get('question_no', '?')}: Extracted syllabus codes: {question['syllabus_code']}", "INFO", True)
     elif field_name == 'source':
         question['source'] = field_content
         log(f"  Question {question.get('question_no', '?')}: Set source to {field_content}", "INFO", True)

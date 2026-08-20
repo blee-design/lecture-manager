@@ -1038,15 +1038,29 @@ class PomodoroApp:
 
     def update_weekly_monthly_progress(self):
         now = datetime.now()
-        week_start = now - timedelta(days=now.weekday())
-        week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        # ---- Weekly: Sunday start ----
+        # DAYOFWEEK: 1=Sunday, 2=Monday, ... 7=Saturday
+        # Subtract (DAYOFWEEK(CURDATE()) - 1) days to get the most recent Sunday
+        week_start_sql = "DATE_SUB(CURDATE(), INTERVAL (DAYOFWEEK(CURDATE()) - 1) DAY)"
 
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT SUM(duration_min) FROM pomodoro_log WHERE phase='work' AND timestamp >= %s", (week_start,))
+        cursor.execute(f"""
+            SELECT SUM(duration_min)
+            FROM pomodoro_log
+            WHERE phase='work'
+            AND DATE(timestamp) >= {week_start_sql}
+        """)
         weekly = cursor.fetchone()[0] or 0
-        cursor.execute("SELECT SUM(duration_min) FROM pomodoro_log WHERE phase='work' AND timestamp >= %s", (month_start,))
+
+        # ---- Monthly: 1st of month ----
+        month_start_sql = "DATE_FORMAT(CURDATE(), '%Y-%m-01')"
+        cursor.execute(f"""
+            SELECT SUM(duration_min)
+            FROM pomodoro_log
+            WHERE phase='work'
+            AND DATE(timestamp) >= {month_start_sql}
+        """)
         monthly = cursor.fetchone()[0] or 0
         cursor.close()
         conn.close()
@@ -1061,6 +1075,31 @@ class PomodoroApp:
         self.monthly_bar['maximum'] = month_goal
         self.monthly_bar['value'] = min(monthly, month_goal)
         self.monthly_label.config(text=f"Month: {monthly//60}h {monthly%60}m / {month_goal//60}h")
+
+    def get_weekly_daily_totals(self):
+        """Return a dict mapping weekday names to minutes studied for the current week (Sun-Sat)."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        # Group by day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
+        cursor.execute("""
+            SELECT
+                DAYOFWEEK(timestamp) - 1 AS dow,   -- 0=Sunday
+                SUM(duration_min) AS total_min
+            FROM pomodoro_log
+            WHERE phase='work'
+            AND DATE(timestamp) >= DATE_SUB(CURDATE(), INTERVAL (DAYOFWEEK(CURDATE()) - 1) DAY)
+            GROUP BY dow
+            ORDER BY dow
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        # Initialize all days with 0
+        days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+        totals = {day: 0 for day in days}
+        for dow, total in rows:
+            totals[days[dow]] = total or 0
+        return totals
 
     def on_task_combo_select(self, event):
         label = self.task_var.get()
@@ -1117,6 +1156,38 @@ class PomodoroApp:
             self.task_listbox.selection_set(index)
             self.task_listbox.activate(index)
             self.task_menu.post(event.x_root, event.y_root)
+
+    def get_week_stats(self):
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT
+                SUM(duration_min) AS total_min,
+                COUNT(*) AS sessions
+            FROM pomodoro_log
+            WHERE phase='work'
+            AND DATE(timestamp) >= DATE_SUB(CURDATE(), INTERVAL (DAYOFWEEK(CURDATE()) - 1) DAY)
+        """)
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return row or {'total_min': 0, 'sessions': 0}
+
+    def get_month_stats(self):
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT
+                SUM(duration_min) AS total_min,
+                COUNT(*) AS sessions
+            FROM pomodoro_log
+            WHERE phase='work'
+            AND DATE(timestamp) >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+        """)
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return row or {'total_min': 0, 'sessions': 0}
 
     def get_current_task_id(self):
         label = self.task_var.get()
@@ -1721,7 +1792,8 @@ class PomodoroApp:
         if not self.log:
             self.log_text.insert(tk.END, "No study sessions logged yet.")
         else:
-            for entry in reversed(self.log[-50:]):
+            # for entry in reversed(self.log):        # all entries, newest first, no limit
+            for entry in reversed(self.log[:50]):
                 line = f"[#{entry['id']}] {entry['timestamp']} - {entry['duration_min']} min"
                 if entry.get('task_name'):
                     line += f" [Task: {entry['task_name']}]"
@@ -2163,6 +2235,50 @@ class PomodoroApp:
         progress_bar = ttk.Progressbar(tab1, length=400, mode='determinate', maximum=goal, value=today_count)
         progress_bar.pack(anchor=tk.W, padx=20, pady=10)
         ttk.Label(tab1, text=f"{progress_pct:.0f}% Complete", font=("Helvetica", 10)).pack(anchor=tk.W, padx=20)
+
+        # ---- Week/Month tab with bar chart ----
+        tab_week = ttk.Frame(notebook)
+        notebook.add(tab_week, text="📅 Week/Month")
+
+        # Fetch weekly daily data
+        daily = self.get_weekly_daily_totals()
+        week_days = list(daily.keys())
+        week_minutes = list(daily.values())
+
+        # Create a bar chart
+        fig_week, ax_week = plt.subplots(figsize=(8, 4))
+        ax_week.bar(week_days, week_minutes, color='#4CAF50')
+        ax_week.set_title('Daily Study Time (Current Week)')
+        ax_week.set_ylabel('Minutes')
+        ax_week.set_xlabel('Day')
+        # Add value labels on top of bars
+        for i, v in enumerate(week_minutes):
+            if v > 0:
+                ax_week.text(i, v + 2, str(v), ha='center', fontsize=9)
+
+        canvas_week = FigureCanvasTkAgg(fig_week, master=tab_week)
+        canvas_week.draw()
+        canvas_week.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Text summary (use week and month stats)
+        week = self.get_week_stats()
+        month = self.get_month_stats()
+
+        week_h = week['total_min'] // 60
+        week_m = week['total_min'] % 60
+        week_goal_h = self.config.get('weekly_goal_hours', 10)
+        week_pct = (week['total_min'] / (week_goal_h * 60)) * 100 if week_goal_h > 0 else 0
+
+        month_h = month['total_min'] // 60
+        month_m = month['total_min'] % 60
+        month_goal_h = self.config.get('monthly_goal_hours', 40)
+        month_pct = (month['total_min'] / (month_goal_h * 60)) * 100 if month_goal_h > 0 else 0
+
+        summary = f"""
+        📊 WEEK (Sun–Sat): {week_h}h {week_m}m  |  {week['sessions']} sessions  |  {week_pct:.1f}% of {week_goal_h}h goal
+        📆 MONTH: {month_h}h {month_m}m  |  {month['sessions']} sessions  |  {month_pct:.1f}% of {month_goal_h}h goal
+        """
+        ttk.Label(tab_week, text=summary, font=("Helvetica", 10), justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=10)
 
         tab2 = ttk.Frame(notebook)
         notebook.add(tab2, text="📈 30-Day Trend")
