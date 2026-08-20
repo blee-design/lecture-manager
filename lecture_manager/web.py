@@ -734,6 +734,7 @@ def converter_export():
 
 def run_web_server(host='127.0.0.1', port=5000, debug=False):
     try:
+        print_colored(f"[i] Starting web server on {host}:{port} (debug={debug})", COLORS.BLUE)
         app.run(host=host, port=port, debug=debug, threaded=True)
     except OSError as e:
         if "Address already in use" in str(e):
@@ -742,4 +743,7 @@ def run_web_server(host='127.0.0.1', port=5000, debug=False):
             print_colored("[i] To find and kill the process, run: fuser -k 5000/tcp", COLORS.BLUE)
         else:
             print_colored(f"[!] Failed to start server: {e}", COLORS.RED)
-        # input("\nPress Enter to continue...")
+    except Exception as e:
+        print_colored(f"[!] Web server crashed: {e}", COLORS.RED)
+        print_colored("[i] Check the log above for details.", COLORS.YELLOW)
+        print_colored("[i] You can restart the server from the menu.", COLORS.BLUE)
