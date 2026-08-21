@@ -27,7 +27,7 @@ from .question_converter.exceptions import ConverterError
 
 #==============================================================================
 # Toggle for Flask debug mode True/False
-WEB_DEBUG = True
+WEB_DEBUG = False
 #==============================================================================
 
 def show_banner():

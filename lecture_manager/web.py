@@ -27,6 +27,7 @@ from .question_bank import (
 )
 from .question_converter import import_from_file, get_questions, export_to_file, create_tables
 from .question_converter.exceptions import ConverterError
+from .utils import print_colored, COLORS
 
 # ===== PLAYBACK CONFIGURATION =====
 PLAYBACK_SOURCE = 'mirror_only'   # Change this to your preference
