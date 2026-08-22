@@ -8,3 +8,4 @@ include gallery-dl.conf
 include README.md
 include Makefile
 include LICENSE
+include lecture-manager.sh

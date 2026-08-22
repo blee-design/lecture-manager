@@ -1,12 +1,23 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 # ============================================================
-# lecture-manager.sh – Termux launcher (fixed order)
+# lecture-manager.sh – Termux launcher with auto‑update,
+# database management (keep/delete), and import of exports.
 # ============================================================
 
 set -e
 
-# ---------- Configuration ----------
+# ---------- CONFIGURATION (edit these) ----------
+# Database action: "keep" (create if missing, don't drop) or "delete" (drop & recreate)
+DB_ACTION="keep"
+
+# Force reinstall of Python packages (set to "yes" to force, "no" to skip if installed)
+FORCE_REINSTALL="no"
+
+# Automatically import export files found in ~/ and ~/storage/ (overwrite, then delete)
+AUTO_IMPORT_EXPORTS="yes"
+# ------------------------------------------------
+
 REPO_URL="https://github.com/blee-design/lecture-manager.git"
 REPO_DIR="$HOME/lecture-manager"
 VENV_DIR="$HOME/venv"
@@ -56,6 +67,18 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# ---------- Package manager: apt (preferred) or pkg (fallback) ----------
+install_pkg() {
+    local pkg_name="$1"
+    if command -v apt &>/dev/null; then
+        sudo apt update && sudo apt install -y "$pkg_name"
+    elif command -v pkg &>/dev/null; then
+        pkg install -y "$pkg_name"
+    else
+        error "No supported package manager (apt or pkg)."
+    fi
+}
+
 # ---------- System dependencies ----------
 check_deps() {
     info "Checking system dependencies..."
@@ -63,12 +86,12 @@ check_deps() {
     for pkg in "${deps[@]}"; do
         if ! pkg list-installed 2>/dev/null | grep -q "^$pkg"; then
             info "Installing $pkg..."
-            pkg install -y "$pkg" || warn "Failed to install $pkg"
+            install_pkg "$pkg" || warn "Failed to install $pkg"
         fi
     done
     for py_pkg in python-cryptography python-numpy python-matplotlib; do
         if ! pkg list-installed 2>/dev/null | grep -q "^$py_pkg"; then
-            pkg install -y "$py_pkg" 2>/dev/null || warn "$py_pkg not available via pkg"
+            install_pkg "$py_pkg" 2>/dev/null || warn "$py_pkg not available via pkg"
         fi
     done
 }
@@ -101,16 +124,16 @@ wait_for_mariadb() {
     return 1
 }
 
-# ---------- Get root password ----------
+# ---------- Get root password (auto-detects empty password) ----------
 get_root_password() {
-    # Try default password "root"
-    if MYSQL_PWD="$DEFAULT_ROOT_PASS" mysql -u root -e "SELECT 1" >/dev/null 2>&1; then
-        echo "$DEFAULT_ROOT_PASS" > "$ROOT_PASS_FILE"
-        echo "$DEFAULT_ROOT_PASS"
+    # 1. Try empty password (common in Termux)
+    if mysql -u root -e "SELECT 1" >/dev/null 2>&1; then
+        echo "" > "$ROOT_PASS_FILE"
+        echo ""
         return
     fi
 
-    # Try saved password
+    # 2. Try saved password
     if [[ -f "$ROOT_PASS_FILE" ]]; then
         local saved_pw=$(cat "$ROOT_PASS_FILE")
         if MYSQL_PWD="$saved_pw" mysql -u root -e "SELECT 1" >/dev/null 2>&1; then
@@ -122,14 +145,14 @@ get_root_password() {
         fi
     fi
 
-    # Try empty password
-    if mysql -u root -e "SELECT 1" >/dev/null 2>&1; then
-        echo "" > "$ROOT_PASS_FILE"
-        echo ""
+    # 3. Try default "root"
+    if MYSQL_PWD="$DEFAULT_ROOT_PASS" mysql -u root -e "SELECT 1" >/dev/null 2>&1; then
+        echo "$DEFAULT_ROOT_PASS" > "$ROOT_PASS_FILE"
+        echo "$DEFAULT_ROOT_PASS"
         return
     fi
 
-    # Prompt for password
+    # 4. Prompt for password
     warn "MariaDB root password is required."
     while true; do
         read -s -p "Enter MariaDB root password: " pw
@@ -146,7 +169,6 @@ get_root_password() {
 
 # ---------- MariaDB setup ----------
 setup_db() {
-    # Ensure REPO_DIR exists before writing files
     mkdir -p "$REPO_DIR"
 
     info "Checking MariaDB..."
@@ -187,7 +209,13 @@ setup_db() {
         info "Using existing app password."
     fi
 
-    info "Setting up database '$DB_NAME'..."
+    # ---- Database action: delete or keep ----
+    if [[ "$DB_ACTION" == "delete" ]]; then
+        warn "Dropping database '$DB_NAME' (all data will be lost)..."
+        $mysql_cmd -e "DROP DATABASE IF EXISTS $DB_NAME;"
+        info "Database dropped."
+    fi
+
     $mysql_cmd -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
     local user_exists=$($mysql_cmd -sN -e "SELECT EXISTS(SELECT 1 FROM mysql.user WHERE user = '$DB_USER' AND host = 'localhost');")
     if [[ "$user_exists" != "1" ]]; then
@@ -205,10 +233,31 @@ setup_repo() {
     info "Setting up repository..."
     if [[ -d "$REPO_DIR/.git" ]]; then
         cd "$REPO_DIR"
-        git pull --rebase || warn "Git pull failed."
+        # Check if we need to pull
+        git fetch --quiet
+        LOCAL=$(git rev-parse HEAD)
+        REMOTE=$(git rev-parse @{u} 2>/dev/null || echo "")
+        if [[ -n "$REMOTE" && "$LOCAL" != "$REMOTE" ]]; then
+            info "Updates available. Pulling..."
+            git pull --rebase || warn "Git pull failed."
+        else
+            info "Repository already up‑to‑date."
+        fi
     else
         git clone "$REPO_URL" "$REPO_DIR" || error "Clone failed."
         cd "$REPO_DIR"
+    fi
+
+    # Update this script if it has changed (if we are inside the repo)
+    SCRIPT_SOURCE="$REPO_DIR/lecture-manager.sh"
+    if [[ -f "$SCRIPT_SOURCE" && "$0" != "$SCRIPT_SOURCE" ]]; then
+        if ! cmp -s "$0" "$SCRIPT_SOURCE"; then
+            info "This script has been updated. Copying newer version..."
+            cp "$SCRIPT_SOURCE" "$0"
+            chmod +x "$0"
+            info "Script updated. Please restart."
+            exit 0
+        fi
     fi
 }
 
@@ -227,17 +276,16 @@ setup_venv() {
 
     pip install --upgrade pip
 
-    if ! python -c "import flask" >/dev/null 2>&1; then
-        info "Flask not found in venv, installing..."
-        pip install flask
-    fi
-
-    if ! python -c "import lecture_manager" >/dev/null 2>&1; then
-        info "Installing lecture-manager package..."
+    # Install or update lecture-manager
+    if [[ "$FORCE_REINSTALL" == "yes" ]] || ! python -c "import lecture_manager" >/dev/null 2>&1; then
+        info "Installing/updating lecture-manager package..."
         cd "$REPO_DIR"
         pip install -e . || warn "Failed to install lecture-manager."
+    else
+        info "lecture-manager already installed. (Set FORCE_REINSTALL=yes to reinstall)"
     fi
 
+    # Install optional heavy packages only if missing
     for pkg in numpy matplotlib scipy pandas; do
         if ! python -c "import $pkg" >/dev/null 2>&1; then
             info "Installing $pkg (may take a while)..."
@@ -248,12 +296,87 @@ setup_venv() {
     info "Virtual environment ready."
 }
 
+# ---------- Import exported lecture files ----------
+import_exports() {
+    if [[ "$AUTO_IMPORT_EXPORTS" != "yes" ]]; then
+        info "Auto‑import disabled. Skipping."
+        return
+    fi
+
+    info "Searching for exported lecture files to import..."
+    source "$VENV_DIR/bin/activate"
+
+    SEARCH_DIRS=("$HOME" "$HOME/storage" "$HOME/storage/downloads" "$HOME/downloads")
+    FOUND_FILES=()
+
+    for dir in "${SEARCH_DIRS[@]}"; do
+        if [[ -d "$dir" ]]; then
+            for pattern in "lectures_export*.csv" "lectures_export*.json"; do
+                for file in "$dir"/$pattern; do
+                    if [[ -f "$file" ]]; then
+                        FOUND_FILES+=("$file")
+                    fi
+                done
+            done
+        fi
+    done
+
+    if [[ ${#FOUND_FILES[@]} -eq 0 ]]; then
+        info "No export files found. Skipping import."
+        return
+    fi
+
+    info "Found ${#FOUND_FILES[@]} export file(s)."
+
+    # Use the venv's Python to run the import (overwrite mode)
+    for file in "${FOUND_FILES[@]}"; do
+        info "Importing: $file"
+        if python -c "
+import sys, json, csv
+from lecture_manager.export import _import_rows
+
+def import_file(filepath):
+    ext = filepath.split('.')[-1].lower()
+    try:
+        if ext == 'csv':
+            with open(filepath, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+        elif ext == 'json':
+            with open(filepath, 'r', encoding='utf-8') as f:
+                rows = json.load(f)
+        else:
+            print(f'Unsupported extension: {ext}')
+            return False
+        if not rows:
+            print('No data found.')
+            return False
+        # choice='2' means overwrite existing
+        _import_rows(rows, ext.upper(), choice='2')
+        return True
+    except Exception as e:
+        print(f'Import failed: {e}')
+        return False
+
+sys.exit(0 if import_file('$file') else 1)
+" ; then
+            info "Import successful. Deleting $file"
+            rm -f "$file"
+        else
+            warn "Import failed for $file. Keeping file for manual inspection."
+        fi
+    done
+}
+
 # ---------- Run web server ----------
 run_web() {
     info "Starting web server..."
     cd "$REPO_DIR"
     source "$VENV_DIR/bin/activate"
     export DATABASE_URL="${DATABASE_URL:-mysql+pymysql://$DB_USER:$DB_PASS@localhost:3306/$DB_NAME}"
+
+    # Apply any pending database migrations
+    python -c "from lecture_manager.db import migrate_table; migrate_table()" || warn "Migration failed."
 
     if command -v make >/dev/null 2>&1 && grep -q "^web:" Makefile 2>/dev/null; then
         make web &
@@ -270,10 +393,11 @@ run_web() {
 main() {
     info "===== lecture-manager Termux launcher ====="
     check_deps
-    setup_repo          # <-- Clone repo FIRST
-    setup_db            # <-- Now DB setup can write files into REPO_DIR
-    setup_venv
-    run_web
+    setup_repo          # Clone/pull and update script
+    setup_db            # Database (keep or delete)
+    setup_venv          # Virtual environment and dependencies
+    import_exports      # Import export files (overwrite & delete)
+    run_web             # Start the web server
 }
 
 main
