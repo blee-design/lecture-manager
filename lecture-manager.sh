@@ -29,6 +29,7 @@ WEB_PID_FILE="$REPO_DIR/.web.pid"
 MARIADB_PID_FILE="$REPO_DIR/.mariadb.pid"
 CLEANUP_DONE=0
 DEFAULT_ROOT_PASS="root"
+CONFIG_FILE="$HOME/.lecture_manager_config.json"
 
 # ---------- Colors ----------
 RED='\033[0;31m'
@@ -167,6 +168,26 @@ get_root_password() {
     done
 }
 
+# ---------- Write lecture-manager config ----------
+write_config() {
+    local db_host="localhost"
+    local db_port="3306"
+    local db_name="$DB_NAME"
+    local db_user="$DB_USER"
+    local db_pass="$1"
+
+    cat > "$CONFIG_FILE" << EOF
+{
+    "host": "$db_host",
+    "database": "$db_name",
+    "user": "$db_user",
+    "password": "$db_pass",
+    "port": $db_port
+}
+EOF
+    info "Configuration saved to $CONFIG_FILE"
+}
+
 # ---------- MariaDB setup ----------
 setup_db() {
     mkdir -p "$REPO_DIR"
@@ -226,6 +247,9 @@ setup_db() {
     unset MYSQL_PWD
     export DATABASE_URL="mysql+pymysql://$DB_USER:$DB_PASS@localhost:3306/$DB_NAME"
     info "Database ready."
+
+    # ---- Write config file ----
+    write_config "$DB_PASS"
 }
 
 # ---------- Repository ----------
@@ -306,7 +330,8 @@ import_exports() {
     info "Searching for exported lecture files to import..."
     source "$VENV_DIR/bin/activate"
 
-    SEARCH_DIRS=("$HOME" "$HOME/storage" "$HOME/storage/downloads" "$HOME/downloads")
+    # Added ~/storage/shared/ to the search list
+    SEARCH_DIRS=("$HOME" "$HOME/storage" "$HOME/storage/shared" "$HOME/storage/downloads" "$HOME/downloads")
     FOUND_FILES=()
 
     for dir in "${SEARCH_DIRS[@]}"; do
@@ -394,7 +419,7 @@ main() {
     info "===== lecture-manager Termux launcher ====="
     check_deps
     setup_repo          # Clone/pull and update script
-    setup_db            # Database (keep or delete)
+    setup_db            # Database (keep or delete) and write config
     setup_venv          # Virtual environment and dependencies
     import_exports      # Import export files (overwrite & delete)
     run_web             # Start the web server
