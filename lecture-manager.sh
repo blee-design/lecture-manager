@@ -331,7 +331,8 @@ import_exports() {
     source "$VENV_DIR/bin/activate"
 
     # Added ~/storage/shared/ to the search list
-    SEARCH_DIRS=("$HOME" "$HOME/storage" "$HOME/storage/shared" "$HOME/storage/downloads" "$HOME/downloads")
+    # SEARCH_DIRS=("$HOME" "$HOME/storage" "$HOME/storage/shared" "$HOME/storage/downloads" "$HOME/downloads")
+    SEARCH_DIRS=("$HOME/storage/downloads" "$HOME/downloads")
     FOUND_FILES=()
 
     for dir in "${SEARCH_DIRS[@]}"; do
