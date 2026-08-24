@@ -690,8 +690,18 @@ def migrate_table():
     for badge_name, desc, icon in badges:
         cursor.execute("INSERT IGNORE INTO pomodoro_badges (badge_name, description, icon) VALUES (%s, %s, %s)",
                     (badge_name, desc, icon))
-    conn.commit()
 
+    # ---- Add unique index on user_badges.badge_name to prevent duplicate entries ----
+    cursor.execute("SHOW INDEX FROM user_badges WHERE Key_name = 'idx_badge_name'")
+    if not cursor.fetchone():
+        try:
+            cursor.execute("ALTER TABLE user_badges ADD UNIQUE INDEX idx_badge_name (badge_name)")
+            print_colored("[✓] Added unique index on user_badges.badge_name", COLORS.GREEN)
+        except mysql.connector.Error as e:
+            print_colored(f"[!] Could not add unique index: {e}", COLORS.RED)
+            print_colored("[i] You may have duplicate badge entries. Run: DELETE u1 FROM user_badges u1 INNER JOIN user_badges u2 WHERE u1.id > u2.id AND u1.badge_name = u2.badge_name;", COLORS.YELLOW)
+
+    conn.commit()
     cursor.close()
     conn.close()
 

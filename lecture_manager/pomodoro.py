@@ -265,11 +265,16 @@ class PomodoroApp:
         # Insert into user_badges if not already present
         conn = get_connection()
         cursor = conn.cursor()
+
+        # ---- Inside check_and_award_badges ----
         newly_earned = []
         for b in earned:
-            cursor.execute("INSERT IGNORE INTO user_badges (badge_name) VALUES (%s)", (b,))
-            if cursor.rowcount > 0:   # if inserted, it's newly earned
+            # Check if already earned
+            cursor.execute("SELECT id FROM user_badges WHERE badge_name = %s", (b,))
+            if not cursor.fetchone():
+                cursor.execute("INSERT INTO user_badges (badge_name) VALUES (%s)", (b,))
                 newly_earned.append(b)
+
         conn.commit()
         cursor.close()
         conn.close()
@@ -1812,40 +1817,64 @@ class PomodoroApp:
 
     def _beep(self):
         """Try multiple methods to produce a beep/notification."""
-        # 1. Terminal bell (ASCII)
+        import sys
+        import subprocess
+        import os
+        import tempfile
+        import wave
+        import struct
+        import math
+
+        # 1. Terminal bell (if Konsole audible bell is enabled)
         try:
-            print('\a', end='', flush=True)
+            sys.stdout.write('\a')
+            sys.stdout.flush()
             return
         except Exception:
             pass
 
-        # 2. Tkinter's bell (X11 beep)
+        # 2. Generate a short sine wave WAV and play with paplay (PulseAudio)
         try:
-            self.root.bell()
+            freq = 440          # Hz
+            duration = 0.3      # seconds
+            sample_rate = 44100
+            num_samples = int(sample_rate * duration)
+            amplitude = 16000   # 16-bit range
+
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+                wf = wave.open(tmp, 'wb')
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(sample_rate)
+                for i in range(num_samples):
+                    value = int(amplitude * math.sin(2 * math.pi * freq * i / sample_rate))
+                    data = struct.pack('<h', value)
+                    wf.writeframesraw(data)
+                wf.close()
+                tmp_path = tmp.name
+
+            subprocess.run(['paplay', tmp_path], check=False, timeout=1)
+            os.unlink(tmp_path)
             return
         except Exception:
             pass
 
-        # 3. System 'beep' command (if installed)
+        # 3. Try `canberra-gtk-play` (common in GNOME/KDE)
         try:
-            import subprocess
+            subprocess.run(['canberra-gtk-play', '--sound-name=bell'], check=False, timeout=1)
+            return
+        except Exception:
+            pass
+
+        # 4. Try `beep` (sudo apt install beep)
+        try:
             subprocess.run(['beep'], check=False, timeout=1)
             return
         except Exception:
             pass
 
-        # 4. PulseAudio paplay with a standard sound file
+        # 5. Try `speaker-test` (ALSA fallback)
         try:
-            import subprocess
-            subprocess.run(['paplay', '/usr/share/sounds/freedesktop/stereo/bell.oga'],
-                        check=False, timeout=1)
-            return
-        except Exception:
-            pass
-
-        # 5. ALSA speaker-test (generates a sine wave)
-        try:
-            import subprocess
             subprocess.run(['speaker-test', '-t', 'sine', '-f', '1000', '-l', '1'],
                         check=False, timeout=1, stderr=subprocess.DEVNULL)
             return
@@ -1854,28 +1883,23 @@ class PomodoroApp:
 
         # 6. Visual fallback – flash window title + popup
         try:
-            # Flash the window title
             original_title = self.root.title()
             self.root.title("🔔 TIME'S UP! 🔔")
-            # Schedule title restoration after 3 seconds
             self.root.after(3000, lambda: self.root.title(original_title))
-
-            # Show a small popup that auto-closes
             popup = tk.Toplevel(self.root)
             popup.title("Pomodoro")
             popup.geometry("300x100")
             popup.resizable(False, False)
-            popup.attributes('-topmost', True)   # keep on top
+            popup.attributes('-topmost', True)
             ttk.Label(popup, text="⏰ Time's up!", font=("Helvetica", 18)).pack(pady=20)
             popup.after(3000, popup.destroy)
-            # Bring popup to front
             popup.lift()
             popup.focus_force()
             return
         except Exception:
             pass
 
-        # 7. Last resort: just show a message box (blocks everything)
+        # 7. Last resort: plain message box
         try:
             messagebox.showinfo("Pomodoro", "⏰ Time's up! (no sound available)")
         except Exception:
