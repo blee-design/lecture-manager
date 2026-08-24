@@ -1833,13 +1833,13 @@ class PomodoroApp:
         except Exception:
             pass
 
-        # 2. Generate a short sine wave WAV and play with paplay (PulseAudio)
+        # 2. Generate a short sine wave WAV and play with various players
         try:
-            freq = 440          # Hz
-            duration = 0.3      # seconds
+            freq = 440
+            duration = 0.3
             sample_rate = 44100
             num_samples = int(sample_rate * duration)
-            amplitude = 16000   # 16-bit range
+            amplitude = 16000
 
             with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
                 wf = wave.open(tmp, 'wb')
@@ -1853,9 +1853,24 @@ class PomodoroApp:
                 wf.close()
                 tmp_path = tmp.name
 
-            subprocess.run(['paplay', tmp_path], check=False, timeout=1)
-            os.unlink(tmp_path)
-            return
+            # Try players in order of preference
+            players = [
+                ('paplay', ['paplay', tmp_path]),          # PulseAudio
+                ('aplay', ['aplay', tmp_path]),            # ALSA
+                ('mplayer', ['mplayer', tmp_path]),        # mplayer (user suggested)
+                ('play', ['play', tmp_path]),              # sox
+                ('ffplay', ['ffplay', '-nodisp', '-autoexit', tmp_path]),  # ffmpeg
+            ]
+
+            for name, cmd in players:
+                try:
+                    subprocess.run(cmd, check=False, timeout=1, stderr=subprocess.DEVNULL)
+                    os.unlink(tmp_path)
+                    return
+                except Exception:
+                    continue
+
+            os.unlink(tmp_path)  # clean up if none worked
         except Exception:
             pass
 
@@ -2199,6 +2214,15 @@ class PomodoroApp:
         stats_win.title("📊 Overall Study Analytics")
         stats_win.geometry("1000x700")
 
+        # ---- NEW: Track figures and close them on window destroy ----
+        figures = []
+
+        def close_figures():
+            for fig in figures:
+                plt.close(fig)
+
+        stats_win.bind('<Destroy>', lambda e: close_figures())
+
         notebook = ttk.Notebook(stats_win)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
@@ -2271,6 +2295,7 @@ class PomodoroApp:
 
         # Create a bar chart
         fig_week, ax_week = plt.subplots(figsize=(8, 4))
+        figures.append(fig_week)
         ax_week.bar(week_days, week_minutes, color='#4CAF50')
         ax_week.set_title('Daily Study Time (Current Week)')
         ax_week.set_ylabel('Minutes')
@@ -2308,6 +2333,7 @@ class PomodoroApp:
         notebook.add(tab2, text="📈 30-Day Trend")
         if dates:
             fig1, ax1 = plt.subplots(figsize=(10, 4))
+            figures.append(fig1)
             ax1.bar(dates, minutes, color='#4CAF50')
             ax1.set_title('Daily Study Time (Last 30 Days)')
             ax1.set_ylabel('Minutes Studied')
@@ -2346,6 +2372,7 @@ class PomodoroApp:
             total_hours = [row['total_min'] / 60 for row in monthly_data]
 
             fig_monthly, ax_monthly = plt.subplots(figsize=(10, 4))
+            figures.append(fig_monthly)
             ax_monthly.bar(months, total_hours, color='#FFA500')
             ax_monthly.set_title('Total Study Time per Month')
             ax_monthly.set_ylabel('Hours')
@@ -2371,6 +2398,7 @@ class PomodoroApp:
         notebook.add(tab3, text="🧠 Subject Breakdown")
         if subjects:
             fig2, ax2 = plt.subplots(figsize=(6, 6))
+            figures.append(fig2)
             ax2.pie(subject_mins, labels=subjects, autopct='%1.1f%%', startangle=90)
             ax2.axis('equal')
             ax2.set_title('Total Study Time by Subject')
@@ -2404,6 +2432,7 @@ class PomodoroApp:
             mins = [float(row['total_min']) for row in type_data if row['total_min'] is not None and float(row['total_min']) > 0]
             if mins:
                 fig_type, ax_type = plt.subplots(figsize=(6, 6))
+                figures.append(fig_type)
                 ax_type.pie(mins, labels=types, autopct='%1.1f%%', startangle=90)
                 ax_type.axis('equal')
                 ax_type.set_title('Total Study Time by Session Type')
@@ -2419,6 +2448,7 @@ class PomodoroApp:
         notebook.add(tab4, text="📋 Top Tasks")
         if tasks:
             fig3, ax3 = plt.subplots(figsize=(8, 4))
+            figures.append(fig3)
             ax3.barh(tasks, task_mins, color='#2196F3')
             ax3.set_title('Top 5 Tasks (Time Spent)')
             ax3.set_xlabel('Minutes')
@@ -2432,6 +2462,7 @@ class PomodoroApp:
         notebook.add(tab5, text="⏰ Peak Hours")
         if hour_labels:
             fig4, ax4 = plt.subplots(figsize=(10, 4))
+            figures.append(fig4)
             ax4.bar(hour_labels, hourly_sessions, color='#FF9800')
             ax4.set_title('Pomodoro Sessions by Hour of Day')
             ax4.set_ylabel('Number of Sessions')
@@ -2448,7 +2479,7 @@ class PomodoroApp:
 
         insights = "📌 **DYNAMIC INSIGHTS BASED ON YOUR DATA**\n\n"
         if hourly_sessions and hour_labels:
-            max_idx = hourly_sessions.index(max(hourly_sessions))
+            max_idx = int(hourly_sessions.index(max(hourly_sessions)))
             best_hour = hour_labels[max_idx]
             insights += f"🚀 Your peak productivity time is around **{best_hour}**.\n"
             insights += f"   Schedule your hardest subjects during this hour!\n\n"
