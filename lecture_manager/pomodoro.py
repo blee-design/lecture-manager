@@ -2152,7 +2152,7 @@ class PomodoroApp:
             ORDER BY hour
         """)
         hourly_data = cursor.fetchall()
-        hours = [f"{row['hour']}:00" for row in hourly_data]
+        hour_labels = [f"{row['hour']}:00" for row in hourly_data]
         hourly_sessions = [row['sessions'] for row in hourly_data]
 
         cursor.execute("""
@@ -2319,6 +2319,54 @@ class PomodoroApp:
         else:
             ttk.Label(tab2, text="No data available for the last 30 days.").pack(pady=50)
 
+        # ---- Monthly Breakdown tab ----
+        tab_monthly = ttk.Frame(notebook)
+        notebook.add(tab_monthly, text="📆 Monthly Breakdown")
+
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT
+                DATE_FORMAT(timestamp, '%Y-%m') AS month,
+                SUM(duration_min) AS total_min,
+                COUNT(*) AS sessions,
+                COUNT(DISTINCT DATE(timestamp)) AS days_active
+            FROM pomodoro_log
+            WHERE phase = 'work'
+            GROUP BY month
+            ORDER BY month
+        """)
+        monthly_data = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if monthly_data and any(row['total_min'] > 0 for row in monthly_data):
+            # Prepare data for bar chart
+            months = [row['month'] for row in monthly_data]
+            total_hours = [row['total_min'] / 60 for row in monthly_data]
+
+            fig_monthly, ax_monthly = plt.subplots(figsize=(10, 4))
+            ax_monthly.bar(months, total_hours, color='#FFA500')
+            ax_monthly.set_title('Total Study Time per Month')
+            ax_monthly.set_ylabel('Hours')
+            ax_monthly.set_xlabel('Month')
+            plt.xticks(rotation=45)
+
+            canvas_monthly = FigureCanvasTkAgg(fig_monthly, master=tab_monthly)
+            canvas_monthly.draw()
+            canvas_monthly.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Summary table (text)
+            summary_text = "📊 Monthly Summary:\n"
+            for row in monthly_data:
+                hours = row['total_min'] // 60
+                mins = row['total_min'] % 60
+                avg_per_day = row['total_min'] / row['days_active'] if row['days_active'] else 0
+                summary_text += f"  {row['month']}: {hours}h {mins}m  |  {row['sessions']} sessions  |  {row['days_active']} days  |  avg {avg_per_day:.0f} min/day\n"
+            ttk.Label(tab_monthly, text=summary_text, font=("Helvetica", 10), justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=10)
+        else:
+            ttk.Label(tab_monthly, text="No monthly data available yet.").pack(pady=50)
+
         tab3 = ttk.Frame(notebook)
         notebook.add(tab3, text="🧠 Subject Breakdown")
         if subjects:
@@ -2382,9 +2430,9 @@ class PomodoroApp:
 
         tab5 = ttk.Frame(notebook)
         notebook.add(tab5, text="⏰ Peak Hours")
-        if hours:
+        if hour_labels:
             fig4, ax4 = plt.subplots(figsize=(10, 4))
-            ax4.bar(hours, hourly_sessions, color='#FF9800')
+            ax4.bar(hour_labels, hourly_sessions, color='#FF9800')
             ax4.set_title('Pomodoro Sessions by Hour of Day')
             ax4.set_ylabel('Number of Sessions')
             ax4.set_xlabel('Hour')
@@ -2399,9 +2447,9 @@ class PomodoroApp:
         notebook.add(tab6, text="💡 Insights")
 
         insights = "📌 **DYNAMIC INSIGHTS BASED ON YOUR DATA**\n\n"
-        if hourly_sessions:
+        if hourly_sessions and hour_labels:
             max_idx = hourly_sessions.index(max(hourly_sessions))
-            best_hour = hours[max_idx]
+            best_hour = hour_labels[max_idx]
             insights += f"🚀 Your peak productivity time is around **{best_hour}**.\n"
             insights += f"   Schedule your hardest subjects during this hour!\n\n"
 
