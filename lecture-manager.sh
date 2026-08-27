@@ -238,10 +238,10 @@ setup_db() {
     fi
 
     $mysql_cmd -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
-    local user_exists=$($mysql_cmd -sN -e "SELECT EXISTS(SELECT 1 FROM mysql.user WHERE user = '$DB_USER' AND host = 'localhost');")
-    if [[ "$user_exists" != "1" ]]; then
-        $mysql_cmd -e "CREATE USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';"
-    fi
+
+    # ---- Always set the password for the app user ----
+    $mysql_cmd -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';"
+    $mysql_cmd -e "ALTER USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';"
     $mysql_cmd -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;"
 
     unset MYSQL_PWD
@@ -330,9 +330,8 @@ import_exports() {
     info "Searching for exported lecture files to import..."
     source "$VENV_DIR/bin/activate"
 
-    # Added ~/storage/shared/ to the search list
-    # SEARCH_DIRS=("$HOME" "$HOME/storage" "$HOME/storage/shared" "$HOME/storage/downloads" "$HOME/downloads")
-    SEARCH_DIRS=("$HOME/storage/downloads" "$HOME/downloads")
+    # Search directories (added ~/storage/shared/)
+    SEARCH_DIRS=("$HOME" "$HOME/storage" "$HOME/storage/shared" "$HOME/storage/downloads" "$HOME/downloads")
     FOUND_FILES=()
 
     for dir in "${SEARCH_DIRS[@]}"; do
