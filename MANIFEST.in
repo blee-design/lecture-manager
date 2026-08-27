@@ -2,6 +2,7 @@
 
 include templates
 include lecture_manager/*.py
+include quotes.txt
 include lecture.py 
 include setup.py
 include gallery-dl.conf

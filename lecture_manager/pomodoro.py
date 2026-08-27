@@ -8,22 +8,37 @@ import tkinter as tk
 import random
 from tkinter import ttk, messagebox, scrolledtext, simpledialog, filedialog
 from datetime import datetime
+import os
 from .db import get_connection
 
 print("🚀 LOADING POMODORO MODULE")
 
-QUOTES = [
-    "The secret of getting ahead is getting started. – Mark Twain",
-    "Success is the sum of small efforts repeated day in and day out. – Robert Collier",
-    "It does not matter how slowly you go as long as you do not stop. – Confucius",
-    "You don’t have to be extreme, just consistent.",
-    "The best time to start was yesterday. The next best time is now.",
-    "Discipline is choosing between what you want now and what you want most.",
-    "Small daily improvements over time lead to stunning results.",
-    "Don't watch the clock; do what it does. Keep going. – Sam Levenson",
-    "The only way to do great work is to love what you do. – Steve Jobs",
-    "Success is not final, failure is not fatal: it is the courage to continue that counts. – Churchill",
-]
+def load_quotes():
+    """Load quotes from quotes.txt, or use a small default list if file not found."""
+    quotes_file = os.path.join(os.path.dirname(__file__), '..', 'quotes.txt')
+    default_quotes = [
+        "The secret of getting ahead is getting started. – Mark Twain",
+        "Success is the sum of small efforts repeated day in and day out. – Robert Collier",
+        "It does not matter how slowly you go as long as you do not stop. – Confucius",
+        "You don’t have to be extreme, just consistent.",
+        "The best time to start was yesterday. The next best time is now.",
+        "Discipline is choosing between what you want now and what you want most.",
+        "Small daily improvements over time lead to stunning results.",
+        "Don't watch the clock; do what it does. Keep going. – Sam Levenson",
+        "The only way to do great work is to love what you do. – Steve Jobs",
+        "Success is not final, failure is not fatal: it is the courage to continue that counts. – Churchill",
+    ]
+    try:
+        with open(quotes_file, 'r', encoding='utf-8') as f:
+            lines = [line.strip() for line in f if line.strip()]
+            if lines:
+                return lines
+            else:
+                return default_quotes
+    except FileNotFoundError:
+        return default_quotes
+
+QUOTES = load_quotes()
 
 
 # ====================== STYLE CONFIGURATION ======================
@@ -1816,31 +1831,87 @@ class PomodoroApp:
         self.log_text.update_idletasks()
 
     def _beep(self):
-        """Try multiple methods to produce a beep/notification."""
-        import sys
-        import subprocess
-        import os
-        import tempfile
-        import wave
-        import struct
-        import math
+        """Cross‑platform beep – works on Windows, macOS, and Linux."""
+        import sys, subprocess, os, platform, shutil, tempfile, wave, struct, math
 
-        # 1. Terminal bell (if Konsole audible bell is enabled)
+        # ----- 1. Terminal bell (non‑blocking) -----
         try:
             sys.stdout.write('\a')
             sys.stdout.flush()
-            return
         except Exception:
             pass
 
-        # 2. Generate a short sine wave WAV and play with various players
+        system = platform.system()
+
+        # ----- 2. Windows: winsound -----
+        if system == 'Windows':
+            try:
+                import winsound
+                winsound.Beep(440, 300)
+                return
+            except Exception:
+                pass
+            try:
+                winsound.MessageBeep()
+                return
+            except Exception:
+                pass
+
+        # ----- 3. macOS: afplay with system sounds -----
+        if system == 'Darwin':
+            sounds = [
+                '/System/Library/Sounds/Glass.aiff',
+                '/System/Library/Sounds/Ping.aiff',
+                '/System/Library/Sounds/Bottle.aiff',
+                '/System/Library/Sounds/Tink.aiff',
+            ]
+            for s in sounds:
+                if os.path.exists(s) and shutil.which('afplay'):
+                    try:
+                        subprocess.run(['afplay', s], check=False, timeout=1,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        return
+                    except Exception:
+                        continue
+            # Fallback: use 'say' to produce a tone
+            try:
+                if shutil.which('say'):
+                    subprocess.run(['say', 'beep'], check=False, timeout=1,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return
+            except Exception:
+                pass
+
+        # ----- 4. Linux / other Unix: try system sounds with mplayer/paplay -----
+        # (This also runs on other Unices if they have the files)
+        system_sounds = [
+            '/usr/share/sounds/freedesktop/stereo/bell.oga',
+            '/usr/share/sounds/alsa/Noise.wav',
+            '/usr/share/sounds/gnome/default/alerts/glass.ogg',
+            '/usr/share/sounds/ubuntu/stereo/bell.ogg',
+        ]
+        players = [
+            ('mplayer', ['mplayer']),
+            ('paplay', ['paplay']),
+            ('play', ['play']),
+            ('ffplay', ['ffplay', '-nodisp', '-autoexit']),
+        ]
+        for sound in system_sounds:
+            if os.path.exists(sound):
+                for name, base_cmd in players:
+                    if shutil.which(name):
+                        try:
+                            subprocess.run(base_cmd + [sound], check=False, timeout=2,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            return
+                        except Exception:
+                            continue
+
+        # ----- 5. Generate sine WAV and try common players (Linux / generic) -----
         try:
-            freq = 440
-            duration = 0.3
-            sample_rate = 44100
+            freq, duration, sample_rate = 440, 0.3, 44100
             num_samples = int(sample_rate * duration)
             amplitude = 16000
-
             with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
                 wf = wave.open(tmp, 'wb')
                 wf.setnchannels(1)
@@ -1848,55 +1919,36 @@ class PomodoroApp:
                 wf.setframerate(sample_rate)
                 for i in range(num_samples):
                     value = int(amplitude * math.sin(2 * math.pi * freq * i / sample_rate))
-                    data = struct.pack('<h', value)
-                    wf.writeframesraw(data)
+                    wf.writeframesraw(struct.pack('<h', value))
                 wf.close()
                 tmp_path = tmp.name
 
-            # Try players in order of preference
-            players = [
-                ('paplay', ['paplay', tmp_path]),          # PulseAudio
-                ('aplay', ['aplay', tmp_path]),            # ALSA
-                ('mplayer', ['mplayer', tmp_path]),        # mplayer (user suggested)
-                ('play', ['play', tmp_path]),              # sox
-                ('ffplay', ['ffplay', '-nodisp', '-autoexit', tmp_path]),  # ffmpeg
-            ]
-
-            for name, cmd in players:
-                try:
-                    subprocess.run(cmd, check=False, timeout=1, stderr=subprocess.DEVNULL)
-                    os.unlink(tmp_path)
-                    return
-                except Exception:
-                    continue
-
-            os.unlink(tmp_path)  # clean up if none worked
+            for name, cmd in [
+                ('mplayer', ['mplayer', tmp_path]),
+                ('paplay', ['paplay', tmp_path]),
+                ('aplay', ['aplay', tmp_path]),
+                ('play', ['play', tmp_path]),
+                ('ffplay', ['ffplay', '-nodisp', '-autoexit', tmp_path]),
+            ]:
+                if shutil.which(name):
+                    try:
+                        subprocess.run(cmd, check=False, timeout=2,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        os.unlink(tmp_path)
+                        return
+                    except Exception:
+                        continue
+            os.unlink(tmp_path)
         except Exception:
             pass
 
-        # 3. Try `canberra-gtk-play` (common in GNOME/KDE)
+        # ----- 6. Tkinter bell (may not work on Wayland / some systems) -----
         try:
-            subprocess.run(['canberra-gtk-play', '--sound-name=bell'], check=False, timeout=1)
-            return
+            self.root.bell()
         except Exception:
             pass
 
-        # 4. Try `beep` (sudo apt install beep)
-        try:
-            subprocess.run(['beep'], check=False, timeout=1)
-            return
-        except Exception:
-            pass
-
-        # 5. Try `speaker-test` (ALSA fallback)
-        try:
-            subprocess.run(['speaker-test', '-t', 'sine', '-f', '1000', '-l', '1'],
-                        check=False, timeout=1, stderr=subprocess.DEVNULL)
-            return
-        except Exception:
-            pass
-
-        # 6. Visual fallback – flash window title + popup
+        # ----- 7. Visual fallback (flash window title + popup) -----
         try:
             original_title = self.root.title()
             self.root.title("🔔 TIME'S UP! 🔔")
@@ -1910,11 +1962,10 @@ class PomodoroApp:
             popup.after(3000, popup.destroy)
             popup.lift()
             popup.focus_force()
-            return
         except Exception:
             pass
 
-        # 7. Last resort: plain message box
+        # ----- 8. Last resort: plain message box -----
         try:
             messagebox.showinfo("Pomodoro", "⏰ Time's up! (no sound available)")
         except Exception:
