@@ -47,7 +47,6 @@ build/
 # Exported files (CSV, JSON)
 *.csv
 *.json
-*.txt
 *.kate-swp
 *.bak
 packer.py
@@ -56,6 +55,13 @@ lecture-manager-*.py
 *_export_*
 !requirements.txt   # keep requirements.txt if you have it
 !setup.py           # keep setup.py
+
+# Temoporary and local files
+cookies.txt
+questions.txt
+questions_sample.txt
+termux_installation_sample.txt
+Prompt for ChatGPT.txt
 
 # Misc
 *.zip
