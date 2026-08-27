@@ -2,19 +2,15 @@
 
 # ============================================================
 # lecture-manager.sh – Termux launcher with auto‑update,
-# database management (keep/delete), and import of exports.
+# database management (keep/delete), import of exports,
+# and automatic pip upgrade on repo updates.
 # ============================================================
 
 set -e
 
 # ---------- CONFIGURATION (edit these) ----------
-# Database action: "keep" (create if missing, don't drop) or "delete" (drop & recreate)
 DB_ACTION="keep"
-
-# Force reinstall of Python packages (set to "yes" to force, "no" to skip if installed)
 FORCE_REINSTALL="no"
-
-# Automatically import export files found in ~/ and ~/storage/ (overwrite, then delete)
 AUTO_IMPORT_EXPORTS="yes"
 # ------------------------------------------------
 
@@ -30,6 +26,7 @@ MARIADB_PID_FILE="$REPO_DIR/.mariadb.pid"
 CLEANUP_DONE=0
 DEFAULT_ROOT_PASS="root"
 CONFIG_FILE="$HOME/.lecture_manager_config.json"
+HOME_SCRIPT="$HOME/lecture-manager.sh"
 
 # ---------- Colors ----------
 RED='\033[0;31m'
@@ -252,7 +249,7 @@ setup_db() {
     write_config "$DB_PASS"
 }
 
-# ---------- Repository ----------
+# ---------- Repository and self‑update ----------
 setup_repo() {
     info "Setting up repository..."
     if [[ -d "$REPO_DIR/.git" ]]; then
@@ -264,25 +261,53 @@ setup_repo() {
         if [[ -n "$REMOTE" && "$LOCAL" != "$REMOTE" ]]; then
             info "Updates available. Pulling..."
             git pull --rebase || warn "Git pull failed."
+            touch "$REPO_DIR/.update_needed"   # flag for venv
         else
             info "Repository already up‑to‑date."
         fi
     else
         git clone "$REPO_URL" "$REPO_DIR" || error "Clone failed."
         cd "$REPO_DIR"
+        touch "$REPO_DIR/.update_needed"   # new clone → update needed
     fi
 
-    # Update this script if it has changed (if we are inside the repo)
+    # --- Ensure home script exists and is up‑to‑date ---
     SCRIPT_SOURCE="$REPO_DIR/lecture-manager.sh"
-    if [[ -f "$SCRIPT_SOURCE" && "$0" != "$SCRIPT_SOURCE" ]]; then
-        if ! cmp -s "$0" "$SCRIPT_SOURCE"; then
-            info "This script has been updated. Copying newer version..."
-            cp "$SCRIPT_SOURCE" "$0"
-            chmod +x "$0"
-            info "Script updated. Please restart."
-            exit 0
+    if [[ -f "$SCRIPT_SOURCE" ]]; then
+        NEEDS_UPDATE=0
+        if [[ -f "$HOME_SCRIPT" ]]; then
+            if ! cmp -s "$SCRIPT_SOURCE" "$HOME_SCRIPT"; then
+                NEEDS_UPDATE=1
+            fi
+        else
+            NEEDS_UPDATE=1
         fi
+
+        if [[ $NEEDS_UPDATE -eq 1 ]]; then
+            info "Updating script at $HOME_SCRIPT..."
+            cp "$SCRIPT_SOURCE" "$HOME_SCRIPT"
+            chmod +x "$HOME_SCRIPT"
+            info "Script updated."
+        else
+            info "Home script is already up‑to‑date."
+        fi
+    else
+        error "lecture-manager.sh not found in repository!"
     fi
+
+    # --- If we are not running the home script, exec it ---
+    if [[ "$0" != "$HOME_SCRIPT" ]]; then
+        info "Restarting with the home script: $HOME_SCRIPT"
+        exec "$HOME_SCRIPT" "$@"
+    fi
+
+    # --- If we are running the home script, but we just updated it, we need to restart ---
+    if [[ -f "$HOME_SCRIPT" ]] && ! cmp -s "$0" "$HOME_SCRIPT"; then
+        info "The home script has been updated. Restarting to load the new version..."
+        exec "$HOME_SCRIPT" "$@"
+    fi
+
+    info "Script is up‑to‑date."
 }
 
 # ---------- Virtual environment ----------
@@ -300,13 +325,29 @@ setup_venv() {
 
     pip install --upgrade pip
 
-    # Install or update lecture-manager
-    if [[ "$FORCE_REINSTALL" == "yes" ]] || ! python -c "import lecture_manager" >/dev/null 2>&1; then
-        info "Installing/updating lecture-manager package..."
+    # Check if the repo was updated in this run
+    UPDATE_NEEDED=0
+    if [[ -f "$REPO_DIR/.update_needed" ]]; then
+        UPDATE_NEEDED=1
+        rm -f "$REPO_DIR/.update_needed"
+    fi
+
+    # Install/upgrade lecture-manager and dependencies if needed
+    if [[ "$FORCE_REINSTALL" == "yes" ]] || [[ $UPDATE_NEEDED -eq 1 ]] || ! python -c "import lecture_manager" >/dev/null 2>&1; then
+        info "Installing/updating lecture-manager package and dependencies..."
         cd "$REPO_DIR"
-        pip install -e . || warn "Failed to install lecture-manager."
+
+        # Upgrade dependencies if requirements.txt exists
+        if [[ -f "requirements.txt" ]]; then
+            info "Upgrading dependencies from requirements.txt..."
+            pip install --upgrade -r requirements.txt
+        fi
+
+        # Reinstall the package in editable mode
+        pip install -e .
+        info "Package installed/updated."
     else
-        info "lecture-manager already installed. (Set FORCE_REINSTALL=yes to reinstall)"
+        info "lecture-manager already installed and up‑to‑date. (Set FORCE_REINSTALL=yes to force)"
     fi
 
     # Install optional heavy packages only if missing
@@ -330,7 +371,6 @@ import_exports() {
     info "Searching for exported lecture files to import..."
     source "$VENV_DIR/bin/activate"
 
-    # Search directories (added ~/storage/shared/)
     SEARCH_DIRS=("$HOME" "$HOME/storage" "$HOME/storage/shared" "$HOME/storage/downloads" "$HOME/downloads")
     FOUND_FILES=()
 
@@ -353,7 +393,6 @@ import_exports() {
 
     info "Found ${#FOUND_FILES[@]} export file(s)."
 
-    # Use the venv's Python to run the import (overwrite mode)
     for file in "${FOUND_FILES[@]}"; do
         info "Importing: $file"
         if python -c "
@@ -393,7 +432,7 @@ sys.exit(0 if import_file('$file') else 1)
     done
 }
 
-# ---------- Run web server ----------
+# ---------- Run web server (debug OFF) ----------
 run_web() {
     info "Starting web server..."
     cd "$REPO_DIR"
@@ -403,11 +442,12 @@ run_web() {
     # Apply any pending database migrations
     python -c "from lecture_manager.db import migrate_table; migrate_table()" || warn "Migration failed."
 
-    if command -v make >/dev/null 2>&1 && grep -q "^web:" Makefile 2>/dev/null; then
-        make web &
-    else
-        python lecture.py &
-    fi
+    # Run Flask directly – debug is OFF
+    FLASK_APP=lecture_manager/web.py \
+    FLASK_ENV=production \
+    FLASK_DEBUG=0 \
+    python3 -m flask run --host=0.0.0.0 --port=5000 &
+
     local pid=$!
     echo $pid > "$WEB_PID_FILE"
     info "Web server started (PID $pid). Press Ctrl+C to stop."
@@ -417,12 +457,12 @@ run_web() {
 # ---------- Main ----------
 main() {
     info "===== lecture-manager Termux launcher ====="
+    setup_repo
     check_deps
-    setup_repo          # Clone/pull and update script
-    setup_db            # Database (keep or delete) and write config
-    setup_venv          # Virtual environment and dependencies
-    import_exports      # Import export files (overwrite & delete)
-    run_web             # Start the web server
+    setup_db
+    setup_venv
+    import_exports
+    run_web
 }
 
 main
