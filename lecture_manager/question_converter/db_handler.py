@@ -100,7 +100,7 @@ def create_tables():
 
 # -------------------- Insert / Update / Delete --------------------
 def insert_question(q_dict, source=None, force=False):
-    from ..question_bank import add_question, check_duplicate
+    from ..question_bank import add_question, check_duplicate, update_question
 
     def clean_value(val):
         if val is None:
@@ -123,22 +123,58 @@ def insert_question(q_dict, source=None, force=False):
     else:
         question_number = None
 
-    # Check duplicate (now uses NULL for empty fields)
+    # Check duplicate
     dup_id = check_duplicate(date, institution, level, paper, group, question_number)
-    print(f"[DEBUG] Checking duplicate: date={date}, institution={institution}, level={level}, paper={paper}, group={group}, qno={question_number}")
-
     if dup_id:
         if force:
-            # ... existing update logic (unchanged) ...
-            update_question(dup_id, ...)
-            return dup_id
+            # Build keyword arguments for update
+            update_kwargs = {
+                'subject': q_dict.get('subject', ''),
+                'paper': paper,
+                'group': group,
+                'marks': q_dict.get('marks'),
+                'chapter': q_dict.get('chapter', ''),
+                'question_number': question_number,
+                'nepali_transcription': q_dict.get('nepali_transcription') or q_dict.get('text', ''),
+                'english_transcription': q_dict.get('english_transcription') or q_dict.get('english', ''),
+                'level': level,
+                'notes': q_dict.get('notes'),
+                'options': q_dict.get('options'),
+                'pairs': q_dict.get('pairs'),
+                'hints': q_dict.get('hints'),
+                'general_feedback': q_dict.get('general_feedback'),
+                'fraction_correct': q_dict.get('fraction_correct', 100),
+                'fraction_wrong': q_dict.get('fraction_wrong', -20),
+                'shuffle_answers': q_dict.get('shuffle_answers', True),
+                'show_num_correct': q_dict.get('show_num_correct', False),
+                'correct_feedback': q_dict.get('correct_feedback'),
+                'partially_correct_feedback': q_dict.get('partially_correct_feedback'),
+                'incorrect_feedback': q_dict.get('incorrect_feedback'),
+                'response_lines': q_dict.get('lines', 15),
+                'attachments': q_dict.get('attachments', 0),
+                'filetypes': q_dict.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg'),
+                'maxbytes': q_dict.get('maxbytes', 2097152),
+                'grader_info': q_dict.get('grader_info'),
+                'syllabus_code': q_dict.get('syllabus_code'),
+                'type': q_dict.get('type', 'essay')
+            }
+            # Remove None values so defaults are used
+            update_kwargs = {k: v for k, v in update_kwargs.items() if v is not None}
+            result = update_question(dup_id, **update_kwargs)
+            if result == 'updated':
+                return 'updated', dup_id
+            elif result == 'no_change':
+                return 'unchanged', dup_id   # <-- NEW: treat no_change as success
+            else:
+                # Only raise for actual errors (e.g., 'error: something')
+                raise Exception(f"Update failed: {result}")
         else:
             raise DuplicateQuestionError(
                 f"Question already exists with ID {dup_id} for {date} {institution} {level} {paper} {group} Q{question_number}"
             )
 
-    # No duplicate – insert new (call add_question with the same cleaned values)
-    return add_question(
+    # No duplicate – insert new
+    qid = add_question(
         date=date,
         institution=institution,
         subject=q_dict.get('subject', ''),
@@ -171,6 +207,7 @@ def insert_question(q_dict, source=None, force=False):
         syllabus_code=q_dict.get('syllabus_code'),
         q_type=q_dict.get('type', 'essay')
     )
+    return 'inserted', qid
 
 def _convert_to_db_fields(q_dict):
     """Map converter dict keys to database column names."""
@@ -385,31 +422,49 @@ def import_from_file(file_path, format, source=None, args=None):
     # Count types
     type_counts = Counter(q.get('type', 'essay') for q in questions)
 
-    count = 0
+    count = 0      # inserted
+    updated = 0
+    unchanged = 0
     skipped = 0
     errors = []
 
-    print_colored(f"\n📥 Starting import of {total} questions...", COLORS.CYAN)
-    if source:
-        print_colored(f"   Source: {source}", COLORS.BLUE)
-    if args.verbose:
-        print_colored(f"   Types: {', '.join(f'{k}: {v}' for k, v in type_counts.items())}", COLORS.BLUE)
+    for idx, q in enumerate(questions, 1):
+        q_no = q.get('question_no', '?')
 
-        for idx, q in enumerate(questions, 1):
-            if args.verbose and (idx % 5 == 0 or idx == total or total <= 5):
-                print(f"  [{idx}/{total}] Processing question {q.get('question_no', '?')}...")
+        # ---- Verbose duplicate check info (restored) ----
+        if args.verbose:
+            dup_info = (
+                f"date={q.get('question_date')}, "
+                f"institution={q.get('institution')}, "
+                f"level={q.get('level')}, "
+                f"paper={q.get('paper')}, "
+                f"group={q.get('group')}, "
+                f"qno={q_no}"
+            )
+            print(f"[DEBUG] Checking duplicate: {dup_info}")
 
-            try:
-                insert_question(q, source=source, force=args.bypass_duplicate)
+        try:
+            status, qid = insert_question(q, source=source, force=args.bypass_duplicate)
+            if status == 'inserted':
                 count += 1
-            except DuplicateQuestionError as e:
                 if args.verbose:
-                    print(f"    {C.YELLOW}⏭️  Skipped duplicate: {e}{C.RESET}")
-                skipped += 1
-            except Exception as e:
-                errors.append(str(e))
+                    print(f"    {C.GREEN}✅ Inserted (ID: {qid}){C.RESET}")
+            elif status == 'updated':
+                updated += 1
                 if args.verbose:
-                    print(f"    {C.RED}❌ Error: {e}{C.RESET}")
+                    print(f"    {C.BLUE}🔄 Updated (ID: {qid}){C.RESET}")
+            elif status == 'unchanged':
+                unchanged += 1
+                if args.verbose:
+                    print(f"    {C.CYAN}🔁 Unchanged (ID: {qid}){C.RESET}")
+        except DuplicateQuestionError as e:
+            skipped += 1
+            if args.verbose:
+                print(f"    {C.YELLOW}⏭️  Skipped duplicate: {e}{C.RESET}")
+        except Exception as e:
+            errors.append(str(e))
+            if args.verbose:
+                print(f"    {C.RED}❌ Error: {e}{C.RESET}")
 
     elapsed = time.time() - start_time
 
@@ -418,14 +473,40 @@ def import_from_file(file_path, format, source=None, args=None):
     print_colored("  📋 IMPORT SUMMARY", COLORS.CYAN, bold=True)
     print("═" * 60)
     print(f"  {COLORS.GREEN}✅ Inserted   : {count}{COLORS.RESET}")
+    print(f"  {COLORS.BLUE}🔄 Updated    : {updated}{COLORS.RESET}")
+    print(f"  {COLORS.CYAN}🔁 Unchanged  : {unchanged}{COLORS.RESET}")   # <-- new
     print(f"  {COLORS.YELLOW}⏭️  Skipped    : {skipped}{COLORS.RESET}")
     if errors:
         print(f"  {COLORS.RED}❌ Errors     : {len(errors)}{COLORS.RESET}")
     else:
         print(f"  {COLORS.GREEN}❌ Errors     : 0{COLORS.RESET}")
     print(f"  ⏱️  Time       : {elapsed:.2f}s")
-    print(f"  📊 Success rate: {count/total*100:.1f}%" if total else "  📊 Success rate: N/A")
+    total_processed = count + updated + unchanged + skipped
+    if total_processed > 0:
+        success_rate = (count + updated + unchanged) / total_processed * 100
+        print(f"  📊 Success rate: {success_rate:.1f}%")
+    else:
+        print("  📊 Success rate: N/A")
     print("═" * 60)
+
+    # ---- Final user-friendly message ----
+    if count == 0 and updated == 0 and unchanged == 0 and skipped == 0 and not errors:
+        print_colored("[i] No questions were processed.", COLORS.YELLOW)
+    elif count == 0 and updated == 0 and skipped == 0 and errors == 0 and unchanged > 0:
+        print_colored("[i] All questions are already up‑to‑date. Nothing new to insert or update.", COLORS.BLUE)
+    elif count == 0 and updated == 0 and skipped == 0 and errors == 0:
+        print_colored("[i] No changes were made.", COLORS.YELLOW)
+    else:
+        if count > 0:
+            print_colored(f"[✓] Inserted {count} new question{'s' if count != 1 else ''}.", COLORS.GREEN)
+        if updated > 0:
+            print_colored(f"[✓] Updated {updated} existing question{'s' if updated != 1 else ''}.", COLORS.BLUE)
+        if unchanged > 0:
+            print_colored(f"[i] {unchanged} question{'s' if unchanged != 1 else ''} were unchanged.", COLORS.CYAN)
+        if skipped > 0:
+            print_colored(f"[!] Skipped {skipped} duplicate question{'s' if skipped != 1 else ''}.", COLORS.YELLOW)
+        if errors:
+            print_colored(f"[!] {len(errors)} error{'s' if len(errors) != 1 else ''} occurred.", COLORS.RED)
 
     if args.verbose and errors:
         print_colored(f"\n  First 5 errors:", COLORS.YELLOW)
