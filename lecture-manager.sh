@@ -313,7 +313,7 @@ setup_repo() {
     fi
 
     info "Script is up‑to‑date."
- }
+}
 
 # ---------- Virtual environment ----------
 setup_venv() {
@@ -337,18 +337,19 @@ setup_venv() {
         rm -f "$REPO_DIR/.update_needed"
     fi
 
-    # Install/upgrade lecture-manager and dependencies if needed
-    if [[ "$FORCE_REINSTALL" == "yes" ]] || [[ $UPDATE_NEEDED -eq 1 ]] || ! python -c "import lecture_manager" >/dev/null 2>&1; then
+    # Use the full path to the venv's Python for reliable import check
+    VENV_PYTHON="$VENV_DIR/bin/python"
+
+    # Install/upgrade only if necessary
+    if [[ "$FORCE_REINSTALL" == "yes" ]] || [[ $UPDATE_NEEDED -eq 1 ]] || ! $VENV_PYTHON -c "import lecture_manager" 2>/dev/null; then
         info "Installing/updating lecture-manager package and dependencies..."
         cd "$REPO_DIR"
 
-        # Upgrade dependencies if requirements.txt exists
         if [[ -f "requirements.txt" ]]; then
             info "Upgrading dependencies from requirements.txt..."
             pip install --upgrade -r requirements.txt
         fi
 
-        # Reinstall the package in editable mode
         pip install -e .
         info "Package installed/updated."
     else
@@ -357,7 +358,7 @@ setup_venv() {
 
     # Install optional heavy packages only if missing
     for pkg in numpy matplotlib scipy pandas; do
-        if ! python -c "import $pkg" >/dev/null 2>&1; then
+        if ! $VENV_PYTHON -c "import $pkg" 2>/dev/null; then
             info "Installing $pkg (may take a while)..."
             pip install --index-url https://www.piwheels.org/simple $pkg 2>/dev/null || pip install $pkg
         fi
@@ -460,7 +461,7 @@ EOF
     done
 
     rm -f "$TMP_IMPORT_SCRIPT"
- }
+}
 
 # ---------- Run web server (debug OFF) ----------
 run_web() {
@@ -479,7 +480,7 @@ run_web() {
     echo $pid > "$WEB_PID_FILE"
     info "Web server started (PID $pid) in production mode (debug OFF). Press Ctrl+C to stop."
     wait $pid
- }
+}
 
 # ---------- Main ----------
 main() {
@@ -490,6 +491,6 @@ main() {
     setup_venv
     import_exports
     run_web
- }
+}
 
 main
