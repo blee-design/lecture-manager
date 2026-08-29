@@ -313,7 +313,7 @@ setup_repo() {
     fi
 
     info "Script is up‑to‑date."
- }
+}
 
 # ---------- Virtual environment ----------
 setup_venv() {
@@ -366,7 +366,7 @@ setup_venv() {
     info "Virtual environment ready."
 }
 
-# ---------- Import exported lecture files ----------
+# ---------- Import exported lecture files (fixed) ----------
 import_exports() {
     if [[ "$AUTO_IMPORT_EXPORTS" != "yes" ]]; then
         info "Auto‑import disabled. Skipping."
@@ -376,7 +376,7 @@ import_exports() {
     info "Searching for exported lecture files to import..."
     source "$VENV_DIR/bin/activate"
 
-    SEARCH_DIRS=("$HOME" "$HOME/storage" "$HOME/storage/shared" "$HOME/storage/downloads" "$HOME/downloads")
+    SEARCH_DIRS=("$REPO_DIR" "$HOME" "$HOME/storage" "$HOME/storage/shared" "$HOME/storage/downloads" "$HOME/downloads")
     FOUND_FILES=()
 
     for dir in "${SEARCH_DIRS[@]}"; do
@@ -392,19 +392,23 @@ import_exports() {
     done
 
     if [[ ${#FOUND_FILES[@]} -eq 0 ]]; then
-        info "No export files found. Skipping import."
+        info "No export files found. Place your export files in one of these folders:"
+        for dir in "${SEARCH_DIRS[@]}"; do
+            info "  - $dir"
+        done
         return
     fi
 
     info "Found ${#FOUND_FILES[@]} export file(s)."
 
-    for file in "${FOUND_FILES[@]}"; do
-        info "Importing: $file"
-        if python -c "
+    # Temporary Python script with monkey‑patched input for non‑interactive import
+    TMP_IMPORT_SCRIPT=$(mktemp)
+    cat > "$TMP_IMPORT_SCRIPT" << 'EOF'
 import sys, json, csv
+import builtins
 from lecture_manager.export import _import_rows
 
-def import_file(filepath):
+def import_file(filepath, choice='2'):
     ext = filepath.split('.')[-1].lower()
     try:
         if ext == 'csv':
@@ -415,26 +419,47 @@ def import_file(filepath):
             with open(filepath, 'r', encoding='utf-8') as f:
                 rows = json.load(f)
         else:
-            print(f'Unsupported extension: {ext}')
+            print(f"Unsupported extension: {ext}")
             return False
         if not rows:
-            print('No data found.')
+            print("No data found.")
             return False
-        # choice='2' means overwrite existing
-        _import_rows(rows, ext.upper(), choice='2')
+
+        # Monkey‑patch input to return the desired choice without prompting
+        original_input = builtins.input
+        def fake_input(prompt):
+            return choice
+        builtins.input = fake_input
+
+        try:
+            _import_rows(rows, ext.upper())
+        finally:
+            builtins.input = original_input
+
         return True
     except Exception as e:
-        print(f'Import failed: {e}')
+        print(f"Import failed: {e}")
         return False
 
-sys.exit(0 if import_file('$file') else 1)
-" ; then
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: python import_script.py <filepath>")
+        sys.exit(1)
+    success = import_file(sys.argv[1], choice='2')
+    sys.exit(0 if success else 1)
+EOF
+
+    for file in "${FOUND_FILES[@]}"; do
+        info "Importing: $file"
+        if python "$TMP_IMPORT_SCRIPT" "$file"; then
             info "Import successful. Deleting $file"
             rm -f "$file"
         else
             warn "Import failed for $file. Keeping file for manual inspection."
         fi
     done
+
+    rm -f "$TMP_IMPORT_SCRIPT"
 }
 
 # ---------- Run web server (debug OFF) ----------
@@ -454,7 +479,7 @@ run_web() {
     echo $pid > "$WEB_PID_FILE"
     info "Web server started (PID $pid) in production mode (debug OFF). Press Ctrl+C to stop."
     wait $pid
- }
+}
 
 # ---------- Main ----------
 main() {
