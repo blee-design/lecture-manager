@@ -313,7 +313,7 @@ setup_repo() {
     fi
 
     info "Script is up‑to‑date."
-}
+ }
 
 # ---------- Virtual environment ----------
 setup_venv() {
@@ -366,7 +366,7 @@ setup_venv() {
     info "Virtual environment ready."
 }
 
-# ---------- Import exported lecture files (fixed) ----------
+# ---------- Import exported lecture files ----------
 import_exports() {
     if [[ "$AUTO_IMPORT_EXPORTS" != "yes" ]]; then
         info "Auto‑import disabled. Skipping."
@@ -460,7 +460,7 @@ EOF
     done
 
     rm -f "$TMP_IMPORT_SCRIPT"
-}
+ }
 
 # ---------- Run web server (debug OFF) ----------
 run_web() {
@@ -479,7 +479,7 @@ run_web() {
     echo $pid > "$WEB_PID_FILE"
     info "Web server started (PID $pid) in production mode (debug OFF). Press Ctrl+C to stop."
     wait $pid
-}
+ }
 
 # ---------- Main ----------
 main() {
@@ -490,6 +490,6 @@ main() {
     setup_venv
     import_exports
     run_web
-}
+ }
 
 main
