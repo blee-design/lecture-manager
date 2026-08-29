@@ -254,7 +254,6 @@ setup_repo() {
     info "Setting up repository..."
     if [[ -d "$REPO_DIR/.git" ]]; then
         cd "$REPO_DIR"
-        # Check if we need to pull
         git fetch --quiet
         LOCAL=$(git rev-parse HEAD)
         REMOTE=$(git rev-parse @{u} 2>/dev/null || echo "")
@@ -302,12 +301,16 @@ setup_repo() {
 
     # --- If we are not running the home script, exec it ---
     if [[ "$0" != "$HOME_SCRIPT" ]]; then
+        # Remove the update flag before exec to avoid reinstall in the new process
+        rm -f "$REPO_DIR/.update_needed"
         info "Restarting with the home script: $HOME_SCRIPT"
         exec "$HOME_SCRIPT" "$@"
     fi
 
     # --- If we are running the home script, but we just updated it, we need to restart ---
     if [[ -f "$HOME_SCRIPT" ]] && ! cmp -s "$0" "$HOME_SCRIPT"; then
+        # Remove the update flag before exec
+        rm -f "$REPO_DIR/.update_needed"
         info "The home script has been updated. Restarting to load the new version..."
         exec "$HOME_SCRIPT" "$@"
     fi
@@ -330,7 +333,7 @@ setup_venv() {
 
     pip install --upgrade pip
 
-    # Check if the repo was updated in this run
+    # Check if the repo was updated in this run (flag may exist)
     UPDATE_NEEDED=0
     if [[ -f "$REPO_DIR/.update_needed" ]]; then
         UPDATE_NEEDED=1
