@@ -259,16 +259,21 @@ setup_repo() {
         LOCAL=$(git rev-parse HEAD)
         REMOTE=$(git rev-parse @{u} 2>/dev/null || echo "")
         if [[ -n "$REMOTE" && "$LOCAL" != "$REMOTE" ]]; then
-            info "Updates available. Pulling..."
-            git pull --rebase || warn "Git pull failed."
-            touch "$REPO_DIR/.update_needed"   # flag for venv
+            info "Updates available. Pulling with rebase and autostash..."
+            if git pull --rebase --autostash; then
+                touch "$REPO_DIR/.update_needed"
+            else
+                warn "Git pull failed. Trying reset to remote..."
+                git reset --hard "@{u}"
+                touch "$REPO_DIR/.update_needed"
+            fi
         else
             info "Repository already up‑to‑date."
         fi
     else
         git clone "$REPO_URL" "$REPO_DIR" || error "Clone failed."
         cd "$REPO_DIR"
-        touch "$REPO_DIR/.update_needed"   # new clone → update needed
+        touch "$REPO_DIR/.update_needed"
     fi
 
     # --- Ensure home script exists and is up‑to‑date ---
@@ -308,7 +313,7 @@ setup_repo() {
     fi
 
     info "Script is up‑to‑date."
-}
+ }
 
 # ---------- Virtual environment ----------
 setup_venv() {
@@ -442,17 +447,14 @@ run_web() {
     # Apply any pending database migrations
     python -c "from lecture_manager.db import migrate_table; migrate_table()" || warn "Migration failed."
 
-    # Run Flask directly – debug is OFF
-    FLASK_APP=lecture_manager/web.py \
-    FLASK_ENV=production \
-    FLASK_DEBUG=0 \
-    python3 -m flask run --host=0.0.0.0 --port=5000 &
+    # Run the web server directly with debug=False
+    python -c "from lecture_manager.web import run_web_server; run_web_server(debug=False, host='0.0.0.0', port=5000)" &
 
     local pid=$!
     echo $pid > "$WEB_PID_FILE"
-    info "Web server started (PID $pid). Press Ctrl+C to stop."
+    info "Web server started (PID $pid) in production mode (debug OFF). Press Ctrl+C to stop."
     wait $pid
-}
+ }
 
 # ---------- Main ----------
 main() {
