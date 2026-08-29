@@ -333,18 +333,15 @@ setup_venv() {
 
     pip install --upgrade pip
 
-    # Check if the repo was updated in this run (flag may exist)
+    # Check if the repo was updated in this run
     UPDATE_NEEDED=0
     if [[ -f "$REPO_DIR/.update_needed" ]]; then
         UPDATE_NEEDED=1
         rm -f "$REPO_DIR/.update_needed"
     fi
 
-    # Use the full path to the venv's Python for reliable import check
-    VENV_PYTHON="$VENV_DIR/bin/python"
-
-    # Install/upgrade only if necessary
-    if [[ "$FORCE_REINSTALL" == "yes" ]] || [[ $UPDATE_NEEDED -eq 1 ]] || ! $VENV_PYTHON -c "import lecture_manager" 2>/dev/null; then
+    # Check if lecture-manager is installed using pip show
+    if [[ "$FORCE_REINSTALL" == "yes" ]] || [[ $UPDATE_NEEDED -eq 1 ]] || ! pip show lecture_manager >/dev/null 2>&1; then
         info "Installing/updating lecture-manager package and dependencies..."
         cd "$REPO_DIR"
 
@@ -359,16 +356,16 @@ setup_venv() {
         info "lecture-manager already installed and up‑to‑date. (Set FORCE_REINSTALL=yes to force)"
     fi
 
-    # Install optional heavy packages only if missing
+    # Install optional heavy packages only if missing (check using pip show)
     for pkg in numpy matplotlib scipy pandas; do
-        if ! $VENV_PYTHON -c "import $pkg" 2>/dev/null; then
+        if ! pip show $pkg >/dev/null 2>&1; then
             info "Installing $pkg (may take a while)..."
             pip install --index-url https://www.piwheels.org/simple $pkg 2>/dev/null || pip install $pkg
         fi
     done
 
     info "Virtual environment ready."
-}
+ }
 
 # ---------- Import exported lecture files ----------
 import_exports() {
