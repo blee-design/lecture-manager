@@ -57,7 +57,7 @@ lecture-manager-*.py
 !setup.py           # keep setup.py
 
 # Temoporary and local files
-questions_export.txt
+*_export.*
 cookies.txt
 questions.txt
 questions_sample.txt
