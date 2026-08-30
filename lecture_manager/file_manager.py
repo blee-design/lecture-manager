@@ -14,6 +14,7 @@ from .db import get_connection, TABLE_NAME, get_record_by_any_id
 from .utils import clean_field, sanitize_filename, print_colored, color_text, COLORS
 from .youtube import extract_video_id
 from .utils import compute_md5, ROOT_DIR, clean_field, sanitize_filename, print_colored, color_text, COLORS, TRASH_DIR
+from .constants import DISPLAY_SEPARATOR
 
 os.makedirs(TRASH_DIR, exist_ok=True)
 
@@ -479,7 +480,7 @@ def get_target_path(record, interactive=True):
     nepali_date = clean_field(record.get('nepali_date', ''))
     time_str = clean_field(record.get('time', ''))
     parts = [syllabus, chapter_display, subject_display, lecturer, nepali_date, time_str]
-    display_name = " || ".join(parts)
+    display_name = DISPLAY_SEPARATOR.join(parts)
     filename_base = sanitize_filename(display_name)
     if len(filename_base) > 200:
         filename_base = filename_base[:200]

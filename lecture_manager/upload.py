@@ -10,6 +10,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from .db import get_connection, TABLE_NAME
 from .utils import print_colored, COLORS, get_file_path_for_record, color_text
+from .constants import DISPLAY_SEPARATOR
 
 try:
     from tqdm import tqdm
@@ -19,9 +20,9 @@ except ImportError:
     print_colored("[i] Install 'tqdm' for a better progress bar: pip install tqdm", COLORS.YELLOW)
 
 SCOPES = [
-    "https://www.googleapis.com/auth/youtube.upload",
-    "https://www.googleapis.com/auth/youtube.readonly"
-]
+    "https://www.googleapis.com/auth/youtube",
+    "https://www.googleapis.com/auth/youtube.force-ssl"
+ ]
 TOKEN_PICKLE = "youtube_token.pickle"
 CLIENT_SECRETS = "client_secrets.json"
 
@@ -174,6 +175,92 @@ def _get_authenticated_service(force=False):
                 _save_oauth_to_db(token_data, secrets_content)
 
     return build("youtube", "v3", credentials=credentials)
+
+def refresh_youtube_token():
+    """
+    Force‑refresh YouTube OAuth token with full scopes.
+    Deletes local and database tokens, runs OAuth flow, saves new token.
+    """
+    import os
+    import pickle
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from .db import get_connection
+
+    print_colored("[i] Refreshing YouTube OAuth token...", COLORS.BLUE)
+
+    # 1. Delete local token file
+    token_file = "youtube_token.pickle"
+    if os.path.exists(token_file):
+        os.remove(token_file)
+        print_colored("[✓] Deleted local token file.", COLORS.GREEN)
+
+    # 2. Delete database token
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM oauth_credentials WHERE id = 1")
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print_colored("[✓] Deleted database token.", COLORS.GREEN)
+    except Exception as e:
+        print_colored(f"[!] Could not delete database token: {e}", COLORS.RED)
+
+    # 3. Run OAuth flow with full scopes
+    SCOPES = [
+        "https://www.googleapis.com/auth/youtube",
+        "https://www.googleapis.com/auth/youtube.force-ssl"
+    ]
+    try:
+        flow = InstalledAppFlow.from_client_secrets_file("client_secrets.json", SCOPES)
+        credentials = flow.run_local_server(port=0)
+        print_colored("[✓] OAuth flow completed.", COLORS.GREEN)
+    except FileNotFoundError:
+        print_colored("[!] client_secrets.json not found. Please run option 28 first.", COLORS.RED)
+        return
+    except Exception as e:
+        print_colored(f"[!] OAuth flow failed: {e}", COLORS.RED)
+        return
+
+    # 4. Save new token to local file
+    try:
+        with open(token_file, "wb") as f:
+            pickle.dump(credentials, f)
+        print_colored(f"[✓] New token saved to {token_file}", COLORS.GREEN)
+    except Exception as e:
+        print_colored(f"[!] Failed to save local token: {e}", COLORS.RED)
+
+    # 5. Save to database
+    try:
+        token_data = pickle.dumps(credentials)
+        secrets_content = None
+        if os.path.exists("client_secrets.json"):
+            with open("client_secrets.json", "r") as f:
+                secrets_content = f.read()
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            REPLACE INTO oauth_credentials (id, token_data, client_secrets, last_refresh)
+            VALUES (1, %s, %s, NOW())
+        """, (token_data, secrets_content))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print_colored("[✓] New token saved to database.", COLORS.GREEN)
+    except Exception as e:
+        print_colored(f"[!] Failed to save database token: {e}", COLORS.RED)
+
+    # 6. Test token
+    try:
+        from googleapiclient.discovery import build
+        youtube = build("youtube", "v3", credentials=credentials)
+        # Simple test: list channels
+        youtube.channels().list(part="id", mine=True).execute()
+        print_colored("[✓] Token is valid and working.", COLORS.GREEN)
+    except Exception as e:
+        print_colored(f"[!] Token test failed: {e}", COLORS.RED)
+
+    print_colored("[i] Token refresh complete. You can now run batch updates or uploads.", COLORS.BLUE)
 
 def extract_syllabus_from_title(title):
     pattern = r'\b(\d{1,2}\.\d{1,2}\.\d{1,2}(?:-\d+)?)\b'
@@ -548,6 +635,47 @@ def batch_upload_missing_mirrors(privacy="private", dry_run=False, delay=3):
     print(f"  ⏭️ Skipped: {skipped}")
     print("═" * 50)
 
+def update_youtube_title(youtube_upload_id, new_title, retries=3):
+    """
+    Update the title of an existing YouTube video.
+    Returns (success, message).
+    """
+    import time
+    youtube = _get_authenticated_service()
+    if not youtube:
+        return False, "Authentication failed."
+
+    for attempt in range(retries):
+        try:
+            # First, get the current video metadata to preserve other fields
+            request = youtube.videos().list(
+                part="snippet,status",
+                id=youtube_upload_id
+            )
+            response = request.execute()
+            if not response.get('items'):
+                return False, f"Video {youtube_upload_id} not found."
+
+            video = response['items'][0]
+            # Update only the title (preserve description, tags, etc.)
+            # YouTube title limit is 100 characters
+            if len(new_title) > 100:
+                new_title = new_title[:97] + "..."
+            video['snippet']['title'] = new_title
+
+            update_request = youtube.videos().update(
+                part="snippet,status",
+                body=video
+            )
+            update_request.execute()
+            return True, "Title updated successfully."
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)  # exponential backoff
+                continue
+            else:
+                return False, f"Failed after {retries} attempts: {e}"
+
 def upload_video_to_youtube(record, title=None, description=None, privacy_status="private", interactive=True):
     """Upload a video, check existing, use original_filename as title, rich description."""
 
@@ -561,12 +689,15 @@ def upload_video_to_youtube(record, title=None, description=None, privacy_status
 
     # ---- Step 2: Prepare metadata ----
     # ---- FORCE USE original_filename as title ----
-    if record.get('original_filename'):
-        title = record['original_filename']
-        print_colored(f"[i] Using original_filename as title: {title[:80]}...", COLORS.BLUE)
-    else:
-        title = record.get('video_title') or f"Lecture {record['video_id']}"
-        print_colored(f"[i] original_filename missing, using video_title: {title[:80]}...", COLORS.YELLOW)
+    from .utils import build_youtube_title, build_original_filename
+    title = build_youtube_title(record)
+    # If the builder returns empty, fallback to original_filename or video_id
+    if not title:
+        title = build_original_filename(record) or record.get('video_title') or f"Lecture {record['video_id']}"
+        # Ensure it's not too long
+        if len(title) > 100:
+            title = title[:97] + "..."
+            print_colored(f"[i] Title truncated to 100 chars: {title}", COLORS.YELLOW)
 
     # Build rich description
     if not description:
@@ -668,7 +799,8 @@ def upload_video_to_youtube(record, title=None, description=None, privacy_status
         else:
             cursor.execute("""
                 UPDATE youtube_lectures
-                SET mirror_video_id = %s, youtube_upload_id = %s, youtube_upload_status = 'uploaded'
+                SET mirror_video_id = %s, youtube_upload_id = %s, youtube_upload_status = 'uploaded',
+                    youtube_title_updated = 1
                 WHERE video_id = %s
             """, (video_id, video_id, record['video_id']))
             print_colored(f"[i] Set mirror ID to: {video_id}", COLORS.GREEN)

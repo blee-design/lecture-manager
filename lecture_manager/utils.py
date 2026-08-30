@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 from tabulate import tabulate
 import html2text
 from decimal import Decimal
+from .constants import DISPLAY_SEPARATOR
 
 ROOT_DIR = os.path.expanduser("~/foxCloud/office/RootData")
 TRASH_DIR = os.path.expanduser("~/.lecture_trash")
@@ -305,4 +306,36 @@ def build_original_filename(record):
     ]
     # Filter empty parts
     parts = [str(p).strip() for p in parts if p and str(p).strip()]
-    return " || ".join(parts) if parts else None
+    return DISPLAY_SEPARATOR.join(parts) if parts else None
+
+def build_youtube_title(record, max_length=100):
+    """
+    Build a concise title for YouTube uploads (max 100 chars).
+    Uses the same DISPLAY_SEPARATOR as local files.
+    Includes: subject, lecturer, nepali_date, time.
+    Drops: syllabus_id, chapter.
+    """
+    from .constants import DISPLAY_SEPARATOR
+
+    parts = [
+        record.get('subject', ''),
+        record.get('lecturer', ''),
+        record.get('nepali_date', ''),
+        record.get('time', '')
+    ]
+    # Filter empty parts and strip whitespace
+    parts = [str(p).strip() for p in parts if p and str(p).strip()]
+
+    if not parts:
+        # Fallback to video_id or syllabus_id
+        fallback = record.get('video_id', '') or record.get('syllabus_id', '')
+        return fallback[:max_length]
+
+    # Join with the global diamond separator
+    title = DISPLAY_SEPARATOR.join(parts)
+
+    # Truncate to max_length (with ellipsis)
+    if len(title) > max_length:
+        title = title[:max_length - 3] + "..."
+
+    return title

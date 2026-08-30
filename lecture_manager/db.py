@@ -319,6 +319,12 @@ def migrate_table():
         cursor.execute("ALTER TABLE youtube_lectures ADD COLUMN youtube_upload_status ENUM('pending','uploaded','failed') DEFAULT NULL")
         print_colored("[✓] Added 'youtube_upload_status' column.", COLORS.GREEN)
 
+    # ---- Add youtube_title_updated column ----
+    cursor.execute("SHOW COLUMNS FROM youtube_lectures LIKE 'youtube_title_updated'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE youtube_lectures ADD COLUMN youtube_title_updated BOOLEAN DEFAULT FALSE")
+        print_colored("[✓] Added 'youtube_title_updated' column.", COLORS.GREEN)
+
     # ---- NEW: OAuth credentials table ----
     cursor.execute("SHOW TABLES LIKE 'oauth_credentials'")
     if not cursor.fetchone():

@@ -17,7 +17,7 @@ def get_export_data(full=False):
             'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
             'subject', 'chapter', 'lecturer', 'nepali_date', 'time',
             'notes', 'file_hash', 'original_filename', 'paper',
-            'youtube_upload_id', 'youtube_upload_status'
+            'youtube_upload_id', 'youtube_upload_status', 'youtube_title_updated'
         ]
     else:
         columns = [
@@ -37,7 +37,8 @@ def _get_export_columns(full=False):
         return ['video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
                 'subject', 'chapter', 'lecturer', 'nepali_date', 'time',
                 'notes', 'file_hash', 'original_filename', 'paper',
-                'youtube_upload_id', 'youtube_upload_status']
+                'youtube_upload_id', 'youtube_upload_status',
+                'youtube_title_updated']
     else:
         return ['video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
                 'subject', 'chapter', 'lecturer', 'nepali_date', 'time', 'notes']
@@ -165,6 +166,7 @@ def _import_rows(rows, format_name):
         paper = _clean_val(item.get('paper'))
         youtube_upload_id = _clean_val(item.get('youtube_upload_id'))
         youtube_upload_status = _clean_val(item.get('youtube_upload_status'))
+        youtube_title_updated = _clean_val(item.get('youtube_title_updated'))
 
         if exists:
             if choice == '1':
@@ -188,6 +190,7 @@ def _import_rows(rows, format_name):
                     ('paper', paper),
                     ('youtube_upload_id', youtube_upload_id),
                     ('youtube_upload_status', youtube_upload_status),
+                    ('youtube_title_updated', youtube_title_updated),
                 ]:
                     if val is not None:
                         update_fields.append(f"{key} = %s")
@@ -212,13 +215,13 @@ def _import_rows(rows, format_name):
                 'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
                 'subject', 'chapter', 'lecturer', 'nepali_date', 'time',
                 'notes', 'file_hash', 'original_filename', 'paper',
-                'youtube_upload_id', 'youtube_upload_status'
+                'youtube_upload_id', 'youtube_upload_status', 'youtube_title_updated'
             ]
             values = [
                 video_id, mirror_video_id, video_title, syllabus_id,
                 subject, chapter, lecturer, nepali_date, time_val,
                 notes, file_hash, original_filename, paper,
-                youtube_upload_id, youtube_upload_status
+                youtube_upload_id, youtube_upload_status, youtube_title_updated
             ]
             placeholders = ','.join(['%s'] * len(insert_fields))
             sql = f"INSERT INTO {TABLE_NAME} ({', '.join(insert_fields)}) VALUES ({placeholders})"

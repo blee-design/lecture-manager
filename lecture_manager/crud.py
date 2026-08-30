@@ -10,6 +10,7 @@ from .utils import clean_field, get_display_title, sanitize_filename, parse_lect
 from .file_manager import organize_video, sync_record_files, detect_paper, PAPER_CONFIG, get_target_path, ROOT_DIR
 from .facebook_manager import add_facebook_lecture
 from .upload import upload_video_to_youtube
+from .constants import DISPLAY_SEPARATOR
 
 DOWNLOAD_DIR = './downloads'
 
@@ -39,7 +40,7 @@ def download_video(record, output_dir=DOWNLOAD_DIR, video_id_to_download=None, s
         nepali_date = clean_field(record.get('nepali_date', ''))
         time_str = clean_field(record.get('time', ''))
         parts = [syllabus, chapter, subject, lecturer, nepali_date, time_str]
-        display_name = " || ".join(parts)
+        display_name = DISPLAY_SEPARATOR.join(parts)
         filename_base = sanitize_filename(display_name)
         if len(filename_base) > 200:
             filename_base = filename_base[:200]
@@ -320,7 +321,7 @@ def add_lecture():
     cursor = conn.cursor()
     try:
         # Build original_filename from fields
-        original_filename = " || ".join([p for p in [syllabus_id, chapter, subject, lecturer, nepali_date, time_str] if p])
+        original_filename = DISPLAY_SEPARATOR.join([p for p in [syllabus_id, chapter, subject, lecturer, nepali_date, time_str] if p])
         cursor.execute(f"""
         INSERT INTO {TABLE_NAME}
         (video_id, mirror_video_id, video_title, syllabus_id, subject, chapter, lecturer, nepali_date, time, notes, paper, original_filename)

@@ -126,6 +126,72 @@ def main():
         except Exception as e:
             print_colored(f"[!] Sync failed: {e}", COLORS.RED)
 
+    def refresh_youtube_token_wrapper():
+        from .upload import refresh_youtube_token
+        refresh_youtube_token()
+
+    def batch_update_youtube_titles():
+        from .upload import update_youtube_title
+        from .db import get_connection
+        import time
+
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT id, youtube_upload_id, syllabus_id, subject, chapter, lecturer, nepali_date, time
+            FROM youtube_lectures
+            WHERE youtube_upload_id IS NOT NULL
+            AND (youtube_title_updated IS NULL OR youtube_title_updated = 0)
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if not rows:
+            print_colored("✅ All videos are already up‑to‑date.", COLORS.GREEN)
+            return
+
+        total = len(rows)
+        print_colored(f"📌 Found {total} videos to update.", COLORS.BLUE)
+
+        success = 0
+        failed = 0
+
+        for idx, rec in enumerate(rows, 1):
+            from .utils import build_youtube_title, build_original_filename
+            new_title = build_youtube_title(rec)
+            if not new_title:
+                new_title = build_original_filename(rec)
+                if new_title and len(new_title) > 100:
+                    new_title = new_title[:97] + "..."
+            if not new_title:
+                print_colored(f"[{idx}/{total}] Skipping (no title built)", COLORS.YELLOW)
+                continue
+
+            title_preview = new_title[:60] + "..." if len(new_title) > 60 else new_title
+            print(f"[{idx}/{total}] Updating {rec['youtube_upload_id']} → '{title_preview}' (length: {len(new_title)})", end=" ", flush=True)
+
+            ok, msg = update_youtube_title(rec['youtube_upload_id'], new_title)
+            if ok:
+                conn2 = get_connection()
+                cur2 = conn2.cursor()
+                cur2.execute("UPDATE youtube_lectures SET youtube_title_updated = 1 WHERE id = %s", (rec['id'],))
+                conn2.commit()
+                cur2.close()
+                conn2.close()
+                print_colored("✅", COLORS.GREEN)
+                success += 1
+            else:
+                print_colored(f"❌ {msg}", COLORS.RED)
+                failed += 1
+
+            # Small delay to avoid quota issues
+            time.sleep(0.5)
+
+        print_colored(f"\n✅ Updated {success} videos. ❌ Failed {failed}.", COLORS.CYAN)
+        if failed > 0:
+            print_colored("[i] Failed videos will be retried the next time you run this command.", COLORS.YELLOW)
+
     def pomodoro_launcher():
         import subprocess
         import sys
@@ -177,7 +243,9 @@ def main():
             ("📡 Scan YouTube channel and match mirrors", scan_and_match_youtube_videos),
             ("☁️ Upload video to YouTube (unlisted)", upload_single_video),
             ("🔐 Sync YouTube OAuth token to database", sync_oauth_token),
+            ("🔄 Refresh YouTube OAuth token (full scopes)", refresh_youtube_token_wrapper),
             ("📦 Batch upload missing mirrors (fill empty mirror IDs)", batch_upload_missing_mirrors),
+            ("🔄 Update YouTube titles to new separator", batch_update_youtube_titles),
         ],
         '8': [
             ("❓ Question Bank", unified_question_menu),
