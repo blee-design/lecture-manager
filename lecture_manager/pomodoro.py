@@ -1182,7 +1182,7 @@ class PomodoroApp:
         cursor = conn.cursor(dictionary=True)
         cursor.execute("""
             SELECT
-                SUM(duration_min) AS total_min,
+                COALESCE(SUM(duration_min), 0) AS total_min,
                 COUNT(*) AS sessions
             FROM pomodoro_log
             WHERE phase='work'
@@ -1198,7 +1198,7 @@ class PomodoroApp:
         cursor = conn.cursor(dictionary=True)
         cursor.execute("""
             SELECT
-                SUM(duration_min) AS total_min,
+                COALESCE(SUM(duration_min), 0) AS total_min,
                 COUNT(*) AS sessions
             FROM pomodoro_log
             WHERE phase='work'
@@ -2364,15 +2364,18 @@ class PomodoroApp:
         week = self.get_week_stats()
         month = self.get_month_stats()
 
-        week_h = week['total_min'] // 60
-        week_m = week['total_min'] % 60
-        week_goal_h = self.config.get('weekly_goal_hours', 10)
-        week_pct = (week['total_min'] / (week_goal_h * 60)) * 100 if week_goal_h > 0 else 0
+        week_total = week['total_min'] or 0
+        month_total = month['total_min'] or 0
 
-        month_h = month['total_min'] // 60
-        month_m = month['total_min'] % 60
+        week_h = week_total // 60
+        week_m = week_total % 60
+        week_goal_h = self.config.get('weekly_goal_hours', 10)
+        week_pct = (week_total / (week_goal_h * 60)) * 100 if week_goal_h > 0 else 0
+
+        month_h = month_total // 60
+        month_m = month_total % 60
         month_goal_h = self.config.get('monthly_goal_hours', 40)
-        month_pct = (month['total_min'] / (month_goal_h * 60)) * 100 if month_goal_h > 0 else 0
+        month_pct = (month_total / (month_goal_h * 60)) * 100 if month_goal_h > 0 else 0
 
         summary = f"""
         📊 WEEK (Sun–Sat): {week_h}h {week_m}m  |  {week['sessions']} sessions  |  {week_pct:.1f}% of {week_goal_h}h goal
