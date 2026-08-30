@@ -131,7 +131,7 @@ def main():
         refresh_youtube_token()
 
     def batch_update_youtube_titles():
-        from .upload import update_youtube_title
+        from .upload import update_youtube_title, QuotaExceededError
         from .db import get_connection
         import time
 
@@ -156,41 +156,51 @@ def main():
 
         success = 0
         failed = 0
+        quota_exceeded = False
 
         for idx, rec in enumerate(rows, 1):
-            from .utils import build_youtube_title, build_original_filename
-            new_title = build_youtube_title(rec)
-            if not new_title:
-                new_title = build_original_filename(rec)
-                if new_title and len(new_title) > 100:
-                    new_title = new_title[:97] + "..."
+            # Build new title using the current display separator
+            from .utils import build_original_filename
+            new_title = build_original_filename(rec)
             if not new_title:
                 print_colored(f"[{idx}/{total}] Skipping (no title built)", COLORS.YELLOW)
                 continue
 
-            title_preview = new_title[:60] + "..." if len(new_title) > 60 else new_title
-            print(f"[{idx}/{total}] Updating {rec['youtube_upload_id']} → '{title_preview}' (length: {len(new_title)})", end=" ", flush=True)
+            print(f"[{idx}/{total}] Updating {rec['youtube_upload_id']} → '{new_title[:60]}...'", end=" ", flush=True)
 
-            ok, msg = update_youtube_title(rec['youtube_upload_id'], new_title)
-            if ok:
-                conn2 = get_connection()
-                cur2 = conn2.cursor()
-                cur2.execute("UPDATE youtube_lectures SET youtube_title_updated = 1 WHERE id = %s", (rec['id'],))
-                conn2.commit()
-                cur2.close()
-                conn2.close()
-                print_colored("✅", COLORS.GREEN)
-                success += 1
-            else:
-                print_colored(f"❌ {msg}", COLORS.RED)
+            try:
+                ok, msg = update_youtube_title(rec['youtube_upload_id'], new_title)
+                if ok:
+                    conn2 = get_connection()
+                    cur2 = conn2.cursor()
+                    cur2.execute("UPDATE youtube_lectures SET youtube_title_updated = 1 WHERE id = %s", (rec['id'],))
+                    conn2.commit()
+                    cur2.close()
+                    conn2.close()
+                    print_colored("✅", COLORS.GREEN)
+                    success += 1
+                else:
+                    print_colored(f"❌ {msg}", COLORS.RED)
+                    failed += 1
+            except QuotaExceededError:
+                print_colored("❌ Quota exceeded. Stopping batch. Please run again tomorrow.", COLORS.RED)
+                quota_exceeded = True
+                break
+            except Exception as e:
+                print_colored(f"❌ Unexpected error: {e}", COLORS.RED)
                 failed += 1
 
-            # Small delay to avoid quota issues
-            time.sleep(0.5)
+            # Delay to avoid quota burn
+            time.sleep(1)
 
+        # Final summary
         print_colored(f"\n✅ Updated {success} videos. ❌ Failed {failed}.", COLORS.CYAN)
-        if failed > 0:
-            print_colored("[i] Failed videos will be retried the next time you run this command.", COLORS.YELLOW)
+        if quota_exceeded:
+            print_colored(f"[i] {total - (success + failed)} videos remain. Run the command again tomorrow after quota resets.", COLORS.YELLOW)
+        elif failed > 0:
+            print_colored("[i] Some videos failed. Check the errors above. You can retry by running the command again.", COLORS.YELLOW)
+        else:
+            print_colored("[✓] All videos are now using the new separator! 🎉", COLORS.GREEN)
 
     def pomodoro_launcher():
         import subprocess

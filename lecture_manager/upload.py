@@ -635,43 +635,60 @@ def batch_upload_missing_mirrors(privacy="private", dry_run=False, delay=3):
     print(f"  ⏭️ Skipped: {skipped}")
     print("═" * 50)
 
+import json
+from googleapiclient.errors import HttpError
+
+class QuotaExceededError(Exception):
+    pass
+
 def update_youtube_title(youtube_upload_id, new_title, retries=3):
     """
     Update the title of an existing YouTube video.
+    Raises QuotaExceededError if daily quota is exhausted.
     Returns (success, message).
     """
-    import time
     youtube = _get_authenticated_service()
     if not youtube:
         return False, "Authentication failed."
 
     for attempt in range(retries):
         try:
-            # First, get the current video metadata to preserve other fields
-            request = youtube.videos().list(
-                part="snippet,status",
-                id=youtube_upload_id
-            )
+            # 1. Get current video metadata
+            request = youtube.videos().list(part="snippet,status", id=youtube_upload_id)
             response = request.execute()
             if not response.get('items'):
                 return False, f"Video {youtube_upload_id} not found."
 
             video = response['items'][0]
-            # Update only the title (preserve description, tags, etc.)
-            # YouTube title limit is 100 characters
-            if len(new_title) > 100:
-                new_title = new_title[:97] + "..."
-            video['snippet']['title'] = new_title
+            current_title = video['snippet']['title']
 
-            update_request = youtube.videos().update(
-                part="snippet,status",
-                body=video
-            )
+            # 2. Skip if title already matches
+            if current_title == new_title:
+                return True, "Title already up-to-date."
+
+            # 3. Update title
+            video['snippet']['title'] = new_title
+            update_request = youtube.videos().update(part="snippet,status", body=video)
             update_request.execute()
             return True, "Title updated successfully."
+
+        except HttpError as e:
+            # Check for quota exceeded
+            if e.resp.status == 403:
+                error_content = e.content.decode()
+                if 'quotaExceeded' in error_content:
+                    raise QuotaExceededError("YouTube quota exceeded. Stop processing.")
+
+            # Retry other errors
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            else:
+                return False, f"Failed after {retries} attempts: {e}"
+
         except Exception as e:
             if attempt < retries - 1:
-                time.sleep(2 ** attempt)  # exponential backoff
+                time.sleep(2 ** attempt)
                 continue
             else:
                 return False, f"Failed after {retries} attempts: {e}"
