@@ -1,4 +1,3 @@
-# File crud.py
 
 import os
 import subprocess
@@ -9,7 +8,7 @@ from .youtube import extract_video_id, fetch_youtube_title, get_embed_link, _ens
 from .utils import clean_field, get_display_title, sanitize_filename, parse_lecture_title, color_text, print_colored, COLORS, normalize_syllabus_id, build_original_filename
 from .file_manager import organize_video, sync_record_files, detect_paper, PAPER_CONFIG, get_target_path, ROOT_DIR
 from .facebook_manager import add_facebook_lecture
-from .upload import upload_video_to_youtube
+from .upload import upload_video_to_youtube, update_youtube_title
 from .constants import DISPLAY_SEPARATOR
 
 DOWNLOAD_DIR = './downloads'
@@ -829,6 +828,41 @@ def update_lecture():
                     conn.close()
                     print_colored(f"[!] Update failed: {e}", COLORS.RED)
                 continue
+
+        # ---- Auto-update YouTube title after edits ----
+        try:
+            # Fetch the updated record
+            conn2 = get_connection()
+            cur2 = conn2.cursor(dictionary=True)
+            cur2.execute(f"SELECT * FROM {TABLE_NAME} WHERE id = %s", (row['id'],))
+            updated_rec = cur2.fetchone()
+            cur2.close()
+            conn2.close()
+
+            if updated_rec and updated_rec.get('youtube_upload_id'):
+                from .upload import update_youtube_title
+                from .utils import build_original_filename
+                new_title = build_original_filename(updated_rec)
+                if new_title:
+                    # Truncate to 100 chars for YouTube
+                    if len(new_title) > 100:
+                        new_title = new_title[:100]
+                    ok, msg = update_youtube_title(updated_rec['youtube_upload_id'], new_title)
+                    if ok:
+                        print_colored(f"[✓] YouTube title updated: {new_title[:60]}...", COLORS.GREEN)
+                        # Mark as updated
+                        conn3 = get_connection()
+                        cur3 = conn3.cursor()
+                        cur3.execute("UPDATE youtube_lectures SET youtube_title_updated = 1 WHERE id = %s", (updated_rec['id'],))
+                        conn3.commit()
+                        cur3.close()
+                        conn3.close()
+                    else:
+                        print_colored(f"[!] YouTube title update failed: {msg}", COLORS.YELLOW)
+                else:
+                    pass
+        except Exception as e:
+            print_colored(f"[!] Auto-update YouTube title error: {e}", COLORS.RED)
 
         # After exiting inner loop, ask if user wants to continue updating another record
         if input(color_text("Update another lecture? (y/n): ", COLORS.MAGENTA)).strip().lower() != 'y':

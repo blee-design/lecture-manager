@@ -4,10 +4,12 @@ import os
 import pickle
 import sys
 import re
+import time
 from datetime import datetime
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from googleapiclient.errors import HttpError
 from .db import get_connection, TABLE_NAME
 from .utils import print_colored, COLORS, get_file_path_for_record, color_text
 from .constants import DISPLAY_SEPARATOR
@@ -711,9 +713,8 @@ def upload_video_to_youtube(record, title=None, description=None, privacy_status
     # If the builder returns empty, fallback to original_filename or video_id
     if not title:
         title = build_original_filename(record) or record.get('video_title') or f"Lecture {record['video_id']}"
-        # Ensure it's not too long
         if len(title) > 100:
-            title = title[:97] + "..."
+            title = title[:100]
             print_colored(f"[i] Title truncated to 100 chars: {title}", COLORS.YELLOW)
 
     # Build rich description

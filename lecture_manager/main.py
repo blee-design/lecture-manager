@@ -166,6 +166,12 @@ def main():
                 print_colored(f"[{idx}/{total}] Skipping (no title built)", COLORS.YELLOW)
                 continue
 
+            # YouTube title limit is 100 characters
+            if len(new_title) > 100:
+                new_title = new_title[:100]
+                # Optionally, show that we truncated
+                print_colored(f"  (truncated to 100 chars)", COLORS.BLUE)
+
             print(f"[{idx}/{total}] Updating {rec['youtube_upload_id']} → '{new_title[:60]}...'", end=" ", flush=True)
 
             try:
