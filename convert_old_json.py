@@ -9,6 +9,8 @@ Usage:
     python convert_old_to_new.py old.json --output new.json
         [--date YYYY-MM-DD] [--institution STR] [--level STR] [--paper STR]
         [--extract-subject] [--source STR]
+        [--auto-detect]   # enable automatic Nepali/English detection (default)
+        [--no-auto-detect] # disable automatic detection (use manual split only)
 """
 
 import json
@@ -20,26 +22,72 @@ from datetime import datetime
 
 # ---------- Helper functions ----------
 
-def split_nepali_english(text):
-    """Split text into Nepali and English parts using <br> or parentheses."""
+def has_devanagari(text):
+    """Check if text contains Devanagari Unicode characters."""
+    return bool(re.search(r'[\u0900-\u097F]', text))
+
+def split_nepali_english(text, auto_detect=True):
+    """
+    Split text into Nepali and English parts.
+    Strategies (in order):
+      1. <br> separator (Nepali <br> English)
+      2. Parentheses at the end: Nepali (English)
+      3. If auto_detect is True and Devanagari is present:
+         - If only Devanagari -> Nepali, English empty
+         - If only non-Devanagari -> English, Nepali empty
+         - If both: try to separate by patterns, fallback to whole as Nepali.
+    """
     if not text:
         return "", ""
 
-    # Try <br> separator
+    # Strategy 1: <br> separator
     if "<br>" in text:
         parts = text.split("<br>", 1)
         nepali = parts[0].strip()
         english = parts[1].strip() if len(parts) > 1 else ""
         return nepali, english
 
-    # Try parentheses pattern: Nepali (English) at the end
+    # Strategy 2: Parentheses at the end: Nepali (English)
     match = re.search(r'^(.*?)\s*\(([^)]+)\)$', text)
     if match:
         nepali = match.group(1).strip()
         english = match.group(2).strip()
         return nepali, english
 
-    # Otherwise treat whole as Nepali
+    # Strategy 3: Automatic detection (if enabled)
+    if auto_detect:
+        has_nep = has_devanagari(text)
+        # If no Devanagari, treat as English
+        if not has_nep:
+            return "", text
+        # If only Devanagari (no Latin letters), treat as Nepali
+        if not re.search(r'[a-zA-Z]', text):
+            return text, ""
+        # Mixed: try to extract English part (often at the end after a space or punctuation)
+        # Look for a pattern: Nepali text followed by space and English text,
+        # or Nepali text followed by English in parentheses (already handled)
+        # Simple heuristic: split on last occurrence of '।' or '। ' or '. '
+        # Or split on last occurrence of space before a Latin word.
+        # We'll do a more robust approach: find the longest suffix that is mostly Latin.
+        words = text.split()
+        if len(words) > 1:
+            # Check from the end for Latin-only words
+            eng_words = []
+            nep_words = []
+            for w in reversed(words):
+                if re.search(r'[a-zA-Z]', w) and not has_devanagari(w):
+                    eng_words.append(w)
+                else:
+                    break
+            if eng_words:
+                # The English part is the last N words
+                eng_part = ' '.join(reversed(eng_words))
+                nep_part = ' '.join(words[:-len(eng_words)])
+                return nep_part.strip(), eng_part.strip()
+        # Fallback: whole as Nepali
+        return text, ""
+
+    # If auto_detect is disabled and no separators found, treat whole as Nepali
     return text, ""
 
 def extract_subject_from_group(group):
@@ -99,7 +147,7 @@ def convert_hints(hints):
         })
     return new_hints
 
-def convert_old_json(input_file, output_file, defaults, extract_subject=False, source=None):
+def convert_old_json(input_file, output_file, defaults, extract_subject=False, source=None, auto_detect=True):
     with open(input_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
@@ -112,9 +160,9 @@ def convert_old_json(input_file, output_file, defaults, extract_subject=False, s
         qno = item.get('question_no')
         question_number = pad_question_number(qno)
 
-        # Split text
+        # Split text using automatic detection if enabled
         text = item.get('text', '')
-        nepali, english = split_nepali_english(text)
+        nepali, english = split_nepali_english(text, auto_detect)
 
         # Determine type
         qtype = item.get('type', 'essay').lower()
@@ -197,6 +245,10 @@ def main():
     parser.add_argument('--extract-subject', action='store_true',
                         help='Extract subject from group field')
     parser.add_argument('--source', help='Source name (default: filename)')
+    parser.add_argument('--auto-detect', action='store_true', default=True,
+                        help='Enable automatic Nepali/English detection (default)')
+    parser.add_argument('--no-auto-detect', action='store_false', dest='auto_detect',
+                        help='Disable automatic detection (use manual split only)')
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
@@ -227,12 +279,13 @@ def main():
         print("  Subject will be extracted from 'group' field.")
     else:
         print("  Subject will be left empty (you can update later).")
+    print(f"  Auto‑detect : {'ON' if args.auto_detect else 'OFF'}")
     confirm = input("\nProceed? (y/n): ").strip().lower()
     if confirm != 'y':
         print("Aborted.")
         sys.exit(0)
 
-    convert_old_json(args.input, output_file, defaults, args.extract_subject, args.source)
+    convert_old_json(args.input, output_file, defaults, args.extract_subject, args.source, args.auto_detect)
 
 if __name__ == "__main__":
     main()
