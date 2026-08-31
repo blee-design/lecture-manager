@@ -215,6 +215,11 @@ def main():
         print_colored("[✓] Pomodoro timer launched in a separate window.", COLORS.GREEN)
         print_colored("[i] You can now continue using the CLI while the timer runs.", COLORS.BLUE)
 
+    # Zoom link extractor
+    def zoom_extractor_launcher():
+        from .zoom_utils import interactive_zoom_extractor
+        interactive_zoom_extractor()
+
     # ----- Define all sub‑menus with icons -----
     menus = {
         '1': [
@@ -267,6 +272,7 @@ def main():
             ("❓ Question Bank", unified_question_menu),
             ("📰 Instapaper", instapaper_menu),
             ("⏱️ Pomodoro Timer", pomodoro_launcher),
+            ("🔗 Zoom Link Extractor", zoom_extractor_launcher),
         ],
     }
 
