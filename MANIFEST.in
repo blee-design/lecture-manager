@@ -1,12 +1,17 @@
-# File: MANIFEST.in
+# ---- Python source ----
+recursive-include lecture_manager *.py
+include lecture.py
 
-include templates
-include lecture_manager/*.py
+# ---- Data files ----
+recursive-include templates *          # include all files in templates/ (HTML, CSS, etc.)
 include quotes.txt
-include lecture.py 
-include setup.py
 include gallery-dl.conf
+
+# ---- Documentation ----
 include README.md
-include Makefile
 include LICENSE
+
+# ---- Build/install scripts ----
+include Makefile
 include lecture-manager.sh
+include setup.py

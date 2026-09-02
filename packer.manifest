@@ -1,0 +1,15 @@
+# ---- All Python code ----
+recursive-include lecture_manager *.py
+include lecture.py
+include setup.py          # optional – sometimes useful for metadata, but not required to run
+
+# ---- Data and config files ----
+recursive-include templates *
+include quotes.txt
+include gallery-dl.conf
+
+# ---- Documentation and scripts ----
+include README.md
+include LICENSE
+include Makefile
+include lecture-manager.sh
