@@ -14,29 +14,15 @@ from .db import get_connection
 print("🚀 LOADING POMODORO MODULE")
 
 def load_quotes():
-    """Load quotes from quotes.txt, or use a small default list if file not found."""
+    """Load quotes from quotes.txt. Return empty list if file not found or empty."""
     quotes_file = os.path.join(os.path.dirname(__file__), '..', 'quotes.txt')
-    default_quotes = [
-        "The secret of getting ahead is getting started. – Mark Twain",
-        "Success is the sum of small efforts repeated day in and day out. – Robert Collier",
-        "It does not matter how slowly you go as long as you do not stop. – Confucius",
-        "You don’t have to be extreme, just consistent.",
-        "The best time to start was yesterday. The next best time is now.",
-        "Discipline is choosing between what you want now and what you want most.",
-        "Small daily improvements over time lead to stunning results.",
-        "Don't watch the clock; do what it does. Keep going. – Sam Levenson",
-        "The only way to do great work is to love what you do. – Steve Jobs",
-        "Success is not final, failure is not fatal: it is the courage to continue that counts. – Churchill",
-    ]
     try:
         with open(quotes_file, 'r', encoding='utf-8') as f:
             lines = [line.strip() for line in f if line.strip()]
-            if lines:
-                return lines
-            else:
-                return default_quotes
+            return lines
     except FileNotFoundError:
-        return default_quotes
+        print("[WARN] quotes.txt not found. No quotes available.")
+        return []
 
 QUOTES = load_quotes()
 
@@ -1647,7 +1633,10 @@ class PomodoroApp:
         try:
             if completed_phase == "work":
                 import random
-                quote = random.choice(QUOTES)
+                if QUOTES:
+                    quote = random.choice(QUOTES)
+                else:
+                    quote = "Great work!"
                 messagebox.showinfo("🎉 Session Complete!", f"Great work!\n\n{quote}")
 
                 # ----- CREATE THE LOG ENTRY NOW -----
