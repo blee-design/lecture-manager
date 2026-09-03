@@ -579,9 +579,16 @@ def migrate_table():
     if not cursor.fetchone():
         cursor.execute("ALTER TABLE pomodoro_log ADD COLUMN subject_id INT NULL")
         cursor.execute("ALTER TABLE pomodoro_log ADD FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE SET NULL")
+    # ---- session_type column ----
     cursor.execute("SHOW COLUMNS FROM pomodoro_log LIKE 'session_type'")
-    if not cursor.fetchone():
-        cursor.execute("ALTER TABLE pomodoro_log ADD COLUMN session_type ENUM('study','revision','pretest','exam') DEFAULT 'study'")
+    col = cursor.fetchone()
+    if col:
+        # If it's ENUM, change to VARCHAR; if already VARCHAR, nothing changes
+        cursor.execute("ALTER TABLE pomodoro_log MODIFY session_type VARCHAR(50) DEFAULT 'study'")
+        print_colored("[✓] session_type column updated to VARCHAR(50).", COLORS.GREEN)
+    else:
+        cursor.execute("ALTER TABLE pomodoro_log ADD COLUMN session_type VARCHAR(50) DEFAULT 'study'")
+        print_colored("[✓] Added session_type column (VARCHAR).", COLORS.GREEN)
 
     # --- Optional: add subject_goals to pomodoro_settings ---
     cursor.execute("SHOW COLUMNS FROM pomodoro_settings LIKE 'subject_goals'")
@@ -706,6 +713,53 @@ def migrate_table():
         except mysql.connector.Error as e:
             print_colored(f"[!] Could not add unique index: {e}", COLORS.RED)
             print_colored("[i] You may have duplicate badge entries. Run: DELETE u1 FROM user_badges u1 INNER JOIN user_badges u2 WHERE u1.id > u2.id AND u1.badge_name = u2.badge_name;", COLORS.YELLOW)
+        # ---- Fix duplicate transcriptions (one-time cleanup) ----
+        try:
+            cursor.execute("""
+                SELECT COUNT(*) FROM questions
+                WHERE nepali_transcription IS NOT NULL
+                AND english_transcription IS NOT NULL
+                AND nepali_transcription != ''
+                AND english_transcription != ''
+                AND nepali_transcription = english_transcription
+            """)
+            dup_count = cursor.fetchone()[0]
+            if dup_count > 0:
+                print_colored(f"[i] Found {dup_count} questions with duplicate transcriptions. Cleaning up...", COLORS.YELLOW)
+
+                # Keep Nepali if Devanagari is present
+                cursor.execute("""
+                    UPDATE questions
+                    SET english_transcription = ''
+                    WHERE nepali_transcription IS NOT NULL
+                    AND english_transcription IS NOT NULL
+                    AND nepali_transcription != ''
+                    AND english_transcription != ''
+                    AND nepali_transcription = english_transcription
+                    AND nepali_transcription REGEXP '[ऀ-ॿ]'
+                """)
+                devanagari_updated = cursor.rowcount
+
+                # Keep English if no Devanagari
+                cursor.execute("""
+                    UPDATE questions
+                    SET nepali_transcription = ''
+                    WHERE nepali_transcription IS NOT NULL
+                    AND english_transcription IS NOT NULL
+                    AND nepali_transcription != ''
+                    AND english_transcription != ''
+                    AND nepali_transcription = english_transcription
+                    AND NOT (nepali_transcription REGEXP '[ऀ-ॿ]')
+                """)
+                english_updated = cursor.rowcount
+
+                conn.commit()
+                print_colored(f"[✓] Fixed {devanagari_updated + english_updated} duplicate transcriptions "
+                            f"({devanagari_updated} kept Nepali, {english_updated} kept English).", COLORS.GREEN)
+            else:
+                print_colored("[✓] No duplicate transcriptions found.", COLORS.GREEN)
+        except Exception as e:
+            print_colored(f"[!] Failed to clean duplicate transcriptions: {e}", COLORS.RED)
 
     conn.commit()
     cursor.close()

@@ -415,7 +415,7 @@ class PomodoroApp:
         type_frame.columnconfigure(0, weight=1)
         self.type_var = tk.StringVar(value="study")
         type_combo = ttk.Combobox(type_frame, textvariable=self.type_var, state="readonly",
-                                values=["study", "revision", "pretest", "exam"])
+                                values=["study", "revision", "pretest", "exam", "quiz"])
         type_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
 
         # -- Task Selection --
@@ -797,6 +797,11 @@ class PomodoroApp:
             type_match = re.search(r'\((\w+)\)', first_line)
             if type_match:
                 session_type = type_match.group(1)
+
+            # Validate against allowed ENUM values
+            ALLOWED_SESSION_TYPES = {'study', 'revision', 'pretest', 'exam', 'quiz'}
+            if session_type not in ALLOWED_SESSION_TYPES:
+                session_type = 'study'
 
             # Notes
             notes_lines = []
