@@ -130,49 +130,62 @@ def main():
         from .upload import refresh_youtube_token
         refresh_youtube_token()
 
-    def batch_update_youtube_titles():
+    def batch_update_youtube_titles(force=False):
         from .upload import update_youtube_title, QuotaExceededError
         from .db import get_connection
         import time
 
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT id, youtube_upload_id, syllabus_id, subject, chapter, lecturer, nepali_date, time
-            FROM youtube_lectures
-            WHERE youtube_upload_id IS NOT NULL
-            AND (youtube_title_updated IS NULL OR youtube_title_updated = 0)
-        """)
+
+        # If force=True, include all videos with youtube_upload_id; else only those not yet updated
+        if force:
+            cursor.execute("""
+                SELECT id, youtube_upload_id, subject, lecturer, nepali_date, time
+                FROM youtube_lectures
+                WHERE youtube_upload_id IS NOT NULL
+            """)
+        else:
+            cursor.execute("""
+                SELECT id, youtube_upload_id, subject, lecturer, nepali_date, time
+                FROM youtube_lectures
+                WHERE youtube_upload_id IS NOT NULL
+                AND (youtube_title_updated IS NULL OR youtube_title_updated = 0)
+            """)
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
 
         if not rows:
-            print_colored("✅ All videos are already up‑to‑date.", COLORS.GREEN)
+            print_colored("✅ No videos to update.", COLORS.GREEN)
             return
 
         total = len(rows)
-        print_colored(f"📌 Found {total} videos to update.", COLORS.BLUE)
+        print_colored(f"📌 Found {total} videos to process.", COLORS.BLUE)
 
         success = 0
+        skipped = 0
         failed = 0
         quota_exceeded = False
 
         for idx, rec in enumerate(rows, 1):
-            # Build new title using the current display separator
-            from .utils import build_original_filename
-            new_title = build_original_filename(rec)
+            # Build new title using the YouTube naming strategy (heart separator)
+            from .utils import build_youtube_title
+            new_title = build_youtube_title(rec)
             if not new_title:
                 print_colored(f"[{idx}/{total}] Skipping (no title built)", COLORS.YELLOW)
+                skipped += 1
                 continue
 
             # YouTube title limit is 100 characters
             if len(new_title) > 100:
                 new_title = new_title[:100]
-                # Optionally, show that we truncated
-                print_colored(f"  (truncated to 100 chars)", COLORS.BLUE)
 
             print(f"[{idx}/{total}] Updating {rec['youtube_upload_id']} → '{new_title[:60]}...'", end=" ", flush=True)
+
+            # Optional: check current title to avoid unnecessary updates
+            # (This would require an extra API call, so we skip it to save quota)
+            # But we can still update; if it's already the same, YouTube will return success.
 
             try:
                 ok, msg = update_youtube_title(rec['youtube_upload_id'], new_title)
@@ -199,14 +212,9 @@ def main():
             # Delay to avoid quota burn
             time.sleep(1)
 
-        # Final summary
-        print_colored(f"\n✅ Updated {success} videos. ❌ Failed {failed}.", COLORS.CYAN)
+        print_colored(f"\n✅ Updated: {success}, ⏭️ Skipped: {skipped}, ❌ Failed: {failed}", COLORS.CYAN)
         if quota_exceeded:
-            print_colored(f"[i] {total - (success + failed)} videos remain. Run the command again tomorrow after quota resets.", COLORS.YELLOW)
-        elif failed > 0:
-            print_colored("[i] Some videos failed. Check the errors above. You can retry by running the command again.", COLORS.YELLOW)
-        else:
-            print_colored("[✓] All videos are now using the new separator! 🎉", COLORS.GREEN)
+            print_colored(f"[i] {total - (success + failed + skipped)} videos remain. Run again tomorrow.", COLORS.YELLOW)
 
     def pomodoro_launcher():
         import subprocess
@@ -265,8 +273,8 @@ def main():
             ("☁️ Upload video to YouTube (unlisted)", upload_single_video),
             ("🔐 Sync YouTube OAuth token to database", sync_oauth_token),
             ("🔄 Refresh YouTube OAuth token (full scopes)", refresh_youtube_token_wrapper),
-            ("📦 Batch upload missing mirrors (fill empty mirror IDs)", batch_upload_missing_mirrors),
-            ("🔄 Update YouTube titles to new separator", batch_update_youtube_titles),
+            ("📦 Batch upload missing mirrors", lambda: batch_upload_missing_mirrors(auto_confirm=True)),
+            ("🔄 Update YouTube titles (force all)", lambda: batch_update_youtube_titles(force=True)),
         ],
         '8': [
             ("❓ Question Bank", unified_question_menu),

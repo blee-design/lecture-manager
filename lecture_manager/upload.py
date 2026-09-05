@@ -1,4 +1,3 @@
-# File upload.py
 
 import os
 import pickle
@@ -563,9 +562,11 @@ def scan_and_match_youtube_videos(interactive=True):
 
     print_colored(f"\n✅ Total matched: {auto_matched} records.", COLORS.GREEN)
 
-def batch_upload_missing_mirrors(privacy="private", dry_run=False, delay=3):
+
+def batch_upload_missing_mirrors(privacy="private", dry_run=False, delay=3, auto_confirm=False):
     """
     Upload all records with empty mirror_video_id.
+    If auto_confirm=True, skip per-video prompts (only ask once at start).
     """
     from .db import get_connection, TABLE_NAME
     from .utils import print_colored, COLORS, get_file_path_for_record
@@ -595,6 +596,13 @@ def batch_upload_missing_mirrors(privacy="private", dry_run=False, delay=3):
             print(f"  ID: {rec['id']} | Syllabus: {rec['syllabus_id']} | Video: {rec['video_id']}")
         return
 
+    # ---- Ask once if not auto_confirm ----
+    if not auto_confirm:
+        confirm = input(color_text(f"Upload {len(records)} videos without further prompts? (y/n): ", COLORS.MAGENTA)).strip().lower()
+        if confirm != 'y':
+            print_colored("Cancelled.", COLORS.YELLOW)
+            return
+
     success = 0
     failed = 0
     skipped = 0
@@ -612,11 +620,11 @@ def batch_upload_missing_mirrors(privacy="private", dry_run=False, delay=3):
         print_colored(f"  ⏳ Uploading... (privacy: {privacy})", COLORS.BLUE)
 
         try:
-            # Pass interactive=False to avoid prompts
+            # Pass interactive=False to skip prompts
             success_flag, msg, vid = upload_video_to_youtube(
                 rec,
                 privacy_status=privacy,
-                interactive=False
+                interactive=False          # No per-video prompt
             )
             if success_flag:
                 print_colored(f"  ✅ {msg}", COLORS.GREEN)
@@ -752,9 +760,12 @@ def upload_video_to_youtube(record, title=None, description=None, privacy_status
     print(f"  Made for Kids: False")
     print("─" * 60)
 
-    confirm = input(color_text("\nUpload this video? (y/n): ", COLORS.MAGENTA)).strip().lower()
-    if confirm != 'y':
-        return False, "Upload cancelled by user.", None
+    if interactive:
+        confirm = input(color_text("\nUpload this video? (y/n): ", COLORS.MAGENTA)).strip().lower()
+        if confirm != 'y':
+            return False, "Upload cancelled by user.", None
+    else:
+        print_colored("[i] Auto‑uploading (no confirmation).", COLORS.BLUE)
 
     body = {
         "snippet": {

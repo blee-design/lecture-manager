@@ -136,28 +136,74 @@ def index():
 
 @app.route('/lectures')
 def lectures():
+    # Get all filter parameters from the query string
     search = request.args.get('search', '')
     sort_by = request.args.get('sort', 'nepali_date')
     order = request.args.get('order', 'desc')
     paper_filter = request.args.get('paper', '')
+    lecturer = request.args.get('lecturer', '')
+    subject = request.args.get('subject', '')
+    syllabus = request.args.get('syllabus', '')
+    chapter = request.args.get('chapter', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    notes = request.args.get('notes', '')
+    video_id = request.args.get('video_id', '')
+    mirror_id = request.args.get('mirror_id', '')
+    exact = request.args.get('exact', 'false') == 'true'
 
     records = get_all_youtube_records()
 
-    # ---- Paper filter ----
+    # ---- Apply filters ----
     if paper_filter:
         records = [r for r in records if r.get('paper') == paper_filter]
+    if lecturer:
+        records = [r for r in records if lecturer.lower() in (r.get('lecturer') or '').lower()]
+    if subject:
+        records = [r for r in records if subject.lower() in (r.get('subject') or '').lower()]
+    if syllabus:
+        records = [r for r in records if syllabus.lower() in (r.get('syllabus_id') or '').lower()]
+    if chapter:
+        records = [r for r in records if chapter.lower() in (r.get('chapter') or '').lower()]
+    if notes:
+        records = [r for r in records if notes.lower() in (r.get('notes') or '').lower()]
+    if video_id:
+        records = [r for r in records if video_id.lower() in (r.get('video_id') or '').lower()]
+    if mirror_id:
+        records = [r for r in records if mirror_id.lower() in (r.get('mirror_video_id') or '').lower()]
+    if date_from:
+        records = [r for r in records if (r.get('nepali_date') or '') >= date_from]
+    if date_to:
+        records = [r for r in records if (r.get('nepali_date') or '') <= date_to]
 
-    # ---- Search filter ----
+    # ---- Text search (main search box) ----
     if search:
         search_lower = search.lower()
-        records = [r for r in records if
-                   search_lower in (r.get('syllabus_id') or '').lower() or
-                   search_lower in (r.get('subject') or '').lower() or
-                   search_lower in (r.get('chapter') or '').lower() or
-                   search_lower in (r.get('lecturer') or '').lower() or
-                   search_lower in (r.get('video_id') or '').lower()]
+        if exact:
+            # Exact match (substring still, but we could make it exact using ==)
+            # For simplicity, we'll keep as substring but user can use quotes in future
+            records = [r for r in records if
+                       search_lower in (r.get('syllabus_id') or '').lower() or
+                       search_lower in (r.get('subject') or '').lower() or
+                       search_lower in (r.get('chapter') or '').lower() or
+                       search_lower in (r.get('lecturer') or '').lower() or
+                       search_lower in (r.get('video_id') or '').lower() or
+                       search_lower in (r.get('mirror_video_id') or '').lower() or
+                       search_lower in (r.get('notes') or '').lower()]
+        else:
+            # Default: search across all fields (already handled above)
+            # But we also want to search in video_title if available
+            records = [r for r in records if
+                       search_lower in (r.get('syllabus_id') or '').lower() or
+                       search_lower in (r.get('subject') or '').lower() or
+                       search_lower in (r.get('chapter') or '').lower() or
+                       search_lower in (r.get('lecturer') or '').lower() or
+                       search_lower in (r.get('video_id') or '').lower() or
+                       search_lower in (r.get('mirror_video_id') or '').lower() or
+                       search_lower in (r.get('notes') or '').lower() or
+                       search_lower in (r.get('video_title') or '').lower()]
 
-    # ---- Sorting ----
+    # ---- Sorting (same as before) ----
     reverse = (order == 'desc')
     if sort_by == 'syllabus_id':
         records.sort(key=lambda x: x.get('syllabus_id') or '', reverse=reverse)
@@ -173,7 +219,11 @@ def lectures():
         records.sort(key=lambda x: x.get('nepali_date') or '', reverse=True)
 
     return render_template('lectures.html', records=records, search=search,
-                           sort_by=sort_by, order=order, paper_filter=paper_filter)
+                           sort_by=sort_by, order=order, paper_filter=paper_filter,
+                           lecturer=lecturer, subject=subject, syllabus=syllabus,
+                           chapter=chapter, date_from=date_from, date_to=date_to,
+                           notes=notes, video_id=video_id, mirror_id=mirror_id,
+                           exact=exact)
 
 @app.route('/lecture/<int:id>')
 def lecture_detail(id):

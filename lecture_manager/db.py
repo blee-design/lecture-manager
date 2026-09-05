@@ -761,6 +761,13 @@ def migrate_table():
         except Exception as e:
             print_colored(f"[!] Failed to clean duplicate transcriptions: {e}", COLORS.RED)
 
+    # ---- Add full‑text index for faster search ----
+    cursor.execute("SHOW INDEX FROM youtube_lectures WHERE Key_name = 'ft_search'")
+    if not cursor.fetchone():
+        print_colored("[i] Adding full‑text index on youtube_lectures...", COLORS.BLUE)
+        cursor.execute("ALTER TABLE youtube_lectures ADD FULLTEXT INDEX ft_search (syllabus_id, subject, chapter, lecturer, notes, video_title)")
+        print_colored("[✓] Full‑text index added.", COLORS.GREEN)
+
     conn.commit()
     cursor.close()
     conn.close()
