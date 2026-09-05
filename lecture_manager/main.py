@@ -219,9 +219,31 @@ def main():
     def pomodoro_launcher():
         import subprocess
         import sys
-        subprocess.Popen([sys.executable, "-m", "lecture_manager.pomodoro"])
-        print_colored("[✓] Pomodoro timer launched in a separate window.", COLORS.GREEN)
-        print_colored("[i] You can now continue using the CLI while the timer runs.", COLORS.BLUE)
+        import os
+
+        # Detach the process so it survives Ctrl+C
+        if sys.platform == 'win32':
+            # Windows: use CREATE_NEW_PROCESS_GROUP
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            # Unix: start a new session (detach from terminal)
+            creationflags = 0
+
+        # Use subprocess.Popen with start_new_session=True (Unix) or creationflags (Windows)
+        # Also redirect stdout/stderr to DEVNULL to avoid blocking
+        try:
+            subprocess.Popen(
+                [sys.executable, "-m", "lecture_manager.pomodoro"],
+                start_new_session=True,          # Unix: new session
+                creationflags=creationflags,     # Windows: new process group
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL
+            )
+            print_colored("[✓] Pomodoro timer launched in a separate window.", COLORS.GREEN)
+            print_colored("[i] It will now survive Ctrl+C on the web server or CLI.", COLORS.BLUE)
+        except Exception as e:
+            print_colored(f"[!] Failed to launch Pomodoro: {e}", COLORS.RED)
 
     # Zoom link extractor
     def zoom_extractor_launcher():
