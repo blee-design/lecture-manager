@@ -24,11 +24,11 @@ from .question_converter.exceptions import (
     ParseError,
     DuplicateQuestionError,
     IOError,
-    MissingCorrectOptionError,      # optional, but safe
-    MultipleCorrectOptionsError,    # optional
-    InsufficientOptionsError,       # optional
-    MatchingPairError,              # optional
-    UnknownQuestionTypeError,       # optional
+    MissingCorrectOptionError,
+    MultipleCorrectOptionsError,
+    InsufficientOptionsError,
+    MatchingPairError,
+    UnknownQuestionTypeError,
 )
 
 _last_filtered_questions = None
@@ -101,10 +101,8 @@ def normalize_question_number(qno):
     if qno is None:
         return None
     try:
-        # If it's a number or numeric string, pad to 2 digits
         return f"{int(qno):02d}"
     except (ValueError, TypeError):
-        # If it's already a string like '01', keep as is (but ensure it's stripped)
         return str(qno).strip().zfill(2)
 
 def _get_filtered_questions_interactive():
@@ -270,7 +268,7 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                     'filetypes': filetypes,
                     'maxbytes': maxbytes,
                     'grader_info': grader_info,
-                    'type': q_type,   # <-- include type
+                    'type': q_type,
                 }
                 # Remove None values
                 updates = {k: v for k, v in updates.items() if v is not None}
@@ -294,7 +292,7 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
          general_feedback, fraction_correct, fraction_wrong, shuffle_answers,
          show_num_correct, correct_feedback, partially_correct_feedback,
          incorrect_feedback, response_lines, attachments, filetypes, maxbytes,
-         grader_info, type, syllabus_code)   -- added
+         grader_info, type, syllabus_code)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (date, institution, subject, paper, group, marks, chapter,
@@ -383,7 +381,6 @@ def get_questions_by_criteria(date=None, institution=None, level=None, paper=Non
     if chapter:
         conditions.append("LOWER(chapter) LIKE LOWER(%s)")
         params.append(f"%{chapter}%")
-    # ---- NEW ----
     if syllabus_code:
         conditions.append("syllabus_code LIKE %s")
         params.append(f"%{syllabus_code}%")
@@ -420,16 +417,68 @@ def get_all_questions(sort_by='question_date', order='DESC', search=None):
     conn.close()
     return rows
 
+def search_questions_all_fields(search_term):
+    """
+    Return question rows (full data) that match search_term in main table
+    or in options/pairs.
+    This is the same function used by the web interface.
+    """
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    like = f"%{search_term}%"
+
+    # Search main table
+    sql_main = """
+        SELECT id FROM questions
+        WHERE subject LIKE %s OR institution LIKE %s OR chapter LIKE %s
+           OR nepali_transcription LIKE %s OR english_transcription LIKE %s
+           OR notes LIKE %s
+    """
+    cursor.execute(sql_main, (like, like, like, like, like, like))
+    main_ids = [row['id'] for row in cursor.fetchall()]
+
+    # Search options
+    sql_options = """
+        SELECT DISTINCT question_id FROM question_options
+        WHERE text LIKE %s
+    """
+    cursor.execute(sql_options, (like,))
+    option_ids = [row['question_id'] for row in cursor.fetchall()]
+
+    # Search matching pairs (subquestion and answer)
+    sql_pairs = """
+        SELECT DISTINCT question_id FROM question_matching_pairs
+        WHERE subquestion LIKE %s OR answer LIKE %s
+    """
+    cursor.execute(sql_pairs, (like, like))
+    pair_ids = [row['question_id'] for row in cursor.fetchall()]
+
+    # Union all IDs
+    all_ids = set(main_ids + option_ids + pair_ids)
+
+    cursor.close()
+    conn.close()
+
+    if not all_ids:
+        return []
+
+    # Fetch full question rows
+    placeholders = ','.join(['%s'] * len(all_ids))
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(f"SELECT * FROM questions WHERE id IN ({placeholders})", list(all_ids))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
 def update_question(qid, **kwargs):
-    # Separate out the related data
     options = kwargs.pop('options', None)
     pairs = kwargs.pop('pairs', None)
     hints = kwargs.pop('hints', None)
 
-    # Update main question fields
     fields = []
     values = []
-    # Allowed fields (including type and source)
     for key, val in kwargs.items():
         if val is not None:
             if key == 'group':
@@ -451,9 +500,7 @@ def update_question(qid, **kwargs):
         conn.commit()
         affected = cursor.rowcount
 
-        # Handle related tables (options, pairs, hints)
         if options is not None or pairs is not None or hints is not None:
-            # Delete existing options, pairs, hints
             if options is not None:
                 cursor.execute("DELETE FROM question_options WHERE question_id = %s", (qid,))
                 for idx, opt in enumerate(options):
@@ -559,14 +606,16 @@ def _display_single_question(q):
     english = html_to_terminal(q.get('english_transcription', ''))
     marks = q.get('marks', '')
     notes = q.get('notes')
+    q_type = q.get('type', 'essay')
 
     print("\n" + "─" * 70)
     line = f"  {color_text(f'Q.No. {q_no}.', COLORS.CYAN, bold=True)}"
     if marks and str(marks).isdigit():
         line += f" {color_text(f'[{marks} marks]', COLORS.YELLOW)}"
+    line += f"  {color_text(f'Type: {q_type}', COLORS.BLUE)}"
     print(line)
 
-    # ---- Combined question text ----
+    # Question text
     question_text = nepali
     if english:
         question_text += f" ({english})"
@@ -574,6 +623,66 @@ def _display_single_question(q):
 
     if notes:
         print(f"    {color_text('📝 Note:', COLORS.YELLOW)} {notes}")
+
+    # ---- Type-specific details ----
+    if q_type == 'multichoice':
+        options = q.get('options', [])
+        if options:
+            print("\n  Options:")
+            for opt in options:
+                marker = " *" if opt.get('correct', False) else ""
+                print(f"    - {opt.get('text', '')}{marker}")
+            if q.get('fraction_correct') is not None or q.get('fraction_wrong') is not None:
+                print(f"    Correct fraction: {q.get('fraction_correct', 100)}% | Wrong fraction: {q.get('fraction_wrong', -20)}%")
+    elif q_type == 'truefalse':
+        options = q.get('options', [])
+        correct_opt = next((opt for opt in options if opt.get('correct', False)), None)
+        if correct_opt:
+            print(f"\n  Correct answer: {color_text(correct_opt.get('text', ''), COLORS.GREEN)}")
+        if q.get('feedback_true'):
+            print(f"    Feedback if True: {q['feedback_true']}")
+        if q.get('feedback_false'):
+            print(f"    Feedback if False: {q['feedback_false']}")
+        if q.get('fraction_correct') is not None or q.get('fraction_wrong') is not None:
+            print(f"    Correct fraction: {q.get('fraction_correct', 100)}% | Wrong fraction: {q.get('fraction_wrong', -20)}%")
+    elif q_type == 'matching':
+        pairs = q.get('pairs', [])
+        if pairs:
+            print("\n  Matching pairs:")
+            for pair in pairs:
+                print(f"    {pair.get('subquestion', '')} ↔ {pair.get('answer', '')}")
+        if q.get('shuffle_answers') is not None:
+            print(f"    Shuffle answers: {'Yes' if q['shuffle_answers'] else 'No'}")
+        if q.get('show_num_correct'):
+            print("    Show number correct: Yes")
+        if q.get('correct_feedback'):
+            print(f"    Correct feedback: {q['correct_feedback']}")
+        if q.get('partially_correct_feedback'):
+            print(f"    Partially correct feedback: {q['partially_correct_feedback']}")
+        if q.get('incorrect_feedback'):
+            print(f"    Incorrect feedback: {q['incorrect_feedback']}")
+        hints = q.get('hints', [])
+        if hints:
+            print("    Hints:")
+            for hint in hints:
+                line = f"      - {hint.get('text', '')}"
+                if hint.get('clear_incorrect'):
+                    line += " (clears incorrect)"
+                if hint.get('show_num_correct'):
+                    line += " (shows number correct)"
+                print(line)
+    else:  # essay
+        print(f"\n  Response lines: {q.get('response_lines', 15)}")
+        print(f"  Attachments: {q.get('attachments', 0)}")
+        if q.get('filetypes'):
+            print(f"  File types: {q['filetypes']}")
+        if q.get('maxbytes'):
+            print(f"  Max bytes: {q['maxbytes']}")
+        if q.get('grader_info'):
+            print(f"  Grader info: {q['grader_info']}")
+
+    if q.get('general_feedback'):
+        print(f"\n  {color_text('General Feedback:', COLORS.BLUE)} {q['general_feedback']}")
 
     print("─" * 70)
 
@@ -612,10 +721,12 @@ def _display_paper(questions):
                 marks = q.get('marks', '')
                 chapter = q.get('chapter', '')
                 notes = q.get('notes')
+                q_type = q.get('type', 'essay')
 
                 line = f"      {color_text(f'Q.No. {q_no}.', COLORS.CYAN, bold=True)}"
                 if marks and str(marks).isdigit():
                     line += f" {color_text(f'[{marks} marks]', COLORS.YELLOW)}"
+                line += f"  {color_text(f'[{q_type}]', COLORS.BLUE)}"
                 print(line)
 
                 if chapter:
@@ -623,7 +734,6 @@ def _display_paper(questions):
                 if q.get('syllabus_code'):
                     print(f"        {color_text('Syllabus Code:', COLORS.MAGENTA)} {q['syllabus_code']}")
 
-                # ---- Combined question (Nepali + English) ----
                 question_text = nepali
                 if english:
                     question_text += f" ({english})"
@@ -679,37 +789,34 @@ def quick_lookup_interactive():
         if current_results is None:
             raw = input(color_text("> ", COLORS.MAGENTA)).strip()
         else:
-            # We're still in the context of a search
             raw = input(color_text(f"({len(current_results)} results) > ", COLORS.MAGENTA)).strip()
 
         if not raw:
             continue
 
-        # --- Exit commands ---
         if raw.lower() in ('0', 'exit', 'quit'):
             print_colored("Returning to Question Bank menu.", COLORS.YELLOW)
             break
 
-        # --- Back to list / new search ---
         if raw.lower() in ('b', 'back'):
             current_results = None
             current_query = None
             continue
 
-        # --- If we have current results, check if user typed a number to view details ---
         if current_results is not None and raw.isdigit():
             qid = int(raw)
-            # Find the question in current results
             q = next((r for r in current_results if r['id'] == qid), None)
             if q:
-                _display_single_question(q)
+                # Fetch full question with options/pairs/hints
+                full_q = get_question_by_id(qid)
+                _display_single_question(full_q)
                 print()
                 continue
             else:
                 print_colored("[!] ID not found in current results.", COLORS.YELLOW)
                 continue
 
-        # --- Parse and search ---
+        # Parse and search
         date, inst, level, q_no = parse_quick_input(raw)
 
         if date and inst:
@@ -719,13 +826,14 @@ def quick_lookup_interactive():
                     print_colored("[i] No matching question found.", COLORS.YELLOW)
                     continue
                 elif len(results) == 1:
-                    _display_single_question(results[0])
+                    full_q = get_question_by_id(results[0]['id'])
+                    _display_single_question(full_q)
                     print()
                     continue
                 else:
                     print_colored(f"[i] Found {len(results)} questions. Showing all:", COLORS.BLUE)
                     _display_paper(results)
-                    current_results = None  # paper view doesn't keep sticky state
+                    current_results = None
                     continue
             else:
                 results = get_questions_by_criteria(date=date, institution=inst, level=level)
@@ -734,11 +842,11 @@ def quick_lookup_interactive():
                     continue
                 else:
                     _display_paper(results)
-                    current_results = None  # paper view doesn't keep sticky state
+                    current_results = None
                     continue
 
-        # --- Full-text search ---
-        results = get_all_questions(search=raw)
+        # ---- Full-text search using the enhanced function ----
+        results = search_questions_all_fields(raw)
         if not results:
             # Try searching by chapter (for syllabus codes like P1-B4.1)
             results = search_questions_by_chapter(raw)
@@ -751,14 +859,16 @@ def quick_lookup_interactive():
                     current_query = None
                     continue
 
-        # Store results for sticky browsing
         current_results = results
         current_query = raw
 
         # Display results with numbering
         print(f"\n--- SEARCH RESULTS ({len(results)} matches) ---")
         for i, r in enumerate(results, 1):
-            print(f"  {i:2}. [{r['id']:3}] | {r['question_date']} | {r['institution'][:20]:20} | {r['subject'][:25]:25} | {r['level'][:12]:12} | Q{r['question_number']}")
+            # Preview: use Nepali or English
+            preview = r.get('nepali_transcription') or r.get('english_transcription') or ''
+            preview = preview[:40] + '...' if len(preview) > 40 else preview
+            print(f"  {i:2}. [{r['id']:3}] | {r['question_date']} | {r['institution'][:20]:20} | {r['subject'][:25]:25} | {r['level'][:12]:12} | Q{r['question_number']} | {r.get('type', 'essay'):10} | {preview}")
 
         print("\n  Options:")
         print("  • Enter ID number (e.g., 29) to view details")
@@ -773,7 +883,7 @@ def import_export_submenu():
         print("─" * 40)
         print("  1. Export to CSV")
         print("  2. Export to JSON")
-        print("  3. Export to TXT")          # new
+        print("  3. Export to TXT")
         print("  4. Import from CSV")
         print("  5. Import from JSON")
         print("  6. Import from TXT")
@@ -787,7 +897,7 @@ def import_export_submenu():
         elif choice == '2':
             export_questions_json()
         elif choice == '3':
-            export_questions_txt()   # new
+            export_questions_txt()
         elif choice == '4':
             import_questions_csv()
         elif choice == '5':
@@ -803,7 +913,6 @@ def import_export_submenu():
 # Question bank menu
 def unified_question_menu():
     global _last_filtered_questions
-    """Unified menu for all question operations – bank + converter merged."""
     from .question_converter.db_handler import get_questions as get_questions_db
     from .question_converter.constants import C
     verbose_mode = False
@@ -842,25 +951,18 @@ def unified_question_menu():
 
         # ----- Bank operations (1-7) -----
         if choice == '1':
-            from .question_bank import add_question_interactive
             add_question_interactive()
         elif choice == '2':
-            from .question_bank import view_all_questions_interactive
             view_all_questions_interactive()
         elif choice == '3':
-            from .question_bank import quick_lookup_interactive
             quick_lookup_interactive()
         elif choice == '4':
-            from .question_bank import view_whole_paper_interactive
             view_whole_paper_interactive()
         elif choice == '5':
-            from .question_bank import advanced_search_interactive
             advanced_search_interactive()
         elif choice == '6':
-            from .question_bank import update_question_interactive
             update_question_interactive()
         elif choice == '7':
-            from .question_bank import delete_question_interactive
             delete_question_interactive()
 
         # ----- Import -----
@@ -897,7 +999,6 @@ def unified_question_menu():
                 print_colored(f"[!] {e}", COLORS.RED)
 
         elif choice == 'b':
-            from .question_bank import import_questions_csv
             import_questions_csv()
 
         elif choice == 'c':
@@ -994,7 +1095,6 @@ def unified_question_menu():
                     print_colored(f"[!] Input file not found: {input_file}", COLORS.RED)
                     continue
 
-                # Auto-detect format from extension
                 ext = os.path.splitext(input_file)[1].lower().lstrip('.')
                 if ext in ('txt', 'text'):
                     fmt = 'txt'
@@ -1006,10 +1106,8 @@ def unified_question_menu():
                     print_colored(f"[!] Unsupported file extension: {ext}. Please use .txt, .xml, or .json.", COLORS.RED)
                     continue
 
-                # Optional source name
                 source = input(color_text("Source name (optional, press Enter to skip): ", COLORS.MAGENTA)).strip() or None
 
-                # Prepare args for import_from_file
                 import_args = SimpleNamespace(
                     verbose=parsed.verbose,
                     bypass_duplicate=parsed.bypass_duplicate,
@@ -1037,7 +1135,6 @@ def unified_question_menu():
                             print(f"  {e}")
 
             except SystemExit:
-                # argparse raised an error (e.g., missing -i)
                 print_colored("[!] Invalid arguments. Please check your syntax.", COLORS.RED)
                 print("  Example: -i questions.txt --questions 1,5,10")
             except (ConverterError, ParseError, DuplicateQuestionError) as e:
@@ -1061,13 +1158,12 @@ def unified_question_menu():
                 outfile = default_name
             try:
                 args = SimpleNamespace(verbose=True)
-                export_to_file(questions, outfile, 'txt', args=args)   # <-- pass args
+                export_to_file(questions, outfile, 'txt', args=args)
                 print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
             except Exception as e:
                 print_colored(f"[!] {e}", COLORS.RED)
 
         elif choice == 'g':
-            from .question_bank import export_questions_csv
             export_questions_csv()
 
         elif choice == 'h':
@@ -1101,7 +1197,7 @@ def unified_question_menu():
                 outfile = default_name
             try:
                 args = SimpleNamespace(verbose=True)
-                export_to_file(questions, outfile, 'xml', args=args)   # <-- pass args
+                export_to_file(questions, outfile, 'xml', args=args)
                 print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
             except Exception as e:
                 print_colored(f"[!] {e}", COLORS.RED)
@@ -1119,7 +1215,7 @@ def unified_question_menu():
                 outfile = default_name
             try:
                 args = SimpleNamespace(verbose=True)
-                export_to_file(questions, outfile, 'html', args=args)   # <-- pass args
+                export_to_file(questions, outfile, 'html', args=args)
                 print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
             except Exception as e:
                 print_colored(f"[!] {e}", COLORS.RED)
@@ -1140,11 +1236,10 @@ def unified_question_menu():
                 outfile = default_name
             time_str = input(color_text("Time limit in minutes (default 90): ", COLORS.MAGENTA)).strip()
             time_min = int(time_str) if time_str.isdigit() else 90
-            create_exam_html(filtered, outfile, verbose=True, time_minutes=time_min, pass_marks=45)   # <-- set verbose=True
+            create_exam_html(filtered, outfile, verbose=True, time_minutes=time_min, pass_marks=45)
             print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
 
         elif choice == 'l':
-            # Advanced export with filters
             filtered, cancelled = _get_filtered_questions_interactive()
             if cancelled:
                 print_colored("Cancelled.", COLORS.YELLOW)
@@ -1153,7 +1248,7 @@ def unified_question_menu():
                 print_colored("[i] No questions match the filters. Export cancelled.", COLORS.YELLOW)
                 continue
 
-            _last_filtered_questions = filtered  # store for later use (e.g., exam export)
+            _last_filtered_questions = filtered
 
             fmt = input(color_text("Format (xml, json, html, txt): ", COLORS.MAGENTA)).strip()
             if not fmt:
@@ -1167,7 +1262,7 @@ def unified_question_menu():
 
             try:
                 from .question_converter import export_to_file
-                args = SimpleNamespace(verbose=True)   # 👈 add verbose
+                args = SimpleNamespace(verbose=True)
                 export_to_file(filtered, outfile, fmt)
                 print_colored(f"[✓] Exported {len(filtered)} questions to {outfile}", COLORS.GREEN)
             except Exception as e:
@@ -1187,9 +1282,7 @@ def unified_question_menu():
                 parsed = parser.parse_args(argv)
                 run_conversion(parsed)
             except SystemExit:
-                # The parser has already printed its error message; we just add a helpful hint.
                 print_colored("💡 If your path contains spaces, try wrapping it in quotes, e.g., -i \"my file.txt\"", COLORS.YELLOW)
-                # Continue the loop; the user can try again.
             except Exception as e:
                 print_colored(f"[!] Unexpected error: {e}", COLORS.RED)
 
@@ -1219,7 +1312,6 @@ def add_question_interactive():
     paper = _prompt_field("Paper: ")
     group = _prompt_field("Group: ")
 
-    # Marks with validation
     marks = None
     while True:
         marks_raw = input(color_text("Marks (numeric, press Enter to skip): ", COLORS.MAGENTA)).strip()
@@ -1254,13 +1346,15 @@ def view_all_questions_interactive():
     print("  3. Institution")
     print("  4. Paper")
     print("  5. Level")
-    sort_choice = input(color_text("Choose (1-5, default 1): ", COLORS.MAGENTA)).strip()
+    print("  6. Type")
+    sort_choice = input(color_text("Choose (1-6, default 1): ", COLORS.MAGENTA)).strip()
     sort_map = {
         '1': ('question_date', 'Date'),
         '2': ('subject', 'Subject'),
         '3': ('institution', 'Institution'),
         '4': ('paper', 'Paper'),
-        '5': ('level', 'Level')
+        '5': ('level', 'Level'),
+        '6': ('type', 'Type')
     }
     col, display_name = sort_map.get(sort_choice, ('question_date', 'Date'))
 
@@ -1277,24 +1371,17 @@ def view_all_questions_interactive():
         print_colored("[i] No questions found.", COLORS.YELLOW)
         return
 
-    # Print header with active sort column highlighted
     sort_desc = f"{display_name} {arrow}"
     print(f"\n--- ALL QUESTIONS (sorted by {color_text(sort_desc, COLORS.CYAN, bold=True)}) ---")
 
-    # For each row, print with a bracket showing the sort column's value
     for row in rows:
-        # Get the value of the sort column
         val = row.get(col)
-        # Format date if applicable
         if col == 'question_date' and isinstance(val, (date, datetime)):
             val = val.strftime('%Y-%m-%d')
         elif val is None:
             val = ''
 
         bracket_val = color_text(f"[{val}] ", COLORS.CYAN, bold=True)
-
-        # Build the rest of the line (id, date, institution, subject, paper, level, question number)
-        # Use fixed widths or simple concatenation
         id_str = f"{row['id']:3}"
         date_str = row.get('question_date', '')
         if isinstance(date_str, (date, datetime)):
@@ -1304,9 +1391,12 @@ def view_all_questions_interactive():
         paper = row.get('paper', '')[:15]
         level = row.get('level', '')[:12]
         qno = row.get('question_number', '')
+        qtype = row.get('type', 'essay')
+        # Preview
+        preview = row.get('nepali_transcription') or row.get('english_transcription') or ''
+        preview = preview[:40] + '...' if len(preview) > 40 else preview
 
-        # Print the line
-        print(f"{bracket_val}{id_str} | {date_str} | {inst:<25} | {subj:<25} | {paper:<15} | {level:<12} | Q{qno}")
+        print(f"{bracket_val}{id_str} | {date_str} | {inst:<25} | {subj:<25} | {paper:<15} | {level:<12} | Q{qno} | {qtype:<10} | {preview}")
 
     print(f"\n  Total: {len(rows)} questions.")
 
@@ -1341,7 +1431,7 @@ def advanced_search_interactive():
     print("Leave value blank to clear that criterion.")
     print("After setting criteria, choose '9. Search' to run the search.\n")
 
-    fields = ['date', 'institution', 'level', 'paper', 'group', 'subject', 'question_number', 'chapter', 'syllabus_code']
+    fields = ['date', 'institution', 'level', 'paper', 'group', 'subject', 'question_number', 'chapter', 'syllabus_code', 'type']
     display_names = {
         'date': 'question_date',
         'institution': 'institution',
@@ -1351,12 +1441,12 @@ def advanced_search_interactive():
         'subject': 'subject',
         'question_number': 'question_number',
         'chapter': 'chapter',
-        'syllabus_code': 'syllabus_code'
+        'syllabus_code': 'syllabus_code',
+        'type': 'type'
     }
     criteria = {f: '' for f in fields}
 
     while True:
-        # Show current criteria
         print("─" * 50)
         print_colored("  CURRENT CRITERIA", COLORS.YELLOW, bold=True)
         for i, field in enumerate(fields, 1):
@@ -1373,7 +1463,7 @@ def advanced_search_interactive():
         print("─" * 50)
         print("  90. " + color_text("Search with current criteria", COLORS.CYAN, bold=True))
         print("  0. " + color_text("Return to Question Bank menu", COLORS.YELLOW))
-        choice = input(color_text("\nChoose a field to edit (1-8), 9 to search, or 0 to return: ", COLORS.MAGENTA)).strip()
+        choice = input(color_text("\nChoose a field to edit (1-10), 90 to search, or 0 to return: ", COLORS.MAGENTA)).strip()
 
         if choice == '90':
             kwargs = {}
@@ -1381,36 +1471,30 @@ def advanced_search_interactive():
                 val = criteria[field].strip()
                 if val:
                     kwargs[field] = val
-            results = get_questions_by_criteria(**kwargs)
+            # If type is set, we need to fetch and filter manually because get_questions_by_criteria doesn't have type
+            results = get_questions_by_criteria(**{k: v for k, v in kwargs.items() if k != 'type'})
+            if 'type' in kwargs:
+                results = [q for q in results if q.get('type', '').lower() == kwargs['type'].lower()]
             if not results:
                 print_colored("[i] No matches found.", COLORS.YELLOW)
                 continue
 
-            # ---- IMPROVED DISPLAY ----
             if len(results) == 1:
-                # Single match → show full question automatically
-                _display_single_question(results[0])
+                full_q = get_question_by_id(results[0]['id'])
+                _display_single_question(full_q)
             else:
-                # Multiple matches → show summary with a snippet
                 print(f"\n--- SEARCH RESULTS ({len(results)} matches) ---")
                 for r in results:
-                    # Build a snippet: use Nepali first, else English
-                    nepali = r.get('nepali_transcription', '')
-                    english = r.get('english_transcription', '')
-                    snippet = nepali
-                    if english:
-                        snippet += f" ({english})"
-                    if len(snippet) > 60:
-                        snippet = snippet[:57] + "..."
-                    print(f"  {r['id']:3} | {r['question_date']} | {r['institution'][:20]:20} | {r['subject'][:20]:20} | {r['chapter'][:15]:15} | Q{r['question_number']}")
-                    print(f"      {snippet}")
+                    preview = r.get('nepali_transcription') or r.get('english_transcription') or ''
+                    preview = preview[:50] + '...' if len(preview) > 50 else preview
+                    print(f"  {r['id']:3} | {r['question_date']} | {r['institution'][:20]:20} | {r['subject'][:20]:20} | {r['chapter'][:15]:15} | Q{r['question_number']} | {r.get('type', 'essay'):10}")
+                    print(f"      {preview}")
                 print(f"  Total: {len(results)} matches.")
                 choice_id = input(color_text("\nEnter ID to view full details, or press Enter to continue: ", COLORS.MAGENTA)).strip()
                 if choice_id.isdigit():
                     q = get_question_by_id(int(choice_id))
                     if q:
                         _display_single_question(q)
-            # After displaying, loop back to criteria editing
             continue
 
         elif choice == '0':
@@ -1442,7 +1526,7 @@ def update_question_interactive():
     fields = [
         'question_date', 'institution', 'subject', 'paper', 'group',
         'marks', 'chapter', 'question_number',
-        'nepali_transcription', 'english_transcription', 'level', 'notes'
+        'nepali_transcription', 'english_transcription', 'level', 'notes', 'type'
     ]
     updates = {}
 
@@ -1466,7 +1550,7 @@ def update_question_interactive():
         print("  0. " + color_text("Save changes and exit", COLORS.GREEN))
         print("─" * 50)
 
-        choice = input(color_text("Choose field (0-12): ", COLORS.MAGENTA)).strip()
+        choice = input(color_text("Choose field (0-13): ", COLORS.MAGENTA)).strip()
 
         if choice == '0':
             if not updates:
@@ -1496,18 +1580,15 @@ def update_question_interactive():
         field = fields[idx - 1]
         current = row.get(field, '')
 
-        # Helper: ask for new value with clear/skip semantics
         print(f"\nCurrent value: {color_text(current if current != '' else '(empty)', COLORS.BLUE)}")
         prompt = color_text(f"New value (press Enter to skip, or type 'clear' to empty): ", COLORS.MAGENTA)
         raw = input(prompt).strip()
 
         if raw == '':
-            # Skip – do nothing
             print_colored("[i] Skipped (no change).", COLORS.YELLOW)
             continue
 
         if raw.lower() in ('clear', 'null', 'none'):
-            # Clear the field
             if field == 'marks':
                 updates[field] = None
                 row[field] = None
@@ -1518,7 +1599,6 @@ def update_question_interactive():
                 print_colored("[✓] Field will be cleared (set to empty string).", COLORS.GREEN)
             continue
 
-        # Normal value
         if field == 'marks':
             if raw.isdigit():
                 updates[field] = int(raw)
@@ -1552,7 +1632,6 @@ def delete_question_interactive():
 
 # ---------- Export / Import (CSV) ----------
 def export_questions_csv():
-    """Export all questions to CSV, including all fields and related data (options/pairs/hints) as JSON."""
     print("\n" + "═" * 50)
     print_colored("  EXPORT QUESTIONS TO CSV (FULL)", COLORS.CYAN, bold=True)
     print("═" * 50)
@@ -1593,7 +1672,6 @@ def export_questions_csv():
     print_colored(f"[i] Processing {total} questions...", COLORS.BLUE)
 
     for idx, row in enumerate(rows, 1):
-        # Show progress every 10 questions (or first/last)
         if idx % 10 == 0 or idx == 1 or idx == total:
             qid = row.get('id', '?')
             qno = row.get('question_number', '?')
@@ -1602,7 +1680,6 @@ def export_questions_csv():
         qid = row['id']
         cursor = conn.cursor(dictionary=True)
 
-        # Fetch related data
         cursor.execute("SELECT * FROM question_options WHERE question_id = %s ORDER BY display_order", (qid,))
         options = cursor.fetchall()
         cursor.execute("SELECT * FROM question_matching_pairs WHERE question_id = %s ORDER BY display_order", (qid,))
@@ -1643,11 +1720,6 @@ def export_questions_csv():
         print_colored(f"[!] Export failed: {e}", COLORS.RED)
 
 def import_questions_csv():
-    """
-    Import questions from CSV with full support for options/pairs/hints.
-    The CSV should have columns including 'options_json', 'pairs_json', 'hints_json'
-    as produced by the enhanced CSV export.
-    """
     print("\n" + "═" * 50)
     print_colored("  IMPORT QUESTIONS FROM CSV (FULL)", COLORS.CYAN, bold=True)
     print("═" * 50)
@@ -1670,16 +1742,13 @@ def import_questions_csv():
         print_colored("[i] No data found.", COLORS.YELLOW)
         return
 
-    # Normalise rows: convert empty strings to None, parse JSON columns
+    # Normalise rows
     for row in rows:
-        # Ignore the 'id' column if it exists
         row.pop('id', None)
-        # Remove empty strings for optional fields
         for field in ['paper', 'group', 'chapter', 'notes', 'source']:
             if field in row and row[field] == '':
                 row[field] = None
 
-        # Convert marks and grade to int/float
         if row.get('marks'):
             try:
                 row['marks'] = int(row['marks'])
@@ -1691,7 +1760,6 @@ def import_questions_csv():
             except ValueError:
                 row['grade'] = 1
 
-        # Parse JSON columns
         for json_col in ['options_json', 'pairs_json', 'hints_json']:
             if row.get(json_col):
                 try:
@@ -1701,11 +1769,8 @@ def import_questions_csv():
             else:
                 row[json_col] = None
 
-        # Map question_number -> question_no (converter expects 'question_no')
         if 'question_number' in row:
             row['question_no'] = row['question_number']
-
-        # Map response_lines -> lines (converter expects 'lines')
         if 'response_lines' in row:
             row['lines'] = row['response_lines']
 
@@ -1733,9 +1798,8 @@ def import_questions_csv():
     for idx, row in enumerate(rows, 1):
         if idx % 5 == 0 or idx == total:
             qno = row.get('question_no', '?')
-            print(f"{C.CYAN}  [{idx}/{total}] Processing Q{qno}...{C.RESET}")
+            print(f"{COLORS.CYAN}  [{idx}/{total}] Processing Q{qno}...{COLORS.RESET}")
 
-        # Build a question dict suitable for insert_question
         q_dict = {
             'question_date': row.get('question_date'),
             'institution': row.get('institution'),
@@ -1766,34 +1830,25 @@ def import_questions_csv():
             'filetypes': row.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg'),
             'maxbytes': row.get('maxbytes', 2097152),
             'grader_info': row.get('grader_info'),
-            # Related data (parsed JSON)
             'options': row.get('options_json'),
             'pairs': row.get('pairs_json'),
             'hints': row.get('hints_json'),
         }
-
-        # Remove None values (so insert_question uses defaults)
         q_dict = {k: v for k, v in q_dict.items() if v is not None}
 
         try:
             if choice == '1':
-                # Skip duplicates: force=False will raise DuplicateQuestionError
                 insert_question(q_dict, source=row.get('source'), force=False)
                 added += 1
             elif choice == '2':
-                # Overwrite: force=True will update existing
                 insert_question(q_dict, source=row.get('source'), force=True)
                 updated += 1
-            else:  # choice == '3'
-                # Abort on duplicate: we check first
-                # We'll let insert_question raise and catch to abort
+            else:
                 insert_question(q_dict, source=row.get('source'), force=False)
                 added += 1
         except DuplicateQuestionError as e:
             if choice == '1':
                 skipped += 1
-                if idx % 5 == 0 or idx == total:
-                    print(f"{C.YELLOW}  ⏭️ Skipped duplicate: {e}{C.RESET}")
             elif choice == '3':
                 print_colored(f"\n[!] Duplicate found. Aborting: {e}", COLORS.RED)
                 conn.rollback()
@@ -1801,12 +1856,9 @@ def import_questions_csv():
                 conn.close()
                 return
             else:
-                # Should not happen for choice 2 (force=True)
                 skipped += 1
         except Exception as e:
             errors.append(str(e))
-            if idx % 5 == 0 or idx == total:
-                print(f"{C.RED}  ❌ Error: {e}{C.RESET}")
 
     conn.commit()
     cursor.close()
@@ -1822,7 +1874,6 @@ def import_questions_csv():
     print("═" * 50)
 
 def export_questions_txt():
-    """Export all questions to a human‑readable TXT file with progress and summary."""
     print("\n" + "═" * 50)
     print_colored("  📤 EXPORT TO TXT", COLORS.CYAN, bold=True)
     print("═" * 50)
@@ -1856,11 +1907,11 @@ def export_questions_txt():
     }
 
     total = len(rows)
+    import time
     start_time = time.time()
 
     print_colored(f"\n📤 Exporting {total} questions to {filename}...", COLORS.CYAN)
 
-    # Count types (we'll fetch each question individually)
     type_counts = {}
     exported = 0
     skipped = 0
@@ -1873,21 +1924,17 @@ def export_questions_txt():
             f.write("# The 'Question No.' line must come first in each block.\n\n")
 
             for idx, row in enumerate(rows, 1):
-                # Fetch full question with options/pairs/hints
                 q = get_question_by_id(row['id'])
                 if not q:
                     print_colored(f"[!] Skipping question {row['id']} (not found)", COLORS.YELLOW)
                     skipped += 1
                     continue
 
-                # Update type count
                 q_type = q.get('type', 'essay')
                 type_counts[q_type] = type_counts.get(q_type, 0) + 1
 
-                # ---- Write question block ----
                 f.write("---\n")
 
-                # 1. Question line (must be first)
                 qno = q.get('question_number', '')
                 q_text = q.get('nepali_transcription') or q.get('english_transcription') or ''
                 if qno:
@@ -1895,11 +1942,9 @@ def export_questions_txt():
                 else:
                     f.write(f"Question: {q_text}\n")
 
-                # 2. ID
                 if q.get('id'):
                     f.write(f"ID: {q['id']}\n")
 
-                # 3. Metadata fields
                 for key in field_order:
                     val = q.get(key)
                     if val is not None and val != '':
@@ -1908,11 +1953,9 @@ def export_questions_txt():
                         elif isinstance(val, (date, datetime)):
                             val = str(val)
                         f.write(f"{labels.get(key, key)}: {val}\n")
-                    # Add syllabus_code if present
-                    if q.get('syllabus_code'):
-                        f.write(f"Syllabus Code: {q['syllabus_code']}\n")
+                if q.get('syllabus_code'):
+                    f.write(f"Syllabus Code: {q['syllabus_code']}\n")
 
-                # 4. Nepali and English transcriptions (if they differ)
                 nep = q.get('nepali_transcription', '').strip()
                 eng = q.get('english_transcription', '').strip()
                 if nep:
@@ -1920,10 +1963,8 @@ def export_questions_txt():
                 if eng:
                     f.write(f"English: {eng}\n")
 
-                # 5. Type
                 f.write(f"Type: {q_type}\n")
 
-                # 6. Type‑specific fields
                 if q_type == "multichoice":
                     for opt in q.get('options', []):
                         marker = " *" if opt.get('correct', False) else ""
@@ -1936,7 +1977,6 @@ def export_questions_txt():
                         f.write(f"Fraction: {q.get('fraction_correct', 100)} {q.get('fraction_wrong', -20)}\n")
 
                 elif q_type == "truefalse":
-                    # Determine correct answer
                     for opt in q.get('options', []):
                         if opt.get('correct', False):
                             f.write(f"Correct: {opt.get('text', '').lower()}\n")
@@ -1990,27 +2030,24 @@ def export_questions_txt():
                     if q.get('grader_info'):
                         f.write(f"Grader Information: {q.get('grader_info')}\n")
 
-                # 7. General feedback (common)
                 if q.get('general_feedback'):
                     f.write(f"General Feedback: {q.get('general_feedback')}\n")
 
-                f.write("\n")  # blank line between questions
+                f.write("\n")
                 exported += 1
 
-                # Show progress every 5 questions
                 if idx % 5 == 0 or idx == total:
                     print(f"  [{idx}/{total}] Processed {idx} questions...")
 
-            f.write("---\n")  # final separator
+            f.write("---\n")
 
     except Exception as e:
         print_colored(f"[!] Export failed: {e}", COLORS.RED)
         return
 
     elapsed = time.time() - start_time
-    file_size = os.path.getsize(filename) / 1024  # KB
+    file_size = os.path.getsize(filename) / 1024
 
-    # ---- Summary ----
     print("\n" + "═" * 60)
     print_colored("  📤 EXPORT SUMMARY", COLORS.CYAN, bold=True)
     print("═" * 60)
@@ -2023,9 +2060,7 @@ def export_questions_txt():
         print(f"  📈 Types      : {', '.join(f'{k}: {v}' for k, v in type_counts.items())}")
     print("═" * 60)
 
-# ---------- Import from Text File ----------
 def import_questions_txt():
-    """Import questions from a text file (smart format)."""
     print("\n" + "═" * 50)
     print_colored("  IMPORT FROM TEXT FILE (Smart)", COLORS.CYAN, bold=True)
     print("═" * 50)
@@ -2045,7 +2080,6 @@ def import_questions_txt():
         print_colored(f"[!] Failed to read file: {e}", COLORS.RED)
         return
 
-    # Split on lines that are exactly "---"
     raw_blocks = re.split(r'\n---+\s*\n', content)
     raw_blocks = [b.strip() for b in raw_blocks if b.strip()]
 
@@ -2069,18 +2103,14 @@ def import_questions_txt():
             val = val.strip()
             if key == 'marks' and val.isdigit():
                 val = int(val)
-            # Map keys to DB column names
             if key == 'question_number':
                 val = normalize_question_number(val)
             block_data[key] = val
 
-        # Check if it's a context block (no question number)
         if 'question_number' not in block_data:
-            # Update context
             context.update(block_data)
             continue
 
-        # It's a question block: merge with context
         merged = context.copy()
         merged.update(block_data)
 
@@ -2090,7 +2120,6 @@ def import_questions_txt():
             print_colored(f"[!] Skipping block: missing {', '.join(missing)}", COLORS.YELLOW)
             continue
 
-        # Build DB record
         db_q = {
             'question_date': merged.get('date'),
             'institution': merged.get('institution'),
@@ -2130,12 +2159,10 @@ def import_questions_txt():
 
     total = len(questions)
     for idx, q in enumerate(questions, 1):
-        print_colored(f"[✓] Exported {len(data)} questions to {filename}", COLORS.GREEN)
-        print_colored(f"[i] File size: {os.path.getsize(filename) / 1024:.2f} KB", COLORS.BLUE)
         date = q.get('question_date')
         institution = q.get('institution')
         level = q.get('level')
-        paper = q.get('paper')          # <-- add this
+        paper = q.get('paper')
         group = q.get('group')
         question_number = q.get('question_number')
 
@@ -2164,7 +2191,7 @@ def import_questions_txt():
                     print_colored(f"  [{idx}/{total}] Error updating Q{question_number}: {status}", COLORS.RED)
                     skipped += 1
                 continue
-            else:  # abort
+            else:
                 print_colored(f"\n[!] Duplicate found for question {question_number} (ID: {dup_id}). Aborting.", COLORS.RED)
                 conn.rollback()
                 cursor.close()
@@ -2191,7 +2218,6 @@ def import_questions_txt():
     print(f"\n[✓] Import complete: {added} added, {updated} updated, {no_change} unchanged, {skipped} skipped.")
 
 def export_questions_json():
-    """Export all questions to a JSON file, converting Decimal to float/int."""
     print("\n" + "═" * 50)
     print_colored("  EXPORT QUESTIONS TO JSON", COLORS.CYAN, bold=True)
     print("═" * 50)
@@ -2218,16 +2244,13 @@ def export_questions_json():
             print(f"{COLORS.CYAN}  [{idx}/{total}] Processing ID {qid} (Q{qno})...{COLORS.RESET}")
 
         clean_row = row.copy()
-        # Keep the id
         clean_row.pop('created_at', None)
         clean_row.pop('updated_at', None)
-        # Convert date/datetime to string
         if 'question_date' in clean_row and clean_row['question_date']:
             if hasattr(clean_row['question_date'], 'isoformat'):
                 clean_row['question_date'] = clean_row['question_date'].isoformat()
             else:
                 clean_row['question_date'] = str(clean_row['question_date'])
-        # Convert Decimal to float/int
         for key, value in clean_row.items():
             if isinstance(value, Decimal):
                 clean_row[key] = int(value) if value % 1 == 0 else float(value)
@@ -2270,12 +2293,10 @@ def import_questions_json():
         print_colored("[i] No data found.", COLORS.YELLOW)
         return
 
-    # Clean and normalize
     for obj in rows:
         obj.pop('id', None)
         if 'question_number' in obj and obj['question_number']:
             obj['question_number'] = normalize_question_number(obj['question_number'])
-        # Convert empty strings to None for optional fields
         for field in ['paper', 'group', 'chapter', 'notes']:
             if field in obj and obj[field] == '':
                 obj[field] = None
@@ -2304,8 +2325,6 @@ def import_questions_json():
 
     total = len(rows)
     for idx, obj in enumerate(rows, 1):
-        print_colored(f"[✓] Exported {len(data)} questions to {filename}", COLORS.GREEN)
-        print_colored(f"[i] File size: {os.path.getsize(filename) / 1024:.2f} KB", COLORS.BLUE)
         date = obj.get('question_date')
         institution = obj.get('institution')
         level = obj.get('level')
@@ -2313,7 +2332,6 @@ def import_questions_json():
         group = obj.get('group')
         question_number = obj.get('question_number')
 
-        # ----- check duplicate using full key -----
         dup_id = None
         if date and institution and level and paper is not None and group is not None and question_number:
             dup_id = check_duplicate(date, institution, level, paper, group, question_number)
@@ -2345,7 +2363,7 @@ def import_questions_json():
                     print_colored(f"  [{idx}/{total}] Error updating Q{question_number}: {status}", COLORS.RED)
                     skipped += 1
                 continue
-            else:  # abort
+            else:
                 print_colored(f"\n[!] Duplicate found for question {question_number} (ID: {dup_id}). Aborting.", COLORS.RED)
                 conn.rollback()
                 cursor.close()
@@ -2372,7 +2390,6 @@ def import_questions_json():
 
 # ---------- Chapter browsing ----------
 def get_distinct_chapters():
-    """Return a list of distinct chapter strings from the questions table."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(f"SELECT DISTINCT chapter FROM {TABLE_NAME} WHERE chapter IS NOT NULL AND chapter != '' ORDER BY chapter")
@@ -2385,7 +2402,7 @@ def get_distinct_values(column, search_term, limit=10):
     conn = get_connection()
     cursor = conn.cursor()
     sql = f"SELECT DISTINCT {column} FROM {TABLE_NAME} WHERE {column} LIKE %s ORDER BY {column} LIMIT %s"
-    cursor.execute(sql, (f"{search_term}%", limit))   # prefix match
+    cursor.execute(sql, (f"{search_term}%", limit))
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -2402,10 +2419,6 @@ def get_distinct_values(column, search_term, limit=10):
     return result
 
 def get_questions_by_chapter(chapter_code):
-    """
-    Return all questions that contain the given chapter code.
-    We use LIKE so that 'P3-B2.3' matches 'ICT (P3-B2.3)'.
-    """
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute(f"""
@@ -2419,7 +2432,6 @@ def get_questions_by_chapter(chapter_code):
     return rows
 
 def get_distinct_chapters_like(search_term):
-    """Return distinct chapter strings that contain the search term."""
     conn = get_connection()
     cursor = conn.cursor()
     like = f"%{search_term}%"
