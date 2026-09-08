@@ -581,9 +581,26 @@ def question_list():
     order = request.args.get('order', 'desc')
 
     if search:
-        rows = get_all_questions(search=search)
+        rows = search_questions_all_fields(search)
     else:
         rows = get_all_questions(sort_by=sort_by, order=order.upper())
+
+    # ---- Apply sorting (for search results as well) ----
+    reverse = (order == 'desc')
+    if sort_by == 'question_date':
+        rows.sort(key=lambda x: x.get('question_date') or '', reverse=reverse)
+    elif sort_by == 'institution':
+        rows.sort(key=lambda x: x.get('institution') or '', reverse=reverse)
+    elif sort_by == 'level':
+        rows.sort(key=lambda x: x.get('level') or '', reverse=reverse)
+    elif sort_by == 'subject':
+        rows.sort(key=lambda x: x.get('subject') or '', reverse=reverse)
+    elif sort_by == 'paper':
+        rows.sort(key=lambda x: x.get('paper') or '', reverse=reverse)
+    elif sort_by == 'syllabus_code':
+        rows.sort(key=lambda x: x.get('syllabus_code') or '', reverse=reverse)
+    else:
+        rows.sort(key=lambda x: x.get('question_date') or '', reverse=True)
 
     return render_template('questions.html',
                            questions=rows,
@@ -798,3 +815,54 @@ def run_web_server(host='127.0.0.1', port=5000, debug=False):
         print_colored(f"[!] Web server crashed: {e}", COLORS.RED)
         print_colored("[i] Check the log above for details.", COLORS.YELLOW)
         print_colored("[i] You can restart the server from the menu.", COLORS.BLUE)
+
+def search_questions_all_fields(search_term):
+    """Return question IDs that match search_term in main table or options/pairs."""
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    like = f"%{search_term}%"
+
+    # Search main table
+    sql_main = """
+        SELECT id FROM questions
+        WHERE subject LIKE %s OR institution LIKE %s OR chapter LIKE %s
+           OR nepali_transcription LIKE %s OR english_transcription LIKE %s
+           OR notes LIKE %s
+    """
+    cursor.execute(sql_main, (like, like, like, like, like, like))
+    main_ids = [row['id'] for row in cursor.fetchall()]
+
+    # Search options
+    sql_options = """
+        SELECT DISTINCT question_id FROM question_options
+        WHERE text LIKE %s
+    """
+    cursor.execute(sql_options, (like,))
+    option_ids = [row['question_id'] for row in cursor.fetchall()]
+
+    # Search matching pairs (subquestion and answer)
+    sql_pairs = """
+        SELECT DISTINCT question_id FROM question_matching_pairs
+        WHERE subquestion LIKE %s OR answer LIKE %s
+    """
+    cursor.execute(sql_pairs, (like, like))
+    pair_ids = [row['question_id'] for row in cursor.fetchall()]
+
+    # Union all IDs
+    all_ids = set(main_ids + option_ids + pair_ids)
+
+    cursor.close()
+    conn.close()
+
+    if not all_ids:
+        return []
+
+    # Fetch full question rows
+    placeholders = ','.join(['%s'] * len(all_ids))
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(f"SELECT * FROM questions WHERE id IN ({placeholders})", list(all_ids))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows

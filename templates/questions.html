@@ -35,15 +35,53 @@
   <table class="table table-striped table-hover">
     <thead>
       <tr>
-        <th><a href="{{ url_for('question_list', sort='question_date', order='asc') }}">Date</a></th>
-        <th><a href="{{ url_for('question_list', sort='institution', order='asc') }}">Institution</a></th>
-        <th><a href="{{ url_for('question_list', sort='level', order='asc') }}">Level</a></th>
-        <th><a href="{{ url_for('question_list', sort='subject', order='asc') }}">Subject</a></th>
-        <th><a href="{{ url_for('question_list', sort='paper', order='asc') }}">Paper</a></th>
-        <th><a href="{{ url_for('question_list', sort='syllabus_code', order='asc') }}">Syllabus Code</a></th>
+        <th>
+          {% set new_order = 'desc' if sort_by == 'question_date' and order == 'asc' else 'asc' %}
+          <a href="{{ url_for('question_list', sort='question_date', order=new_order, search=search) }}">
+            Date
+            {% if sort_by == 'question_date' %}{{ '▲' if order == 'asc' else '▼' }}{% endif %}
+          </a>
+        </th>
+        <th>
+          {% set new_order = 'desc' if sort_by == 'institution' and order == 'asc' else 'asc' %}
+          <a href="{{ url_for('question_list', sort='institution', order=new_order, search=search) }}">
+            Institution
+            {% if sort_by == 'institution' %}{{ '▲' if order == 'asc' else '▼' }}{% endif %}
+          </a>
+        </th>
+        <th>
+          {% set new_order = 'desc' if sort_by == 'level' and order == 'asc' else 'asc' %}
+          <a href="{{ url_for('question_list', sort='level', order=new_order, search=search) }}">
+            Level
+            {% if sort_by == 'level' %}{{ '▲' if order == 'asc' else '▼' }}{% endif %}
+          </a>
+        </th>
+        <th>
+          {% set new_order = 'desc' if sort_by == 'subject' and order == 'asc' else 'asc' %}
+          <a href="{{ url_for('question_list', sort='subject', order=new_order, search=search) }}">
+            Subject
+            {% if sort_by == 'subject' %}{{ '▲' if order == 'asc' else '▼' }}{% endif %}
+          </a>
+        </th>
+        <th>
+          {% set new_order = 'desc' if sort_by == 'paper' and order == 'asc' else 'asc' %}
+          <a href="{{ url_for('question_list', sort='paper', order=new_order, search=search) }}">
+            Paper
+            {% if sort_by == 'paper' %}{{ '▲' if order == 'asc' else '▼' }}{% endif %}
+          </a>
+        </th>
+        <th>
+          {% set new_order = 'desc' if sort_by == 'syllabus_code' and order == 'asc' else 'asc' %}
+          <a href="{{ url_for('question_list', sort='syllabus_code', order=new_order, search=search) }}">
+            Syllabus Code
+            {% if sort_by == 'syllabus_code' %}{{ '▲' if order == 'asc' else '▼' }}{% endif %}
+          </a>
+        </th>
         <th>Group</th>
         <th>Q.No.</th>
         <th>Marks</th>
+        <th>Type</th>
+        <th>Preview</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -59,6 +97,8 @@
         <td>{{ q.group or '' }}</td>
         <td>{{ q.question_number }}</td>
         <td>{{ q.marks if q.marks else '' }}</td>
+        <td>{{ q.type or 'essay' }}</td>
+        <td>{{ (q.nepali_transcription or q.english_transcription or '')[:60] }}{% if (q.nepali_transcription or q.english_transcription|length) > 60 %}…{% endif %}</td>
         <td>
           <a href="{{ url_for('question_detail', id=q.id) }}" class="btn btn-sm btn-info"><i class="bi bi-eye"></i></a>
         </td>

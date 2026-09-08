@@ -46,6 +46,9 @@
 
           <dt class="col-sm-4">Question No.</dt>
           <dd class="col-sm-8">{{ question.question_number }}</dd>
+
+          <dt class="col-sm-4">Type</dt>
+          <dd class="col-sm-8"><span class="badge bg-info">{{ question.type or 'essay' }}</span></dd>
         </dl>
 
         <!-- Question text combined -->
@@ -65,6 +68,111 @@
             {% endif %}
           </div>
         </div>
+
+        <!-- ===== TYPE-SPECIFIC RICH CONTENT ===== -->
+        <div class="border-top pt-3 mt-3">
+          <h5><i class="bi bi-tag"></i> Type: {{ question.type or 'essay' }}</h5>
+
+          {% if question.type == 'multichoice' %}
+            <h6>Options</h6>
+            <ul class="list-group">
+              {% for opt in question.options %}
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                  {{ opt.text|safe }}
+                  {% if opt.correct %}
+                    <span class="badge bg-success">✓ Correct</span>
+                  {% endif %}
+                </li>
+              {% endfor %}
+            </ul>
+            {% if question.fraction_correct or question.fraction_wrong %}
+              <div class="mt-2 small text-muted">
+                Correct fraction: {{ question.fraction_correct or 100 }}% |
+                Wrong fraction: {{ question.fraction_wrong or -20 }}%
+              </div>
+            {% endif %}
+
+          {% elif question.type == 'truefalse' %}
+            <h6>Correct answer</h6>
+            <p>
+              {% for opt in question.options %}
+                {% if opt.correct %}
+                  <span class="badge bg-success">{{ opt.text }}</span>
+                {% endif %}
+              {% endfor %}
+            </p>
+            {% if question.feedback_true %}
+              <div class="alert alert-info">Feedback if True: {{ question.feedback_true }}</div>
+            {% endif %}
+            {% if question.feedback_false %}
+              <div class="alert alert-info">Feedback if False: {{ question.feedback_false }}</div>
+            {% endif %}
+            {% if question.fraction_correct or question.fraction_wrong %}
+              <div class="mt-2 small text-muted">
+                Correct fraction: {{ question.fraction_correct or 100 }}% |
+                Wrong fraction: {{ question.fraction_wrong or -20 }}%
+              </div>
+            {% endif %}
+
+          {% elif question.type == 'matching' %}
+            <h6>Matching Pairs</h6>
+            <table class="table table-bordered">
+              <thead><tr><th>Subquestion</th><th>Answer</th></tr></thead>
+              <tbody>
+                {% for pair in question.pairs %}
+                  <tr><td>{{ pair.subquestion }}</td><td>{{ pair.answer }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            {% if question.shuffle_answers is not none %}
+              <div class="small text-muted">Shuffle answers: {{ 'Yes' if question.shuffle_answers else 'No' }}</div>
+            {% endif %}
+            {% if question.show_num_correct %}
+              <div class="small text-muted">Show number correct: Yes</div>
+            {% endif %}
+            {% if question.correct_feedback %}
+              <div class="alert alert-success">Correct feedback: {{ question.correct_feedback }}</div>
+            {% endif %}
+            {% if question.partially_correct_feedback %}
+              <div class="alert alert-warning">Partially correct feedback: {{ question.partially_correct_feedback }}</div>
+            {% endif %}
+            {% if question.incorrect_feedback %}
+              <div class="alert alert-danger">Incorrect feedback: {{ question.incorrect_feedback }}</div>
+            {% endif %}
+            {% if question.hints %}
+              <h6>Hints</h6>
+              <ul>
+                {% for hint in question.hints %}
+                  <li>
+                    {{ hint.text }}
+                    {% if hint.clear_incorrect %}<span class="badge bg-secondary">Clears incorrect</span>{% endif %}
+                    {% if hint.show_num_correct %}<span class="badge bg-secondary">Shows number correct</span>{% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+
+          {% else %}
+            {# Essay #}
+            <h6>Essay settings</h6>
+            <ul>
+              <li>Lines: {{ question.response_lines or 15 }}</li>
+              <li>Attachments: {{ question.attachments or 0 }}</li>
+              <li>File types: {{ question.filetypes or '.doc,.docx,.pdf,.png,.jpg,.jpeg' }}</li>
+              <li>Max bytes: {{ question.maxbytes or 2097152 }}</li>
+              {% if question.grader_info %}<li>Grader info: {{ question.grader_info }}</li>{% endif %}
+            </ul>
+          {% endif %}
+
+          {% if question.general_feedback %}
+            <div class="alert alert-secondary mt-3">General feedback: {{ question.general_feedback }}</div>
+          {% endif %}
+
+          {% if question.source %}
+            <div class="small text-muted">Source: {{ question.source }}</div>
+          {% endif %}
+        </div>
+
       </div>
       <div class="card-footer text-end">
         {% if back_url %}
