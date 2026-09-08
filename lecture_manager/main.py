@@ -1,3 +1,7 @@
+import signal
+import subprocess
+import sys
+import os
 from datetime import datetime
 from .config import load_or_create_config, edit_config
 from .db import create_table, migrate_table, ensure_subjects_populated
@@ -24,6 +28,11 @@ from .question_bank import unified_question_menu
 from .instapaper import instapaper_menu
 from .question_converter import create_tables, import_from_file, get_questions, delete_question, export_to_file, run_conversion
 from .question_converter.exceptions import ConverterError
+
+
+
+web_server_process = None
+pomodoro_process = None
 
 #==============================================================================
 # Toggle for Flask debug mode True/False
@@ -183,10 +192,6 @@ def main():
 
             print(f"[{idx}/{total}] Updating {rec['youtube_upload_id']} → '{new_title[:60]}...'", end=" ", flush=True)
 
-            # Optional: check current title to avoid unnecessary updates
-            # (This would require an extra API call, so we skip it to save quota)
-            # But we can still update; if it's already the same, YouTube will return success.
-
             try:
                 ok, msg = update_youtube_title(rec['youtube_upload_id'], new_title)
                 if ok:
@@ -219,31 +224,71 @@ def main():
     def pomodoro_launcher():
         import subprocess
         import sys
-        import os
+        global pomodoro_process
 
-        # Detach the process so it survives Ctrl+C
-        if sys.platform == 'win32':
-            # Windows: use CREATE_NEW_PROCESS_GROUP
-            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-        else:
-            # Unix: start a new session (detach from terminal)
-            creationflags = 0
-
-        # Use subprocess.Popen with start_new_session=True (Unix) or creationflags (Windows)
-        # Also redirect stdout/stderr to DEVNULL to avoid blocking
         try:
-            subprocess.Popen(
+            pomodoro_process = subprocess.Popen(
                 [sys.executable, "-m", "lecture_manager.pomodoro"],
-                start_new_session=True,          # Unix: new session
-                creationflags=creationflags,     # Windows: new process group
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL
+                stdout=None,
+                stderr=None,
+                stdin=None
             )
-            print_colored("[✓] Pomodoro timer launched in a separate window.", COLORS.GREEN)
-            print_colored("[i] It will now survive Ctrl+C on the web server or CLI.", COLORS.BLUE)
+            print_colored("[✓] Pomodoro timer launched.", COLORS.GREEN)
+            print_colored("[i] Pomodoro will survive Ctrl+C on the web server.", COLORS.BLUE)
         except Exception as e:
             print_colored(f"[!] Failed to launch Pomodoro: {e}", COLORS.RED)
+
+    def launch_web_server_with_signals():
+        global web_server_process
+
+        # Start web server as a subprocess (inherit stdout/stderr)
+        web_server_process = subprocess.Popen(
+            [sys.executable, "-m", "lecture_manager.web"],
+            stdout=None,
+            stderr=None,
+            stdin=subprocess.DEVNULL
+        )
+
+        print_colored(f"[i] Web server started (PID {web_server_process.pid})", COLORS.GREEN)
+        print_colored("[i] Press Ctrl+C to stop the web server only.", COLORS.BLUE)
+
+        # Define a custom SIGINT handler
+        def sigint_handler(sig, frame):
+            global web_server_process
+            if web_server_process and web_server_process.poll() is None:
+                print_colored("\n[!] Stopping web server...", COLORS.YELLOW)
+                web_server_process.terminate()
+                web_server_process.wait()
+                web_server_process = None
+                print_colored("[✓] Web server stopped. Returning to menu.", COLORS.GREEN)
+                # Raise KeyboardInterrupt to break out of the wait loop
+                raise KeyboardInterrupt
+
+        # Set the handler
+        original_handler = signal.signal(signal.SIGINT, sigint_handler)
+
+        try:
+            # Wait for the web server to exit (normally or by our handler)
+            web_server_process.wait()
+        except KeyboardInterrupt:
+            # Our handler raised this to break out of wait
+            pass
+        finally:
+            # Restore original handler
+            signal.signal(signal.SIGINT, original_handler)
+            # If web server is still running (shouldn't happen), kill it
+            if web_server_process and web_server_process.poll() is None:
+                web_server_process.terminate()
+                web_server_process.wait()
+            web_server_process = None
+
+    def kill_pomodoro():
+        global pomodoro_process
+        if pomodoro_process and pomodoro_process.poll() is None:
+            print_colored("[i] Stopping Pomodoro...", COLORS.BLUE)
+            pomodoro_process.terminate()
+            pomodoro_process.wait()
+            pomodoro_process = None
 
     # Zoom link extractor
     def zoom_extractor_launcher():
@@ -283,7 +328,7 @@ def main():
             ("⚙️ Edit database configuration", edit_config),
         ],
         '5': [
-            ("🌐 Start web interface", lambda: run_web_server(host='0.0.0.0', debug=WEB_DEBUG)),
+            ("🌐 Start web interface (Ctrl+C to stop)", launch_web_server_with_signals),
             ("📈 Show library dashboard", show_dashboard),
         ],
         '6': [
@@ -343,7 +388,7 @@ def main():
                 print_colored("[!] Please enter a number.", COLORS.RED)
                 input("\nPress Enter to continue...")
 
-    # ----- Main loop -----
+    # ----- Main loop (with Ctrl+C handling) -----
     while True:
         show_banner()
         print("  " + color_text("MAIN MENU", COLORS.YELLOW, bold=True))
@@ -359,15 +404,22 @@ def main():
         print("  0. 🚪 Exit")
         print("  " + "─" * 40)
 
-        choice = input(color_text("Choose a category (0-8): ", COLORS.MAGENTA)).strip()
-        if choice == '0':
-            print_colored("\nGoodbye! Have a great day! 👋", COLORS.CYAN)
+        try:
+            choice = input(color_text("Choose a category (0-8): ", COLORS.MAGENTA)).strip()
+            if choice == '0':
+                kill_pomodoro()
+                print_colored("\nGoodbye! Have a great day! 👋", COLORS.CYAN)
+                break
+            if choice in menus:
+                show_submenu(choice)
+            else:
+                print_colored("[!] Invalid category.", COLORS.RED)
+                input("\nPress Enter to continue...")
+        except KeyboardInterrupt:
+            # Ctrl+C pressed at the main menu – exit everything
+            print_colored("\n[!] Exiting...", COLORS.YELLOW)
+            kill_pomodoro()
             break
-        if choice in menus:
-            show_submenu(choice)
-        else:
-            print_colored("[!] Invalid category.", COLORS.RED)
-            input("\nPress Enter to continue...")
 
 if __name__ == "__main__":
     main()

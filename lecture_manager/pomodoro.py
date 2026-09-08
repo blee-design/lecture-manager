@@ -10,6 +10,8 @@ from tkinter import ttk, messagebox, scrolledtext, simpledialog, filedialog
 from datetime import datetime
 import os
 from .db import get_connection
+import signal
+signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 print("🚀 LOADING POMODORO MODULE")
 
