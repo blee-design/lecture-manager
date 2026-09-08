@@ -1386,10 +1386,10 @@ def view_all_questions_interactive():
         date_str = row.get('question_date', '')
         if isinstance(date_str, (date, datetime)):
             date_str = date_str.strftime('%Y-%m-%d')
-        inst = row.get('institution', '')[:25]
-        subj = row.get('subject', '')[:25]
-        paper = row.get('paper', '')[:15]
-        level = row.get('level', '')[:12]
+        inst = (row.get('institution') or '')[:25]
+        subj = (row.get('subject') or '')[:25]
+        paper = (row.get('paper') or '')[:15]
+        level = (row.get('level') or '')[:12]
         qno = row.get('question_number', '')
         qtype = row.get('type', 'essay')
         # Preview

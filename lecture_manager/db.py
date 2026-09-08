@@ -390,18 +390,43 @@ def migrate_table():
         cursor.execute("ALTER TABLE questions ADD INDEX idx_syllabus_code (syllabus_code(191))")
         print_colored("[✓] Added index on 'syllabus_code'.", COLORS.GREEN)
 
-    # ---- Backfill multiple codes from chapter field ----
-    cursor.execute("SELECT id, chapter FROM questions WHERE syllabus_code IS NULL AND chapter IS NOT NULL AND chapter != ''")
+    # ---- Backfill syllabus_code from chapter field (enhanced) ----
+    import re
+
+    # First pass: extract parenthesised codes
+    cursor.execute("""
+        SELECT id, chapter FROM questions
+        WHERE syllabus_code IS NULL AND chapter IS NOT NULL AND chapter != ''
+    """)
     rows = cursor.fetchall()
     updated = 0
+
     for qid, chapter in rows:
-        if chapter:
-            import re
-            codes = re.findall(r'\(([^)]+)\)', chapter)  # extracts all parenthesised groups
-            if codes:
-                code_str = ', '.join(codes)
-                cursor.execute("UPDATE questions SET syllabus_code = %s WHERE id = %s", (code_str, qid))
+        codes = re.findall(r'\(([^)]+)\)', chapter)  # extracts (P1-B4.1)
+        if codes:
+            code_str = ', '.join(codes)
+            cursor.execute("UPDATE questions SET syllabus_code = %s WHERE id = %s", (code_str, qid))
+            updated += 1
+        else:
+            # No parentheses → try to match the direct pattern
+            match = re.search(r'[A-Za-z0-9]+[-.][A-Za-z0-9]+[-.][A-Za-z0-9]+', chapter)
+            if match:
+                cursor.execute("UPDATE questions SET syllabus_code = %s WHERE id = %s", (match.group(0), qid))
                 updated += 1
+
+    # Second pass: for any rows still NULL, try the plain pattern again
+    cursor.execute("""
+        SELECT id, chapter FROM questions
+        WHERE syllabus_code IS NULL AND chapter IS NOT NULL AND chapter != ''
+    """)
+    rows2 = cursor.fetchall()
+    for qid, chapter in rows2:
+        match = re.search(r'[A-Za-z0-9]+[-.][A-Za-z0-9]+[-.][A-Za-z0-9]+', chapter)
+        if match:
+            cursor.execute("UPDATE questions SET syllabus_code = %s WHERE id = %s", (match.group(0), qid))
+            updated += 1
+
+    conn.commit()
     print_colored(f"[✓] Backfilled {updated} syllabus codes from chapter field.", COLORS.GREEN)
 
     # ---------- Full‑text index for question search ----------
