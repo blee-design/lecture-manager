@@ -328,7 +328,7 @@ def main():
             ("⚙️ Edit database configuration", edit_config),
         ],
         '5': [
-            ("🌐 Start web interface (Ctrl+C to stop)", launch_web_server_with_signals),
+            ("🌐 Start web interface", lambda: run_web_server(host='0.0.0.0', debug=WEB_DEBUG)),
             ("📈 Show library dashboard", show_dashboard),
         ],
         '6': [
