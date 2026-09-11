@@ -49,7 +49,6 @@ build/
 *.json
 *.kate-swp
 *.bak
-packer.py
 lecture-manager-*.py
 *_import_*
 *_export_*
