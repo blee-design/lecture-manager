@@ -105,6 +105,18 @@ def normalize_question_number(qno):
     except (ValueError, TypeError):
         return str(qno).strip().zfill(2)
 
+def format_bilingual_text(nepali, english):
+    """Display Nepali and English combined.
+    - Both present: 'Nepali (English)'
+    - Only one present: just that one, no brackets
+    - Neither: empty string
+    """
+    nepali = (nepali or '').strip()
+    english = (english or '').strip()
+    if nepali and english:
+        return f"{nepali} ({english})"
+    return nepali or english
+
 def _get_filtered_questions_interactive():
     """
     Show the filter menu, let the user set filters, and return the filtered questions.
@@ -616,9 +628,8 @@ def _display_single_question(q):
     print(line)
 
     # Question text
-    question_text = nepali
-    if english:
-        question_text += f" ({english})"
+    # Question text — only wrap in brackets when both exist
+    question_text = format_bilingual_text(nepali, english)
     print(f"    {question_text}")
 
     if notes:
@@ -734,9 +745,7 @@ def _display_paper(questions):
                 if q.get('syllabus_code'):
                     print(f"        {color_text('Syllabus Code:', COLORS.MAGENTA)} {q['syllabus_code']}")
 
-                question_text = nepali
-                if english:
-                    question_text += f" ({english})"
+                question_text = format_bilingual_text(nepali, english)
                 print(f"        {question_text}")
 
                 if notes:

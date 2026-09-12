@@ -76,14 +76,15 @@
                               <span class="badge bg-info">{{ q.syllabus_code }}</span>
                             {% endif %}
                           </div>
-
-                          <!-- Question text: Nepali (English) in one line -->
+                          <!-- Question text: only use brackets when both exist -->
                           <div class="question-text">
-                            {% if q.nepali_transcription %}
+                            {% if q.nepali_transcription and q.english_transcription %}
                               <span>{{ q.nepali_transcription|safe }}</span>
-                            {% endif %}
-                            {% if q.english_transcription %}
                               <span class="text-muted"> ({{ q.english_transcription|safe }})</span>
+                            {% elif q.nepali_transcription %}
+                              <span>{{ q.nepali_transcription|safe }}</span>
+                            {% elif q.english_transcription %}
+                              <span>{{ q.english_transcription|safe }}</span>
                             {% endif %}
                           </div>
                         </div>

@@ -98,7 +98,10 @@
         <td>{{ q.question_number }}</td>
         <td>{{ q.marks if q.marks else '' }}</td>
         <td>{{ q.type or 'essay' }}</td>
-        <td>{{ (q.nepali_transcription or q.english_transcription or '')[:60] }}{% if (q.nepali_transcription or q.english_transcription|length) > 60 %}…{% endif %}</td>
+        <td>
+          {% set preview = (q.nepali_transcription or q.english_transcription or '') %}
+          {{ preview[:60] }}{% if preview|length > 60 %}…{% endif %}
+        </td>
         <td>
           <a href="{{ url_for('question_detail', id=q.id) }}" class="btn btn-sm btn-info"><i class="bi bi-eye"></i></a>
         </td>
