@@ -14,7 +14,13 @@ from .file_manager import (
     trash_video_by_record,
     collect_facebook_tally_data
 )
-from .facebook_manager import list_facebook_entries, get_facebook_entry_by_id, delete_facebook_entry, get_facebook_file_path
+from .facebook_manager import (
+    list_facebook_entries,
+    get_facebook_entry_by_id,
+    delete_facebook_entry,
+    get_facebook_file_path,
+    get_facebook_embed_url,
+)
 from .youtube import fetch_youtube_title
 from .file_manager import collect_tally_data
 from .question_bank import (
@@ -550,7 +556,16 @@ def facebook_detail(id):
         flash('Entry not found', 'danger')
         return redirect(url_for('facebook_entries'))
     file_path = get_facebook_file_path(record)
-    return render_template('facebook_detail.html', record=record, file_path=file_path)
+    embed_info = get_facebook_embed_url(record)
+    embed_url = embed_info[0] if embed_info else None
+    embed_width = embed_info[1] if embed_info else None
+    embed_height = embed_info[2] if embed_info else None
+    return render_template('facebook_detail.html',
+                           record=record,
+                           file_path=file_path,
+                           embed_url=embed_url,
+                           embed_width=embed_width,
+                           embed_height=embed_height)
 
 @app.route('/facebook/delete/<int:id>', methods=['POST'])
 def facebook_delete(id):

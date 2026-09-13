@@ -40,6 +40,29 @@
     <!-- ===== PLAYBACK OPTIONS ===== -->
     <div class="mt-4">
       <h5>Playback</h5>
+
+      {% if embed_url %}
+      <!-- Facebook embed — sized iframe, no ratio wrapper,
+           explicit width/height so it always renders a visible box -->
+      <div style="max-width: {{ embed_width }}px; margin: 1rem 0;">
+        <iframe
+            src="{{ embed_url }}"
+            width="{{ embed_width }}"
+            height="{{ embed_height }}"
+            style="border:none; overflow:hidden; width:100%; max-width:{{ embed_width }}px; height:{{ embed_height }}px; display:block; background:#1e2a3a;"
+            scrolling="no"
+            frameborder="0"
+            allowfullscreen="true"
+            allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share">
+        </iframe>
+      </div>
+      <p class="text-muted small mb-3">
+        <i class="bi bi-info-circle"></i>
+        Embedded player works for <strong>public</strong> Facebook content.
+        For private videos/reels, use the buttons below.
+      </p>
+      {% endif %}
+
       <div class="d-flex gap-2 flex-wrap">
         {% if file_path %}
           <a href="{{ url_for('stream_facebook_file', id=record.id) }}" class="btn btn-primary" target="_blank">
@@ -56,8 +79,10 @@
           <i class="bi bi-box-arrow-up-right"></i> Watch on Facebook
         </a>
       </div>
+
       <p class="mt-2 text-muted small">
-        <i class="bi bi-info-circle"></i> The “Watch on Facebook” button opens the original post/video in a new tab – works for all content, including private/reel videos.
+        <i class="bi bi-info-circle"></i>
+        The "Watch on Facebook" button opens the original post/video in a new tab – works for all content, including private/reel videos.
       </p>
     </div>
 

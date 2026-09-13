@@ -7,6 +7,7 @@ import yt_dlp
 import shutil
 import glob
 from datetime import datetime
+from urllib.parse import quote
 from .utils import sanitize_filename, color_text, print_colored, COLORS, compute_md5
 from .utils import ROOT_DIR, TRASH_DIR
 from .youtube import _ensure_cookie_file
@@ -16,6 +17,31 @@ from .file_sharing import _load_share_db, _save_share_db, SHARE_DIR
 FACEBOOK_VIDEO_DIR = os.path.join(ROOT_DIR, 'facebook', 'videos')
 FACEBOOK_PHOTO_DIR = os.path.join(ROOT_DIR, 'facebook', 'photos')
 TABLE_NAME = 'facebook_entries'
+
+def get_facebook_embed_url(record, width=720, height=520):
+    """
+    Build a Facebook embed URL for a video record.
+
+    Returns (embed_url, width, height) or None.
+
+    Note: Facebook's plugin accepts ONLY these URL params:
+      href, show_text, width, t (start time), autoplay.
+    Height is a container attribute on the <iframe>, NOT a URL param.
+    Passing an unknown param makes the plugin render an empty shell.
+    """
+    if record.get('type') != 'video':
+        return None
+    url = record.get('url')
+    if not url:
+        return None
+    encoded = quote(url, safe='')
+    embed = (
+        "https://www.facebook.com/plugins/video.php"
+        f"?href={encoded}"
+        "&show_text=false"
+        f"&width={width}"
+    )
+    return embed, width, height
 
 def update_facebook_entry(entry_id, title=None, uploader=None, notes=None):
     """Update title, uploader, or notes for a Facebook entry."""
@@ -452,13 +478,17 @@ def get_facebook_entry_by_id(identifier):
     """
     Fetch a Facebook entry by facebook_id, id, or file_hash.
     Returns a dict or None.
+
+    Uses a buffered cursor so that even if the identifier matches more than
+    one row (e.g. file_hash collisions across photo albums), fetchone() leaves
+    no unread result behind and close() doesn't raise.
     """
     conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
-    # Use CAST to avoid implicit integer conversion
+    cursor = conn.cursor(dictionary=True, buffered=True)
     sql = f"""
         SELECT * FROM {TABLE_NAME}
         WHERE facebook_id = %s OR CAST(id AS CHAR) = %s OR file_hash = %s
+        LIMIT 1
     """
     cursor.execute(sql, (identifier, identifier, identifier))
     row = cursor.fetchone()
