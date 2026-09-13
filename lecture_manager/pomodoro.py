@@ -1,6 +1,8 @@
 # pomodoro.py
 
+import math
 import matplotlib.pyplot as plt
+import matplotlib.transforms as mtransforms
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from datetime import datetime, timedelta
 import calendar
@@ -95,16 +97,11 @@ def configure_styles():
 # ====================== PIE CHART HELPER ======================
 def _render_pie_chart(ax, data, labels, title):
     """
-    Draw a clean, dark-themed donut chart on the given Axes.
-
-    - data   : list of numeric values
-    - labels : list of label strings (same length as data)
-    - title  : chart title
-
-    Uses a side legend (not labels around the pie) so it stays readable
-    even with many categories. Shows both minutes and percentages.
+    Dark-themed donut chart with a side legend and a Hollywood-style
+    hover effect: the slice under the cursor lifts, its outline brightens,
+    and a small tooltip shows label + minutes + percentage.
     """
-    # ---- Filter out zero/negative values so empty categories don't clutter ----
+    # ---- Filter out zero/negative values ----
     pairs = [(str(lbl), val) for lbl, val in zip(labels, data) if val and val > 0]
 
     ax.set_facecolor('#2c3e50')
@@ -121,53 +118,135 @@ def _render_pie_chart(ax, data, labels, title):
     total = sum(values)
     pcts = [(v / total) * 100 for v in values]
 
-    # ---- Colour palette matching the app accents ----
     palette = [
         '#3498db', '#9b59b6', '#e67e22', '#16a085', '#e74c3c',
         '#f1c40f', '#2ecc71', '#1abc9c', '#e84393', '#d35400',
         '#8e44ad', '#2980b9', '#c0392b', '#27ae60', '#f39c12',
     ]
-    # Repeat palette if we have more slices than colours
     colors = [palette[i % len(palette)] for i in range(len(values))]
 
-    # ---- Draw the donut ----
     wedges, _texts, autotexts = ax.pie(
         values,
-        labels=None,                                   # legend handles labels
+        labels=None,
         colors=colors,
         autopct=lambda p: f'{p:.1f}%',
         startangle=90,
         counterclock=False,
-        pctdistance=0.79,                              # inside the ring
+        pctdistance=0.79,
         wedgeprops=dict(width=0.40, edgecolor='#1e2a3a', linewidth=1.6),
         textprops=dict(color='white', fontsize=9, weight='bold'),
     )
-
-    # Percentage text colour — white for readability on coloured wedges
     for t in autotexts:
         t.set_color('white')
 
-    # ---- Total in the middle of the donut ----
     ax.text(0, 0, f"{int(total)}\nmin", ha='center', va='center',
             color='#ecf0f1', fontsize=13, weight='bold')
 
-    # ---- Legend on the right, sorted largest→smallest ----
     order = sorted(range(len(values)), key=lambda i: values[i], reverse=True)
     legend_labels = [
         f"{labels_clean[i]}  —  {int(values[i])}m  ({pcts[i]:.1f}%)"
         for i in order
     ]
     legend_handles = [wedges[i] for i in order]
-
-    ax.legend(
-        legend_handles, legend_labels,
-        loc='center left', bbox_to_anchor=(1.02, 0.5),
-        fontsize=9, frameon=False,
-        labelcolor='#ecf0f1',
-    )
+    ax.legend(legend_handles, legend_labels,
+              loc='center left', bbox_to_anchor=(1.02, 0.5),
+              fontsize=9, frameon=False, labelcolor='#ecf0f1')
 
     ax.set_title(title, color='#ecf0f1', fontsize=12, weight='bold', pad=15)
-    ax.axis('equal')                                   # keep the donut circular
+    ax.axis('equal')
+
+    # =========================================================
+    #  HOVER LAYER  —  "Hollywood" explode + tooltip
+    # =========================================================
+    original_transforms = [w.get_transform() for w in wedges]
+    hover_state = {'idx': None}
+
+    # Tooltip text object anchored at figure top-left
+    tooltip = ax.figure.text(
+        0.02, 0.97, '',
+        ha='left', va='top',
+        fontsize=10, color='#ecf0f1', weight='bold',
+        bbox=dict(boxstyle='round,pad=0.45',
+                  facecolor='#1e2a3a',
+                  edgecolor='#3498db',
+                  linewidth=1.2,
+                  alpha=0.95),
+        zorder=20,
+    )
+    tooltip.set_visible(False)
+
+    def _restore(idx):
+        wedges[idx].set_transform(original_transforms[idx])
+        wedges[idx].set_linewidth(1.6)
+        wedges[idx].set_edgecolor('#1e2a3a')
+
+    def _highlight(idx):
+        w = wedges[idx]
+        theta_mid = math.radians((w.theta1 + w.theta2) / 2.0)
+        offset = 0.09                       # ~9% of radius — the "lift"
+        dx = offset * math.cos(theta_mid)
+        dy = offset * math.sin(theta_mid)
+        new_tr = mtransforms.Affine2D().translate(dx, dy) + original_transforms[idx]
+        w.set_transform(new_tr)
+        w.set_linewidth(2.4)
+        w.set_edgecolor('white')
+
+    def _wedge_at(event):
+        # Test against original positions regardless of current explode state
+        for i, w in enumerate(wedges):
+            current = w.get_transform()
+            w.set_transform(original_transforms[i])
+            try:
+                inside, _ = w.contains(event)
+            except Exception:
+                inside = False
+            w.set_transform(current)
+            if inside:
+                return i
+        return None
+
+    def on_hover(event):
+        if event.inaxes != ax:
+            if hover_state['idx'] is not None:
+                _restore(hover_state['idx'])
+                hover_state['idx'] = None
+                tooltip.set_visible(False)
+                ax.figure.canvas.draw_idle()
+            return
+
+        new_idx = _wedge_at(event)
+        if new_idx == hover_state['idx']:
+            return
+
+        if hover_state['idx'] is not None:
+            _restore(hover_state['idx'])
+
+        if new_idx is not None:
+            _highlight(new_idx)
+            label = labels_clean[new_idx]
+            val = values[new_idx]
+            pct = pcts[new_idx]
+            tooltip.set_text(f"  {label}\n  {int(val)} min  •  {pct:.1f}%  ")
+            tooltip.set_visible(True)
+        else:
+            tooltip.set_visible(False)
+
+        hover_state['idx'] = new_idx
+        ax.figure.canvas.draw_idle()
+
+    def on_leave(_event):
+        if hover_state['idx'] is not None:
+            _restore(hover_state['idx'])
+            hover_state['idx'] = None
+        tooltip.set_visible(False)
+        ax.figure.canvas.draw_idle()
+
+    # Store refs on the axes so they survive until the figure is destroyed
+    ax._hover_cids = (
+        ax.figure.canvas.mpl_connect('motion_notify_event', on_hover),
+        ax.figure.canvas.mpl_connect('figure_leave_event', on_leave),
+    )
+    ax._hover_tooltip = tooltip
 
 class PomodoroApp:
     def __init__(self, root):
@@ -227,6 +306,12 @@ class PomodoroApp:
         self.update_task_combo()
 
         self.schedule_state_save()
+
+        # ---- NEW: midnight rollover detection ----
+        self._today_date = datetime.now().date()
+        self._rollover_after_id = None
+        self._schedule_day_rollover_check()
+
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # ----- AUTOMATIC BADGE REFRESH ON STARTUP -----
@@ -1753,7 +1838,11 @@ class PomodoroApp:
                     quote = random.choice(QUOTES)
                 else:
                     quote = "Great work!"
+
                 messagebox.showinfo("🎉 Session Complete!", f"Great work!\n\n{quote}")
+
+                # ---- NEW: in case we just crossed midnight, reset first ----
+                self._check_day_rollover()
 
                 # ----- CREATE THE LOG ENTRY NOW -----
                 self.log_work_session()
@@ -1877,6 +1966,48 @@ class PomodoroApp:
         self.daily_bar['maximum'] = goal
         self.daily_bar['value'] = self.today_count
         self.update_weekly_monthly_progress()
+
+    def _check_day_rollover(self):
+        """
+        Detect when the calendar date has changed (midnight crossing).
+        When it does, re-query the DB so 'Today' counters reset cleanly,
+        without needing an app restart.
+        Returns True if a rollover happened.
+        """
+        current_date = datetime.now().date()
+        if getattr(self, '_today_date', None) == current_date:
+            return False
+
+        self._today_date = current_date
+
+        # Recompute from the database (now points at the new day's data)
+        new_today = self.count_today_pomodoros()
+        self.today_count = new_today
+        self.cycles_completed = new_today
+
+        # Persist the new cycle count so state saves stay consistent
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE pomodoro_state SET cycles_completed = %s WHERE id = 1",
+                (new_today,)
+            )
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
+
+        # Refresh the UI bars/labels
+        self.update_progress()
+        return True
+
+
+    def _schedule_day_rollover_check(self):
+        """Run the rollover check every 30 seconds, forever."""
+        self._check_day_rollover()
+        self._rollover_after_id = self.root.after(30_000, self._schedule_day_rollover_check)
 
     # ---------- SETTINGS ----------
     def save_settings(self):
@@ -2693,6 +2824,14 @@ class PomodoroApp:
             except Exception:
                 pass
             self._after_id = None
+
+        # 3b. Cancel the day-rollover after callback
+        if getattr(self, '_rollover_after_id', None):
+            try:
+                self.root.after_cancel(self._rollover_after_id)
+            except Exception:
+                pass
+            self._rollover_after_id = None
 
         # 4. Save state (if remaining time > 0)
         try:
