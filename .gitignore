@@ -1,92 +1,95 @@
-# Python cache
+# ============================================================
+#  Python / build artifacts
+# ============================================================
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+*.py~
+*.so
 
-# HTML file and pypi configuration file
-.pypirc
-upload_guide.html
-
-# Virtual environment
-venv/
-env/
-.venv/
-
-# Configuration (contains database credentials)
-.lecture_manager_config.json
-
-# Cookies
-cookies.txt
-cookies
-
-# Downloaded media (large files)
-downloads/
-.lecture_trash/
-foxCloud/          # if your ROOT_DIR is inside the project – better not commit large media
-
-# Backup files
-*.sql
-backups/
-
-# IDE files
-.vscode/
-.idea/
-
-# Logs
-*.log
-*.py~   # backup files from editors
-
-# Distribution files
 dist/
 build/
 *.egg-info/
+.eggs/
 
-# Temporary files from ffmpeg
-*.temp.*
+# ============================================================
+#  Virtual environments
+# ============================================================
+venv/
+env/
+.venv/
+ENV/
 
-# Exported files (CSV, JSON)
-*.csv
-*.json
-*.kate-swp
-*.bak
-lecture-manager-*.py
-*_import_*
-*_export_*
-!requirements.txt   # keep requirements.txt if you have it
-!setup.py           # keep setup.py
-
-# Temoporary and local files
-*_export.*
+# ============================================================
+#  Secrets and OAuth (NEVER commit these)
+# ============================================================
+client_secrets.json
+youtube_token.pickle
 cookies.txt
+cookies
+.lecture_manager_config.json
+.pypirc
+
+# ============================================================
+#  User data (safe to regenerate)
+# ============================================================
+lectures_export*.json
+lectures_export*.csv
+questions_export*.json
+questions_export*.csv
+questions_export*.xml
+facebook_export*.json
+facebook_export*.csv
+
+downloads/
+.lecture_trash/
+backups/
+*.sql
+
+# ============================================================
+#  Local sample / scratch files
+# ============================================================
 questions.txt
 questions_sample.txt
 termux_installation_sample.txt
-Prompt for ChatGPT.txt
-
-# Misc
+"Prompt for ChatGPT.txt"
+*_import_*
+*_export.*
+*.bak
+*.temp.*
 *.zip
+*.kate-swp
 
-# Combined/backup files
+# ============================================================
+#  Packed snapshots
+# ============================================================
+lecture-manager-*.py
+lecture-manager.py
 lm.py
-lecture-manager.py  # if it's just a symlink or entry point, keep it; but if it's redundant, ignore
 
-# Configuration (already)
-.lecture_manager_config.json
-cookies.txt
-
-# Media files (downloads, trash)
-downloads/
-.lecture_trash/
-
-# Database dumps
-*.sql
-backups/
-
-# IDE
+# ============================================================
+#  IDE / editors
+# ============================================================
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# OS metadata
+# ============================================================
+#  OS metadata
+# ============================================================
 .DS_Store
 Thumbs.db
-*.pickle
+desktop.ini
+
+# ============================================================
+#  Logs
+# ============================================================
+*.log
+
+# ============================================================
+#  Docs that shouldn't ship
+# ============================================================
+upload_guide.html
+Prompt for ChatGPT.txt
