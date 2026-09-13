@@ -71,6 +71,83 @@
           </div>
         </div>
 
+        <!-- ===== ANSWER & EXPLANATION ===== -->
+        {% set has_answer = question.general_feedback
+                            or question.grader_info
+                            or (question.type == 'multichoice' and question.options|selectattr('correct')|list|length > 0)
+                            or (question.type == 'truefalse' and question.options|selectattr('correct')|list|length > 0)
+                            or question.correct_feedback
+                            or question.partially_correct_feedback
+                            or question.incorrect_feedback
+                            or question.feedback_true
+                            or question.feedback_false %}
+        {% if has_answer %}
+        <div class="border-top pt-3 mt-3">
+          <h5 class="text-success">
+            <i class="bi bi-check-circle-fill"></i> Answer &amp; Explanation
+          </h5>
+
+          {# ---- Explicit correct answer ---- #}
+          {% if question.type == 'multichoice' %}
+            {% for opt in question.options %}{% if opt.correct %}
+              <div class="alert alert-success py-2 mb-2">
+                <strong>✅ Correct option:</strong> {{ opt.text|safe }}
+              </div>
+            {% endif %}{% endfor %}
+
+          {% elif question.type == 'truefalse' %}
+            {% for opt in question.options %}{% if opt.correct %}
+              <div class="alert alert-success py-2 mb-2">
+                <strong>✅ Correct answer:</strong> {{ opt.text }}
+              </div>
+            {% endif %}{% endfor %}
+            {% if question.feedback_true %}
+              <div class="alert alert-light border py-2 mb-1 small">
+                <strong>If answered True:</strong> {{ question.feedback_true|safe }}
+              </div>
+            {% endif %}
+            {% if question.feedback_false %}
+              <div class="alert alert-light border py-2 mb-1 small">
+                <strong>If answered False:</strong> {{ question.feedback_false|safe }}
+              </div>
+            {% endif %}
+
+          {% elif question.type == 'matching' %}
+            {% if question.correct_feedback %}
+              <div class="alert alert-success py-2 mb-1 small">
+                <strong>Correct:</strong> {{ question.correct_feedback|safe }}
+              </div>
+            {% endif %}
+            {% if question.partially_correct_feedback %}
+              <div class="alert alert-warning py-2 mb-1 small">
+                <strong>Partially correct:</strong> {{ question.partially_correct_feedback|safe }}
+              </div>
+            {% endif %}
+            {% if question.incorrect_feedback %}
+              <div class="alert alert-danger py-2 mb-1 small">
+                <strong>Incorrect:</strong> {{ question.incorrect_feedback|safe }}
+              </div>
+            {% endif %}
+          {% endif %}
+
+          {# ---- General feedback as explanation / model answer ---- #}
+          {% if question.general_feedback %}
+            <div class="alert alert-info">
+              <strong>💡 Explanation:</strong><br>
+              {{ question.general_feedback|safe }}
+            </div>
+          {% endif %}
+
+          {# ---- Essay grader notes ---- #}
+          {% if question.type == 'essay' and question.grader_info %}
+            <div class="alert alert-secondary">
+              <strong>📝 Grader notes:</strong><br>
+              {{ question.grader_info|safe }}
+            </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
         <!-- ===== TYPE-SPECIFIC RICH CONTENT ===== -->
         <div class="border-top pt-3 mt-3">
           <h5><i class="bi bi-tag"></i> Type: {{ question.type or 'essay' }}</h5>
@@ -164,10 +241,6 @@
               <li>Max bytes: {{ question.maxbytes or 2097152 }}</li>
               {% if question.grader_info %}<li>Grader info: {{ question.grader_info }}</li>{% endif %}
             </ul>
-          {% endif %}
-
-          {% if question.general_feedback %}
-            <div class="alert alert-secondary mt-3">General feedback: {{ question.general_feedback }}</div>
           {% endif %}
 
           {% if question.source %}

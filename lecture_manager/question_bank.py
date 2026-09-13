@@ -641,21 +641,23 @@ def _display_single_question(q):
         if options:
             print("\n  Options:")
             for opt in options:
-                marker = " *" if opt.get('correct', False) else ""
+                marker = " ✓" if opt.get('correct', False) else ""
                 print(f"    - {opt.get('text', '')}{marker}")
-            if q.get('fraction_correct') is not None or q.get('fraction_wrong') is not None:
-                print(f"    Correct fraction: {q.get('fraction_correct', 100)}% | Wrong fraction: {q.get('fraction_wrong', -20)}%")
+        if q.get('fraction_correct') is not None or q.get('fraction_wrong') is not None:
+            print(f"    Correct fraction: {q.get('fraction_correct', 100)}% | "
+                  f"Wrong fraction: {q.get('fraction_wrong', -20)}%")
+
     elif q_type == 'truefalse':
         options = q.get('options', [])
-        correct_opt = next((opt for opt in options if opt.get('correct', False)), None)
-        if correct_opt:
-            print(f"\n  Correct answer: {color_text(correct_opt.get('text', ''), COLORS.GREEN)}")
-        if q.get('feedback_true'):
-            print(f"    Feedback if True: {q['feedback_true']}")
-        if q.get('feedback_false'):
-            print(f"    Feedback if False: {q['feedback_false']}")
+        if options:
+            print("\n  Options:")
+            for opt in options:
+                marker = " ✓" if opt.get('correct', False) else ""
+                print(f"    - {opt.get('text', '')}{marker}")
         if q.get('fraction_correct') is not None or q.get('fraction_wrong') is not None:
-            print(f"    Correct fraction: {q.get('fraction_correct', 100)}% | Wrong fraction: {q.get('fraction_wrong', -20)}%")
+            print(f"    Correct fraction: {q.get('fraction_correct', 100)}% | "
+                  f"Wrong fraction: {q.get('fraction_wrong', -20)}%")
+
     elif q_type == 'matching':
         pairs = q.get('pairs', [])
         if pairs:
@@ -666,12 +668,6 @@ def _display_single_question(q):
             print(f"    Shuffle answers: {'Yes' if q['shuffle_answers'] else 'No'}")
         if q.get('show_num_correct'):
             print("    Show number correct: Yes")
-        if q.get('correct_feedback'):
-            print(f"    Correct feedback: {q['correct_feedback']}")
-        if q.get('partially_correct_feedback'):
-            print(f"    Partially correct feedback: {q['partially_correct_feedback']}")
-        if q.get('incorrect_feedback'):
-            print(f"    Incorrect feedback: {q['incorrect_feedback']}")
         hints = q.get('hints', [])
         if hints:
             print("    Hints:")
@@ -682,6 +678,7 @@ def _display_single_question(q):
                 if hint.get('show_num_correct'):
                     line += " (shows number correct)"
                 print(line)
+
     else:  # essay
         print(f"\n  Response lines: {q.get('response_lines', 15)}")
         print(f"  Attachments: {q.get('attachments', 0)}")
@@ -689,11 +686,43 @@ def _display_single_question(q):
             print(f"  File types: {q['filetypes']}")
         if q.get('maxbytes'):
             print(f"  Max bytes: {q['maxbytes']}")
-        if q.get('grader_info'):
-            print(f"  Grader info: {q['grader_info']}")
 
-    if q.get('general_feedback'):
-        print(f"\n  {color_text('General Feedback:', COLORS.BLUE)} {q['general_feedback']}")
+    # ---- Unified ANSWER & EXPLANATION section ----
+    answer_lines = []
+
+    if q_type == 'multichoice':
+        correct = next((o.get('text', '') for o in q.get('options', []) if o.get('correct')), None)
+        if correct:
+            answer_lines.append(f"✅ Correct option: {correct}")
+
+    elif q_type == 'truefalse':
+        correct = next((o.get('text', '') for o in q.get('options', []) if o.get('correct')), None)
+        if correct:
+            answer_lines.append(f"✅ Correct answer: {correct}")
+        if q.get('feedback_true'):
+            answer_lines.append(f"   • If answered True : {html_to_terminal(q['feedback_true'])}")
+        if q.get('feedback_false'):
+            answer_lines.append(f"   • If answered False: {html_to_terminal(q['feedback_false'])}")
+
+    elif q_type == 'matching':
+        if q.get('correct_feedback'):
+            answer_lines.append(f"   • Correct          : {html_to_terminal(q['correct_feedback'])}")
+        if q.get('partially_correct_feedback'):
+            answer_lines.append(f"   • Partially correct: {html_to_terminal(q['partially_correct_feedback'])}")
+        if q.get('incorrect_feedback'):
+            answer_lines.append(f"   • Incorrect        : {html_to_terminal(q['incorrect_feedback'])}")
+
+    gf = q.get('general_feedback')
+    if gf:
+        answer_lines.append(f"💡 Explanation: {html_to_terminal(gf)}")
+
+    if q_type == 'essay' and q.get('grader_info'):
+        answer_lines.append(f"📝 Grader notes: {html_to_terminal(q['grader_info'])}")
+
+    if answer_lines:
+        print("\n  " + color_text("📖 ANSWER & EXPLANATION", COLORS.GREEN, bold=True))
+        for line in answer_lines:
+            print(f"    {line}")
 
     print("─" * 70)
 

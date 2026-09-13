@@ -1,5 +1,6 @@
 # ---- Python source ----
 recursive-include lecture_manager *.py
+recursive-include lecture_manager/question_converter *.py
 include lecture.py
 
 # ---- Data files ----
@@ -12,6 +13,5 @@ include README.md
 include LICENSE
 
 # ---- Build/install scripts ----
-include Makefile
 include lecture-manager.sh
 include setup.py
