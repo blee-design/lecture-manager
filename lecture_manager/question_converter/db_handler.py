@@ -156,7 +156,9 @@ def insert_question(q_dict, source=None, force=False):
                 'maxbytes': q_dict.get('maxbytes', 2097152),
                 'grader_info': q_dict.get('grader_info'),
                 'syllabus_code': q_dict.get('syllabus_code'),
-                'type': q_dict.get('type', 'essay')
+                'type': q_dict.get('type', 'essay'),
+                'feedback_true': q_dict.get('feedback_true'),
+                'feedback_false': q_dict.get('feedback_false'),
             }
             # Remove None values so defaults are used
             update_kwargs = {k: v for k, v in update_kwargs.items() if v is not None}
@@ -205,7 +207,9 @@ def insert_question(q_dict, source=None, force=False):
         maxbytes=q_dict.get('maxbytes', 2097152),
         grader_info=q_dict.get('grader_info'),
         syllabus_code=q_dict.get('syllabus_code'),
-        q_type=q_dict.get('type', 'essay')
+        q_type=q_dict.get('type', 'essay'),
+        feedback_true=q_dict.get('feedback_true'),
+        feedback_false=q_dict.get('feedback_false'),
     )
     return 'inserted', qid
 

@@ -68,6 +68,8 @@ def create_question_table():
             filetypes VARCHAR(255) DEFAULT '.doc,.docx,.pdf,.png,.jpg,.jpeg',
             maxbytes INT DEFAULT 2097152,
             grader_info TEXT NULL,
+            feedback_true TEXT NULL,
+            feedback_false TEXT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             INDEX idx_subject (subject),
@@ -241,7 +243,8 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                  response_lines=15, attachments=0,
                  filetypes='.doc,.docx,.pdf,.png,.jpg,.jpeg',
                  maxbytes=2097152, grader_info=None,
-                 syllabus_code=None, q_type='essay'):
+                 syllabus_code=None, q_type='essay',
+                 feedback_true=None, feedback_false=None):
     # Convert empty strings to None for nullable fields
     if paper == '':
         paper = None
@@ -281,6 +284,8 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                     'maxbytes': maxbytes,
                     'grader_info': grader_info,
                     'type': q_type,
+                    'feedback_true': feedback_true,
+                    'feedback_false': feedback_false,
                 }
                 # Remove None values
                 updates = {k: v for k, v in updates.items() if v is not None}
@@ -304,25 +309,33 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
          general_feedback, fraction_correct, fraction_wrong, shuffle_answers,
          show_num_correct, correct_feedback, partially_correct_feedback,
          incorrect_feedback, response_lines, attachments, filetypes, maxbytes,
-         grader_info, type, syllabus_code)
+         grader_info, type, syllabus_code,
+         feedback_true, feedback_false)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s)
     """, (date, institution, subject, paper, group, marks, chapter,
           question_number, nepali, english, level, notes,
           general_feedback, fraction_correct, fraction_wrong,
           shuffle_answers, show_num_correct,
           correct_feedback, partially_correct_feedback, incorrect_feedback,
-          response_lines, attachments, filetypes, maxbytes, grader_info, q_type, syllabus_code))
+          response_lines, attachments, filetypes, maxbytes, grader_info, q_type, syllabus_code,
+          feedback_true, feedback_false))
     conn.commit()
     qid = cursor.lastrowid
 
     # Insert options
     if options:
         for idx, opt in enumerate(options):
+            # Derive fraction from 'correct' if not explicitly provided
+            if 'fraction' in opt and opt['fraction'] is not None:
+                fraction = opt['fraction']
+            else:
+                fraction = fraction_correct if opt.get('correct', False) else fraction_wrong
             cursor.execute("""
                 INSERT INTO question_options (question_id, text, fraction, feedback, display_order)
                 VALUES (%s, %s, %s, %s, %s)
-            """, (qid, opt['text'], opt.get('fraction', 0), opt.get('feedback', ''), idx))
+            """, (qid, opt['text'], fraction, opt.get('feedback', ''), idx))
 
     # Insert matching pairs
     if pairs:
@@ -354,9 +367,18 @@ def get_question_by_id(qid):
     q = cursor.fetchone()
     if q:
         cursor.execute("SELECT * FROM question_options WHERE question_id = %s ORDER BY display_order", (qid,))
-        q['options'] = cursor.fetchall()
+        opts = cursor.fetchall()
+        # Derive 'correct' from fraction (> 0 means correct — Moodle convention)
+        for opt in opts:
+            try:
+                opt['correct'] = float(opt.get('fraction') or 0) > 0
+            except (TypeError, ValueError):
+                opt['correct'] = False
+        q['options'] = opts
+
         cursor.execute("SELECT * FROM question_matching_pairs WHERE question_id = %s ORDER BY display_order", (qid,))
         q['pairs'] = cursor.fetchall()
+
         cursor.execute("SELECT * FROM question_hints WHERE question_id = %s ORDER BY hint_number", (qid,))
         q['hints'] = cursor.fetchall()
     cursor.close()
@@ -515,11 +537,18 @@ def update_question(qid, **kwargs):
         if options is not None or pairs is not None or hints is not None:
             if options is not None:
                 cursor.execute("DELETE FROM question_options WHERE question_id = %s", (qid,))
+                # Pull the question-level fractions (may not be in kwargs)
+                q_frac_correct = kwargs.get('fraction_correct', 100)
+                q_frac_wrong = kwargs.get('fraction_wrong', -20)
                 for idx, opt in enumerate(options):
+                    if 'fraction' in opt and opt['fraction'] is not None:
+                        fraction = opt['fraction']
+                    else:
+                        fraction = q_frac_correct if opt.get('correct', False) else q_frac_wrong
                     cursor.execute("""
                         INSERT INTO question_options (question_id, text, fraction, feedback, display_order)
                         VALUES (%s, %s, %s, %s, %s)
-                    """, (qid, opt['text'], opt.get('fraction', 0), opt.get('feedback', ''), idx))
+                    """, (qid, opt['text'], fraction, opt.get('feedback', ''), idx))
             if pairs is not None:
                 cursor.execute("DELETE FROM question_matching_pairs WHERE question_id = %s", (qid,))
                 for idx, pair in enumerate(pairs):
@@ -1701,7 +1730,8 @@ def export_questions_csv():
         'shuffle_answers', 'show_num_correct',
         'correct_feedback', 'partially_correct_feedback', 'incorrect_feedback',
         'response_lines', 'attachments', 'filetypes', 'maxbytes',
-        'grader_info'
+        'grader_info',
+        'feedback_true', 'feedback_false'
     ]
 
     data = []
@@ -1868,6 +1898,8 @@ def import_questions_csv():
             'filetypes': row.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg'),
             'maxbytes': row.get('maxbytes', 2097152),
             'grader_info': row.get('grader_info'),
+            'feedback_true': row.get('feedback_true'),
+            'feedback_false': row.get('feedback_false'),
             'options': row.get('options_json'),
             'pairs': row.get('pairs_json'),
             'hints': row.get('hints_json'),
@@ -2068,6 +2100,11 @@ def export_questions_txt():
                     if q.get('grader_info'):
                         f.write(f"Grader Information: {q.get('grader_info')}\n")
 
+                # ---- Common to ALL question types ----
+                if q.get('feedback_true'):
+                    f.write(f"Feedback True: {q['feedback_true']}\n")
+                if q.get('feedback_false'):
+                    f.write(f"Feedback False: {q['feedback_false']}\n")
                 if q.get('general_feedback'):
                     f.write(f"General Feedback: {q.get('general_feedback')}\n")
 
@@ -2170,7 +2207,9 @@ def import_questions_txt():
             'question_number': merged.get('question_number'),
             'nepali_transcription': merged.get('nepali'),
             'english_transcription': merged.get('english'),
-            'notes': merged.get('notes') or merged.get('note')
+            'notes': merged.get('notes') or merged.get('note'),
+            'feedback_true': merged.get('feedback_true'),
+            'feedback_false': merged.get('feedback_false')
         }
         questions.append(db_q)
 
@@ -2358,7 +2397,8 @@ def import_questions_json():
 
     fields = ['question_date', 'institution', 'subject', 'paper', 'group',
               'marks', 'chapter', 'question_number', 'nepali_transcription',
-              'english_transcription', 'level', 'notes']
+              'english_transcription', 'level', 'notes',
+              'feedback_true', 'feedback_false']
     escaped_fields = [f"`{f}`" if f == 'group' else f for f in fields]
 
     total = len(rows)
