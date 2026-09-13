@@ -39,31 +39,135 @@ def configure_styles():
     accent = "#3498db"
     accent_light = "#5dade2"
     fg = "#ecf0f1"
+
     style.configure('.', background=bg_medium, foreground=fg, fieldbackground=bg_light)
     style.configure('TFrame', background=bg_medium)
     style.configure('TLabel', background=bg_medium, foreground=fg)
     style.configure('TLabelframe', background=bg_medium, foreground=fg, bordercolor=accent)
     style.configure('TLabelframe.Label', background=bg_medium, foreground=fg)
-    style.configure('TButton', background=accent, foreground='white', bordercolor=accent, focuscolor='none', borderwidth=0)
+    style.configure('TButton', background=accent, foreground='white',
+                    bordercolor=accent, focuscolor='none', borderwidth=0)
     style.map('TButton', background=[('active', accent_light)])
+
     style.configure('TEntry', fieldbackground=bg_light, foreground=fg, insertcolor=fg)
-    style.theme_use('clam')
+
     style.configure('TCombobox',
-                    fieldbackground='#34495e',   # dark entry background
-                    foreground='white',          # white text
-                    background='#2c3e50',        # dropdown background
-                    arrowcolor='white')          # arrow visible
-    style.map('TCombobox',
-            fieldbackground=[('readonly', '#34495e')])
-    # Fix dropdown listbox (popup)
-    style.configure('TCombobox.listbox',
-                    background='#2c3e50',
+                    fieldbackground='#34495e',
                     foreground='white',
-                    selectbackground='#3498db',
-                    selectforeground='white')
-    style.configure('TCombobox.listbox', background='#2c3e50', foreground='white', selectbackground='#3498db')
-    style.configure('TProgressbar', background=accent, troughcolor=bg_light, bordercolor=bg_light)
-    style.configure('Vertical.TScrollbar', background=bg_light, troughcolor=bg_medium)
+                    background='#2c3e50',
+                    arrowcolor='white')
+    style.map('TCombobox', fieldbackground=[('readonly', '#34495e')])
+    style.configure('TCombobox.listbox',
+                    background='#2c3e50', foreground='white',
+                    selectbackground='#3498db', selectforeground='white')
+
+    style.configure('TProgressbar',
+                    background=accent, troughcolor=bg_light, bordercolor=bg_light)
+
+    style.configure('Vertical.TScrollbar',
+                    background=bg_light, troughcolor=bg_medium)
+
+    style.configure('TNotebook', background=bg_medium, bordercolor=accent)
+    style.configure('TNotebook.Tab', background=bg_light, foreground=fg, padding=[12, 6])
+    style.map('TNotebook.Tab',
+              background=[('selected', accent)],
+              foreground=[('selected', 'white')])
+
+    style.configure('Earned.TFrame', background='#2e7d32',
+                    bordercolor=accent, borderwidth=1, relief='solid')
+    style.configure('Locked.TFrame', background='#555555',
+                    bordercolor='#333333', borderwidth=1, relief='solid')
+
+    # Treeview — fixes the white-on-white bug in Today's Summary
+    style.configure('Treeview',
+                    background=bg_light, foreground=fg,
+                    fieldbackground=bg_light, bordercolor=accent, rowheight=26)
+    style.configure('Treeview.Heading',
+                    background=accent, foreground='white',
+                    bordercolor=accent, relief='flat')
+    style.map('Treeview',
+              background=[('selected', accent)],
+              foreground=[('selected', 'white')])
+    style.map('Treeview.Heading',
+              background=[('active', accent_light)],
+              foreground=[('active', 'white')])
+
+# ====================== PIE CHART HELPER ======================
+def _render_pie_chart(ax, data, labels, title):
+    """
+    Draw a clean, dark-themed donut chart on the given Axes.
+
+    - data   : list of numeric values
+    - labels : list of label strings (same length as data)
+    - title  : chart title
+
+    Uses a side legend (not labels around the pie) so it stays readable
+    even with many categories. Shows both minutes and percentages.
+    """
+    # ---- Filter out zero/negative values so empty categories don't clutter ----
+    pairs = [(str(lbl), val) for lbl, val in zip(labels, data) if val and val > 0]
+
+    ax.set_facecolor('#2c3e50')
+    ax.figure.patch.set_facecolor('#2c3e50')
+
+    if not pairs:
+        ax.text(0.5, 0.5, "No data", ha='center', va='center',
+                color='#ecf0f1', fontsize=12)
+        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_title(title, color='#ecf0f1', fontsize=12, weight='bold', pad=10)
+        return
+
+    labels_clean, values = zip(*pairs)
+    total = sum(values)
+    pcts = [(v / total) * 100 for v in values]
+
+    # ---- Colour palette matching the app accents ----
+    palette = [
+        '#3498db', '#9b59b6', '#e67e22', '#16a085', '#e74c3c',
+        '#f1c40f', '#2ecc71', '#1abc9c', '#e84393', '#d35400',
+        '#8e44ad', '#2980b9', '#c0392b', '#27ae60', '#f39c12',
+    ]
+    # Repeat palette if we have more slices than colours
+    colors = [palette[i % len(palette)] for i in range(len(values))]
+
+    # ---- Draw the donut ----
+    wedges, _texts, autotexts = ax.pie(
+        values,
+        labels=None,                                   # legend handles labels
+        colors=colors,
+        autopct=lambda p: f'{p:.1f}%',
+        startangle=90,
+        counterclock=False,
+        pctdistance=0.79,                              # inside the ring
+        wedgeprops=dict(width=0.40, edgecolor='#1e2a3a', linewidth=1.6),
+        textprops=dict(color='white', fontsize=9, weight='bold'),
+    )
+
+    # Percentage text colour — white for readability on coloured wedges
+    for t in autotexts:
+        t.set_color('white')
+
+    # ---- Total in the middle of the donut ----
+    ax.text(0, 0, f"{int(total)}\nmin", ha='center', va='center',
+            color='#ecf0f1', fontsize=13, weight='bold')
+
+    # ---- Legend on the right, sorted largest→smallest ----
+    order = sorted(range(len(values)), key=lambda i: values[i], reverse=True)
+    legend_labels = [
+        f"{labels_clean[i]}  —  {int(values[i])}m  ({pcts[i]:.1f}%)"
+        for i in order
+    ]
+    legend_handles = [wedges[i] for i in order]
+
+    ax.legend(
+        legend_handles, legend_labels,
+        loc='center left', bbox_to_anchor=(1.02, 0.5),
+        fontsize=9, frameon=False,
+        labelcolor='#ecf0f1',
+    )
+
+    ax.set_title(title, color='#ecf0f1', fontsize=12, weight='bold', pad=15)
+    ax.axis('equal')                                   # keep the donut circular
 
 class PomodoroApp:
     def __init__(self, root):
@@ -619,6 +723,7 @@ class PomodoroApp:
         bulk_win.title("Bulk Add Tasks")
         bulk_win.geometry("400x350")
         bulk_win.resizable(True, True)
+        bulk_win.configure(bg="#1e2a3a")
 
         ttk.Label(bulk_win, text="Enter one task per line:", font=("Helvetica", 10)).pack(pady=5)
         ttk.Label(bulk_win, text="Priority will be applied to all tasks.", font=("Helvetica", 9)).pack()
@@ -1469,6 +1574,7 @@ class PomodoroApp:
         summary_win.title("Today's Study Summary")
         summary_win.geometry("700x500")
         summary_win.resizable(False, False)
+        summary_win.configure(bg="#1e2a3a")
 
         ttk.Label(summary_win, text=f"Summary for {datetime.now().strftime('%Y-%m-%d')}",
                 font=("Helvetica", 14, "bold")).pack(pady=10)
@@ -1498,6 +1604,9 @@ class PomodoroApp:
                 total_time += minutes
                 total_sessions += sessions
             tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            scrollbar = ttk.Scrollbar(tab1, orient="vertical", command=tree.yview)
+            tree.configure(yscrollcommand=scrollbar.set)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
             total_hours = total_time // 60
             total_mins = total_time % 60
@@ -2260,6 +2369,7 @@ class PomodoroApp:
         stats_win = tk.Toplevel(self.root)
         stats_win.title("📊 Overall Study Analytics")
         stats_win.geometry("1000x700")
+        stats_win.configure(bg="#1e2a3a")
 
         # ---- NEW: Track figures and close them on window destroy ----
         figures = []
@@ -2295,13 +2405,18 @@ class PomodoroApp:
         row_count = 0
         col_count = 0
         for b in badge_rows:
-            bg_color = "#2e7d32" if b['earned'] else "#555555"
-            fg_color = "white"
-            frame = ttk.Frame(badge_frame, relief="solid", borderwidth=1)
+            # Earned badges get a distinct style; locked ones stay muted
+            style_name = 'Earned.TFrame' if b['earned'] else 'Locked.TFrame'
+
+            frame = ttk.Frame(badge_frame, relief="solid", borderwidth=1, style=style_name)
             frame.grid(row=row_count, column=col_count, padx=5, pady=5, sticky="nsew")
+
             ttk.Label(frame, text=b['icon'], font=("Helvetica", 24)).pack(pady=2)
-            ttk.Label(frame, text=b['badge_name'].replace('_', ' ').title(), font=("Helvetica", 10, "bold")).pack()
-            ttk.Label(frame, text=b['description'], font=("Helvetica", 8), wraplength=120).pack(pady=2)
+            ttk.Label(frame, text=b['badge_name'].replace('_', ' ').title(),
+                        font=("Helvetica", 10, "bold")).pack()
+            ttk.Label(frame, text=b['description'],
+                        font=("Helvetica", 8), wraplength=120).pack(pady=2)
+
             col_count += 1
             if col_count >= 4:
                 col_count = 0
@@ -2447,11 +2562,11 @@ class PomodoroApp:
         tab3 = ttk.Frame(notebook)
         notebook.add(tab3, text="🧠 Subject Breakdown")
         if subjects:
-            fig2, ax2 = plt.subplots(figsize=(6, 6))
+            fig2, ax2 = plt.subplots(figsize=(9, 5.5))
             figures.append(fig2)
-            ax2.pie(subject_mins, labels=subjects, autopct='%1.1f%%', startangle=90)
-            ax2.axis('equal')
-            ax2.set_title('Total Study Time by Subject')
+            _render_pie_chart(ax2, subject_mins, subjects,
+                              title='Total Study Time by Subject')
+            fig2.tight_layout()
             canvas2 = FigureCanvasTkAgg(fig2, master=tab3)
             canvas2.draw()
             canvas2.get_tk_widget().pack(fill=tk.BOTH, expand=True)
@@ -2481,11 +2596,11 @@ class PomodoroApp:
             types = [row['session_type'] if row['session_type'] else 'Unspecified' for row in type_data]
             mins = [float(row['total_min']) for row in type_data if row['total_min'] is not None and float(row['total_min']) > 0]
             if mins:
-                fig_type, ax_type = plt.subplots(figsize=(6, 6))
+                fig_type, ax_type = plt.subplots(figsize=(9, 5.5))
                 figures.append(fig_type)
-                ax_type.pie(mins, labels=types, autopct='%1.1f%%', startangle=90)
-                ax_type.axis('equal')
-                ax_type.set_title('Total Study Time by Session Type')
+                _render_pie_chart(ax_type, mins, types,
+                                  title='Total Study Time by Session Type')
+                fig_type.tight_layout()
                 canvas_type = FigureCanvasTkAgg(fig_type, master=tab_type)
                 canvas_type.draw()
                 canvas_type.get_tk_widget().pack(fill=tk.BOTH, expand=True)
