@@ -68,6 +68,7 @@ def create_question_table():
             filetypes VARCHAR(255) DEFAULT '.doc,.docx,.pdf,.png,.jpg,.jpeg',
             maxbytes INT DEFAULT 2097152,
             grader_info TEXT NULL,
+            penalty DECIMAL(10,2) DEFAULT 0.00,
             feedback_true TEXT NULL,
             feedback_false TEXT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -244,7 +245,8 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                  filetypes='.doc,.docx,.pdf,.png,.jpg,.jpeg',
                  maxbytes=2097152, grader_info=None,
                  syllabus_code=None, q_type='essay',
-                 feedback_true=None, feedback_false=None):
+                 feedback_true=None, feedback_false=None,
+                 penalty=0):
     # Convert empty strings to None for nullable fields
     if paper == '':
         paper = None
@@ -286,6 +288,7 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                     'type': q_type,
                     'feedback_true': feedback_true,
                     'feedback_false': feedback_false,
+                    'penalty': penalty,
                 }
                 # Remove None values
                 updates = {k: v for k, v in updates.items() if v is not None}
@@ -310,17 +313,17 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
          show_num_correct, correct_feedback, partially_correct_feedback,
          incorrect_feedback, response_lines, attachments, filetypes, maxbytes,
          grader_info, type, syllabus_code,
-         feedback_true, feedback_false)
+         penalty, feedback_true, feedback_false)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s)
+                %s, %s, %s)
     """, (date, institution, subject, paper, group, marks, chapter,
           question_number, nepali, english, level, notes,
           general_feedback, fraction_correct, fraction_wrong,
           shuffle_answers, show_num_correct,
           correct_feedback, partially_correct_feedback, incorrect_feedback,
           response_lines, attachments, filetypes, maxbytes, grader_info, q_type, syllabus_code,
-          feedback_true, feedback_false))
+          penalty, feedback_true, feedback_false))
     conn.commit()
     qid = cursor.lastrowid
 
@@ -1731,6 +1734,7 @@ def export_questions_csv():
         'correct_feedback', 'partially_correct_feedback', 'incorrect_feedback',
         'response_lines', 'attachments', 'filetypes', 'maxbytes',
         'grader_info',
+        'penalty',
         'feedback_true', 'feedback_false'
     ]
 
@@ -1898,6 +1902,7 @@ def import_questions_csv():
             'filetypes': row.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg'),
             'maxbytes': row.get('maxbytes', 2097152),
             'grader_info': row.get('grader_info'),
+            'penalty': row.get('penalty', 0),
             'feedback_true': row.get('feedback_true'),
             'feedback_false': row.get('feedback_false'),
             'options': row.get('options_json'),

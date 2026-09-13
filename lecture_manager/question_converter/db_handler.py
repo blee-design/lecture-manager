@@ -1,4 +1,5 @@
 import sys
+import re
 import time
 from collections import Counter
 from types import SimpleNamespace
@@ -44,6 +45,71 @@ def map_paper_value(paper_str):
 
     # If no match, return None to avoid invalid ENUM values
     return None
+
+def _compute_marks(q_dict):
+    """
+    Determine the marks value for a question from various sources.
+
+    Priority:
+      1. Explicit 'marks' value (from TXT 'Marks:' line, or CSV column)
+      2. 'grade' value (Moodle <defaultgrade>, or JSON 'grade')
+      3. Detect "5+5" style pattern in notes and sum the parts
+      4. None
+    """
+    marks = q_dict.get('marks')
+    if marks is not None:
+        try:
+            return int(marks)
+        except (ValueError, TypeError):
+            pass
+
+    grade = q_dict.get('grade')
+    if grade is not None:
+        try:
+            return int(float(grade))
+        except (ValueError, TypeError):
+            pass
+
+    notes = (q_dict.get('notes') or '')
+    if isinstance(notes, str):
+        match = re.search(r'(\d+(?:\s*\+\s*\d+)+)', notes)
+        if match:
+            parts = re.split(r'\s*\+\s*', match.group(1))
+            try:
+                return sum(int(p) for p in parts)
+            except ValueError:
+                pass
+
+    return None
+
+
+def _split_text_into_transcriptions(q_dict):
+    """
+    Return (nepali_value, english_value) for the given question dict.
+
+    Rules:
+      - If both 'nepali_transcription' and 'english_transcription' are explicitly
+        provided, use them as-is.
+      - Otherwise, examine 'text' (the combined field the parsers set).
+        - If 'text' contains Devanagari characters, put it in Nepali.
+        - Otherwise, put it in English.
+      - Never duplicate the same value into both columns.
+    """
+    nep = q_dict.get('nepali_transcription')
+    eng = q_dict.get('english_transcription')
+
+    # If both explicitly provided, trust them.
+    if nep is not None or eng is not None:
+        return (nep or ''), (eng or '')
+
+    text = q_dict.get('text') or ''
+    if not text:
+        return '', ''
+
+    has_devanagari = bool(re.search(r'[\u0900-\u097F]', text))
+    if has_devanagari:
+        return text, ''
+    return '', text
 
 # -------------------- Table Creation --------------------
 def create_tables():
@@ -128,15 +194,17 @@ def insert_question(q_dict, source=None, force=False):
     if dup_id:
         if force:
             # Build keyword arguments for update
+            nep_val, eng_val = _split_text_into_transcriptions(q_dict)
             update_kwargs = {
                 'subject': q_dict.get('subject', ''),
                 'paper': paper,
                 'group': group,
-                'marks': q_dict.get('marks'),
+                'marks': _compute_marks(q_dict),
+                'penalty': q_dict.get('penalty', 0),
                 'chapter': q_dict.get('chapter', ''),
                 'question_number': question_number,
-                'nepali_transcription': q_dict.get('nepali_transcription') if q_dict.get('nepali_transcription') is not None else q_dict.get('text', ''),
-                'english_transcription': q_dict.get('english_transcription') if q_dict.get('english_transcription') is not None else q_dict.get('english', ''),
+                'nepali_transcription': nep_val,
+                'english_transcription': eng_val,
                 'level': level,
                 'notes': q_dict.get('notes'),
                 'options': q_dict.get('options'),
@@ -176,17 +244,19 @@ def insert_question(q_dict, source=None, force=False):
             )
 
     # No duplicate – insert new
+    nep_val, eng_val = _split_text_into_transcriptions(q_dict)
     qid = add_question(
         date=date,
         institution=institution,
         subject=q_dict.get('subject', ''),
         paper=paper,
         group=group,
-        marks=q_dict.get('marks'),
+        marks=_compute_marks(q_dict),
+        penalty=q_dict.get('penalty', 0),
         chapter=q_dict.get('chapter', ''),
         question_number=question_number,
-        nepali=q_dict.get('nepali_transcription') if q_dict.get('nepali_transcription') is not None else q_dict.get('text', ''),
-        english=q_dict.get('english_transcription') if q_dict.get('english_transcription') is not None else q_dict.get('english', ''),
+        nepali=nep_val,
+        english=eng_val,
         level=level,
         notes=q_dict.get('notes'),
         force=True,

@@ -462,6 +462,18 @@ def migrate_table():
             cursor.execute(f"ALTER TABLE questions ADD COLUMN {col} {definition}")
             print_colored(f"[✓] Added '{col}' column to questions.", COLORS.GREEN)
 
+    # ---- New columns added after v3.0.0 ----
+    newer_columns = {
+        'feedback_true':  'TEXT NULL',
+        'feedback_false': 'TEXT NULL',
+        'penalty':        'DECIMAL(10,2) DEFAULT 0.00',
+    }
+    for col, definition in newer_columns.items():
+        cursor.execute(f"SHOW COLUMNS FROM questions LIKE '{col}'")
+        if not cursor.fetchone():
+            cursor.execute(f"ALTER TABLE questions ADD COLUMN {col} {definition}")
+            print_colored(f"[✓] Added '{col}' column to questions.", COLORS.GREEN)
+
     # ---- Add unique constraint ----
     cursor.execute("SHOW INDEX FROM questions WHERE Key_name = 'unique_question'")
     if not cursor.fetchone():
