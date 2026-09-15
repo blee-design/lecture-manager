@@ -60,13 +60,13 @@ termux_installation_sample.txt
 *.temp.*
 *.zip
 *.kate-swp
+questions_formatting_prompt.txt
+
 
 # ============================================================
 #  Packed snapshots
 # ============================================================
 lecture-manager-*.py
-lecture-manager.py
-lm.py
 
 # ============================================================
 #  IDE / editors
