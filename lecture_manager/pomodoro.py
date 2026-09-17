@@ -17,6 +17,17 @@ signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 print("🚀 LOADING POMODORO MODULE")
 
+# Session types available in the Pomodoro dropdown.
+# Add or remove freely — the DB stores whatever you pick.
+# Stats and charts update automatically the moment a new type is logged.
+SESSION_TYPES = [
+    "study",
+    "revision",
+    "pretest",
+    "exam",
+    "quiz",
+]
+
 def load_quotes():
     """Load quotes from quotes.txt. Return empty list if file not found or empty."""
     quotes_file = os.path.join(os.path.dirname(__file__), '..', 'quotes.txt')
@@ -606,7 +617,7 @@ class PomodoroApp:
         type_frame.columnconfigure(0, weight=1)
         self.type_var = tk.StringVar(value="study")
         type_combo = ttk.Combobox(type_frame, textvariable=self.type_var, state="readonly",
-                                values=["study", "revision", "pretest", "exam", "quiz"])
+                            values=SESSION_TYPES)
         type_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
 
         # -- Task Selection --
@@ -1839,7 +1850,13 @@ class PomodoroApp:
                 else:
                     quote = "Great work!"
 
-                messagebox.showinfo("🎉 Session Complete!", f"Great work!\n\n{quote}")
+                session_type_shown = self.type_var.get().strip() or 'study'
+                messagebox.showinfo(
+                    "🎉 Session Complete!",
+                    f"Great work!\n\n"
+                    f"Type: {session_type_shown}   •   {self.config['work_min']} min\n\n"
+                    f"{quote}"
+                )
 
                 # ---- NEW: in case we just crossed midnight, reset first ----
                 self._check_day_rollover()
@@ -2724,8 +2741,16 @@ class PomodoroApp:
         conn.close()
 
         if type_data:
-            types = [row['session_type'] if row['session_type'] else 'Unspecified' for row in type_data]
-            mins = [float(row['total_min']) for row in type_data if row['total_min'] is not None and float(row['total_min']) > 0]
+            # Ensure every known session type appears, even with 0 minutes
+            known_types = ["study", "revision", "pretest", "exam", "quiz"]
+            got = {row['session_type'] for row in type_data}
+            padded = list(type_data)
+            for t in known_types:
+                if t not in got:
+                    padded.append({'session_type': t, 'total_min': 0})
+            types = [(row['session_type'] or 'Unspecified') for row in padded]
+            mins  = [float(row['total_min'] or 0) for row in padded]
+
             if mins:
                 fig_type, ax_type = plt.subplots(figsize=(9, 5.5))
                 figures.append(fig_type)
