@@ -120,6 +120,19 @@ def format_bilingual_text(nepali, english):
         return f"{nepali} ({english})"
     return nepali or english
 
+def _short_preview(text, max_len=50):
+    """Truncate text at a word boundary with '…' if longer than max_len."""
+    if not text:
+        return ''
+    text = re.sub(r'\s+', ' ', str(text)).strip()
+    if len(text) <= max_len:
+        return text
+    cut = text[:max_len]
+    sp = cut.rfind(' ')
+    if sp > max_len * 0.6:
+        cut = cut[:sp]
+    return cut.rstrip(' ,;:') + '…'
+
 def _get_filtered_questions_interactive():
     """
     Show the filter menu, let the user set filters, and return the filtered questions.
@@ -173,11 +186,24 @@ def _get_filtered_questions_interactive():
             if not value:
                 continue
             if key == 'type':
-                filtered = [q for q in filtered if q.get('type', '').lower() == value.lower()]
+                filtered = [q for q in filtered
+                            if (q.get('type') or '').lower() == value.lower()]
             elif key == 'date':
-                filtered = [q for q in filtered if q.get('date', '') == value]
+                filtered = [q for q in filtered
+                            if (q.get('date') or '') == value]
+            elif key == 'paper':
+                # Exact match — 'paper_i' must not match 'paper_ii'
+                filtered = [q for q in filtered
+                            if (q.get('paper') or '').lower() == value.lower()]
+            elif key == 'question_number':
+                # Normalise to two digits on both sides
+                want = value.strip().zfill(2) if value.strip().isdigit() else value.strip()
+                filtered = [q for q in filtered
+                            if str(q.get('question_no') or '').strip().zfill(2) == want]
             else:
-                filtered = [q for q in filtered if value.lower() in q.get(key, '').lower()]
+                # Text fields remain substring matches (subject, institution, etc.)
+                filtered = [q for q in filtered
+                            if value.lower() in (q.get(key) or '').lower()]
 
         print_colored(f"[i] {len(filtered)} questions match current filters.", COLORS.BLUE)
 
@@ -404,8 +430,10 @@ def get_questions_by_criteria(date=None, institution=None, level=None, paper=Non
         conditions.append("level LIKE %s")
         params.append(f"{level}%")
     if paper:
-        conditions.append("paper LIKE %s")
-        params.append(f"{paper}%")
+        # Paper is a controlled vocabulary (pretest / paper_i / paper_ii / paper_iii).
+        # Exact match — otherwise 'paper_i' also matches 'paper_ii'.
+        conditions.append("paper = %s")
+        params.append(paper)
     if group:
         conditions.append("`group` LIKE %s")
         params.append(f"{group}%")
@@ -413,12 +441,18 @@ def get_questions_by_criteria(date=None, institution=None, level=None, paper=Non
         conditions.append("subject LIKE %s")
         params.append(f"{subject}%")
     if question_number:
-        conditions.append("question_number LIKE %s")
-        params.append(f"{question_number}%")
+        # Normalise to two-digit form so '1' and '01' both work.
+        qn = str(question_number).strip()
+        if qn.isdigit():
+            qn = qn.zfill(2)
+        # Exact match so '1' doesn't also match '10'..'19'.
+        conditions.append("question_number = %s")
+        params.append(qn)
     if chapter:
         conditions.append("LOWER(chapter) LIKE LOWER(%s)")
         params.append(f"%{chapter}%")
     if syllabus_code:
+        # Rough pre-filter in SQL (fast), then exact boundary check in Python.
         conditions.append("syllabus_code LIKE %s")
         params.append(f"%{syllabus_code}%")
 
@@ -430,6 +464,16 @@ def get_questions_by_criteria(date=None, institution=None, level=None, paper=Non
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
+
+    # ---- Post-filter: syllabus_code must match as a whole segment ----
+    # Prevents '1.5' from matching '1.15', '11.5', '1.50', etc.
+    if syllabus_code:
+        pattern = re.compile(
+            r'(?<![0-9])' + re.escape(syllabus_code.strip()) + r'(?![0-9])'
+        )
+        rows = [r for r in rows
+                if pattern.search(r.get('syllabus_code') or '')]
+
     return rows
 
 def get_all_questions(sort_by='question_date', order='DESC', search=None):
@@ -758,7 +802,7 @@ def _display_single_question(q):
 
     print("─" * 70)
 
-def _display_paper(questions):
+def _display_paper(questions, show_answers=False):
     if not questions:
         print_colored("[i] No questions found.", COLORS.YELLOW)
         return
@@ -811,6 +855,26 @@ def _display_paper(questions):
 
                 if notes:
                     print(f"        {color_text('📝 Note:', COLORS.YELLOW)} {notes}")
+
+                # ---- Inline options + answer when requested ----
+                if show_answers:
+                    if q_type in ('multichoice', 'truefalse'):
+                        for opt in q.get('options', []):
+                            marker = color_text(" ✓", COLORS.GREEN, bold=True) if opt.get('correct') else ""
+                            print(f"            - {opt.get('text', '')}{marker}")
+                    elif q_type == 'matching':
+                        for pair in q.get('pairs', []):
+                            print(f"            {pair.get('subquestion','')} "
+                                  f"{color_text('↔', COLORS.CYAN)} "
+                                  f"{pair.get('answer','')}")
+
+                    if q.get('general_feedback'):
+                        print(f"            {color_text('💡', COLORS.GREEN)} "
+                              f"{html_to_terminal(q['general_feedback'])}")
+                    if q_type == 'essay' and q.get('grader_info'):
+                        print(f"            {color_text('📝 Grader:', COLORS.GREEN)} "
+                              f"{html_to_terminal(q['grader_info'])}")
+
                 print()
 
 # ---------- Quick parser ----------
@@ -911,7 +975,9 @@ def quick_lookup_interactive():
                     print_colored("[i] No questions found for this paper.", COLORS.YELLOW)
                     continue
                 else:
-                    _display_paper(results)
+                    show = input(color_text("Include answers? (y/n, default n): ",
+                                            COLORS.MAGENTA)).strip().lower() == 'y'
+                    _display_paper(results, show_answers=show)
                     current_results = None
                     continue
 
@@ -936,8 +1002,9 @@ def quick_lookup_interactive():
         print(f"\n--- SEARCH RESULTS ({len(results)} matches) ---")
         for i, r in enumerate(results, 1):
             # Preview: use Nepali or English
-            preview = r.get('nepali_transcription') or r.get('english_transcription') or ''
-            preview = preview[:40] + '...' if len(preview) > 40 else preview
+            preview = _short_preview(
+                r.get('nepali_transcription') or r.get('english_transcription') or '', 45
+            )
             print(f"  {i:2}. [{r['id']:3}] | {r['question_date']} | {r['institution'][:20]:20} | {r['subject'][:25]:25} | {r['level'][:12]:12} | Q{r['question_number']} | {r.get('type', 'essay'):10} | {preview}")
 
         print("\n  Options:")
@@ -998,6 +1065,9 @@ def unified_question_menu():
         print("  5. Advanced search")
         print("  6. Update question")
         print("  7. Delete question")
+        print("  8. Find duplicates")
+        print("  9. 📊 Statistics")
+        print(" 10. Bulk rename (institution/subject/paper/level/group)")
         print("\n  " + color_text("📥 Import", COLORS.YELLOW, bold=True))
         print("  a. From TXT (human-readable, universal)")
         print("  b. From CSV (full backup, all columns)")
@@ -1034,6 +1104,12 @@ def unified_question_menu():
             update_question_interactive()
         elif choice == '7':
             delete_question_interactive()
+        elif choice == '8':
+            find_duplicates_interactive()
+        elif choice == '9':
+            question_statistics_interactive()
+        elif choice == '10':
+            bulk_rename_interactive()
 
         # ----- Import -----
         elif choice == 'a':
@@ -1373,50 +1449,122 @@ def add_question_interactive():
     print_colored("  ADD NEW QUESTION", COLORS.CYAN, bold=True)
     print("═" * 50)
 
-    date = _prompt_field("Date (YYYY-MM-DD, press Enter for today): ")
+    # ---- Question type first ----
+    print("\nQuestion type:")
+    print("  1. Essay (long answer) — default")
+    print("  2. Multichoice (MCQ)")
+    print("  3. True/False")
+    print("  4. Matching")
+    t = input(color_text("Choose type (1-4, default 1): ", COLORS.MAGENTA)).strip() or '1'
+    q_type = {'1':'essay', '2':'multichoice', '3':'truefalse', '4':'matching'}.get(t, 'essay')
+
+    # ---- Common metadata ----
+    date = _prompt_field("Date (YYYY-MM-DD, Enter for today): ")
     if not date:
         date = datetime.today().strftime('%Y-%m-%d')
-
     institution = _prompt_field("Institution: ")
-    subject = _prompt_field("Subject: ")
-    paper = _prompt_field("Paper: ")
-    group = _prompt_field("Group: ")
+    subject     = _prompt_field("Subject: ")
+    paper       = _prompt_field("Paper: ")
+    group       = _prompt_field("Group: ")
 
     marks = None
     while True:
-        marks_raw = input(color_text("Marks (numeric, press Enter to skip): ", COLORS.MAGENTA)).strip()
-        if marks_raw == '':
+        raw = input(color_text("Marks (numeric, Enter to skip): ", COLORS.MAGENTA)).strip()
+        if not raw:
             break
-        if marks_raw.isdigit():
-            marks = int(marks_raw)
-            break
-        else:
-            print_colored("[!] Marks must be a number. Please try again.", COLORS.YELLOW)
+        if raw.isdigit():
+            marks = int(raw); break
+        print_colored("[!] Marks must be a number.", COLORS.YELLOW)
 
-    chapter = _prompt_field("Chapter: ")
-    question_number = _prompt_field("Question Number: ")
-    nepali = _prompt_field("Nepali Transcription: ")
-    english = _prompt_field("English Transcription: ")
-    level = _prompt_field("Level: ")
-    notes = input(color_text("Notes (optional, press Enter to skip): ", COLORS.MAGENTA)).strip()
-    if not notes:
-        notes = None
+    chapter    = _prompt_field("Chapter: ")
+    q_num      = _prompt_field("Question Number: ")
+    nepali     = _prompt_field("Nepali Transcription: ")
+    english    = _prompt_field("English Transcription: ")
+    level      = _prompt_field("Level: ")
+    notes      = input(color_text("Notes (optional): ", COLORS.MAGENTA)).strip() or None
+    gf         = input(color_text("General Feedback / Explanation (optional): ", COLORS.MAGENTA)).strip() or None
+
+    options = pairs = hints = None
+    feedback_true = feedback_false = None
+    grader_info = None
+
+    # ---- Type-specific input ----
+    if q_type == 'multichoice':
+        options = _prompt_mcq_options()
+        if not options or len(options) < 2:
+            print_colored("[!] Need at least 2 options.", COLORS.RED); return
+        correct_count = sum(1 for o in options if o['correct'])
+        if correct_count != 1:
+            print_colored(f"[!] Exactly 1 correct option required (you marked {correct_count}).", COLORS.RED); return
+
+    elif q_type == 'truefalse':
+        c = input(color_text("Correct answer (t/f, default t): ", COLORS.MAGENTA)).strip().lower()
+        is_true = (c != 'f')
+        options = [
+            {'text': 'True',  'correct':  is_true, 'fraction': 100 if is_true else -20},
+            {'text': 'False', 'correct': not is_true, 'fraction': -20 if is_true else 100},
+        ]
+        feedback_true  = input(color_text("Feedback if True (optional): ",  COLORS.MAGENTA)).strip() or None
+        feedback_false = input(color_text("Feedback if False (optional): ", COLORS.MAGENTA)).strip() or None
+
+    elif q_type == 'matching':
+        pairs = _prompt_matching_pairs()
+        if not pairs or len(pairs) < 2:
+            print_colored("[!] Need at least 2 matching pairs.", COLORS.RED); return
+
+    else:  # essay
+        grader_info = input(color_text("Grader Information (optional): ", COLORS.MAGENTA)).strip() or None
 
     force = input(color_text("Force add even if duplicate? (y/n, default n): ", COLORS.MAGENTA)).strip().lower() == 'y'
 
-    qid = add_question(date, institution, subject, paper, group, marks,
-                       chapter, question_number, nepali, english, level, notes, force)
+    qid = add_question(
+        date, institution, subject, paper, group, marks,
+        chapter, q_num, nepali, english, level, notes,
+        force=force,
+        options=options, pairs=pairs, hints=hints,
+        general_feedback=gf,
+        feedback_true=feedback_true, feedback_false=feedback_false,
+        grader_info=grader_info,
+        q_type=q_type,
+    )
     if qid:
         print_colored(f"[✓] Question processed with ID: {qid}", COLORS.GREEN)
 
+
+def _prompt_mcq_options():
+    print("\n  Enter options one per line. Mark the correct one with '*' at the end.")
+    print("  Examples:  Kathmandu *  /  Pokhara")
+    print("  Empty line when done (at least 2).")
+    opts = []
+    while True:
+        raw = input(color_text(f"  Option {len(opts)+1}: ", COLORS.MAGENTA)).strip()
+        if not raw:
+            break
+        correct = raw.endswith('*')
+        text = raw.rstrip('*').strip()
+        if text:
+            opts.append({'text': text, 'correct': correct})
+    return opts
+
+
+def _prompt_matching_pairs():
+    print("\n  Enter pairs: subquestion, then its answer. Empty subquestion ends.")
+    print("  Need at least 2 pairs.")
+    pairs = []
+    while True:
+        sub = input(color_text(f"  Subquestion {len(pairs)+1}: ", COLORS.MAGENTA)).strip()
+        if not sub:
+            break
+        ans = input(color_text(f"    Answer for '{sub}': ", COLORS.MAGENTA)).strip()
+        if not ans:
+            print_colored("  Answer empty — pair skipped.", COLORS.YELLOW); continue
+        pairs.append({'subquestion': sub, 'answer': ans})
+    return pairs
+
 def view_all_questions_interactive():
     print("\nSort by:")
-    print("  1. Date (default)")
-    print("  2. Subject")
-    print("  3. Institution")
-    print("  4. Paper")
-    print("  5. Level")
-    print("  6. Type")
+    print("  1. Date (default)   2. Subject   3. Institution")
+    print("  4. Paper            5. Level     6. Type")
     sort_choice = input(color_text("Choose (1-6, default 1): ", COLORS.MAGENTA)).strip()
     sort_map = {
         '1': ('question_date', 'Date'),
@@ -1424,51 +1572,89 @@ def view_all_questions_interactive():
         '3': ('institution', 'Institution'),
         '4': ('paper', 'Paper'),
         '5': ('level', 'Level'),
-        '6': ('type', 'Type')
+        '6': ('type', 'Type'),
     }
     col, display_name = sort_map.get(sort_choice, ('question_date', 'Date'))
 
-    order = input(color_text("Order (a=ascending, d=descending, default d): ", COLORS.MAGENTA)).strip().lower()
-    if order == 'a':
-        order_sql = 'ASC'
-        arrow = '▲'
-    else:
-        order_sql = 'DESC'
-        arrow = '▼'
+    order = input(color_text("Order (a=asc, d=desc, default d): ", COLORS.MAGENTA)).strip().lower()
+    order_sql = 'ASC' if order == 'a' else 'DESC'
 
+    # Optional type filter before we fetch
+    t_filter = input(color_text("Type filter (essay/multichoice/truefalse/matching, Enter=all): ",
+                                COLORS.MAGENTA)).strip().lower()
     rows = get_all_questions(sort_by=col, order=order_sql)
+    if t_filter:
+        rows = [r for r in rows if (r.get('type') or 'essay').lower() == t_filter]
     if not rows:
         print_colored("[i] No questions found.", COLORS.YELLOW)
         return
 
-    sort_desc = f"{display_name} {arrow}"
-    print(f"\n--- ALL QUESTIONS (sorted by {color_text(sort_desc, COLORS.CYAN, bold=True)}) ---")
+    PAGE_SIZE = 20
+    total = len(rows)
+    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = 1
 
-    for row in rows:
-        val = row.get(col)
-        if col == 'question_date' and isinstance(val, (date, datetime)):
-            val = val.strftime('%Y-%m-%d')
-        elif val is None:
-            val = ''
+    def _print_page(page_items, page_num):
+        print(f"\n--- PAGE {page_num}/{pages} — {total} question(s) "
+              f"(sorted by {color_text(display_name, COLORS.CYAN, bold=True)}) ---")
+        print(f"  {'ID':>5} | {'Date':<10} | {'Institution':<20} | {'Subject':<22} | "
+              f"{'Paper':<10} | {'Level':<10} | Qno | Type        | Preview")
+        print("  " + "─" * 140)
+        for r in page_items:
+            qno = r.get('question_number', '') or ''
+            qtype = (r.get('type') or 'essay')
+            preview = _short_preview(
+                r.get('nepali_transcription') or r.get('english_transcription') or '', 45
+            )
+            print(f"  {r['id']:>5} | "
+                  f"{(r.get('question_date') or ''):<10} | "
+                  f"{(r.get('institution') or '')[:20]:<20} | "
+                  f"{(r.get('subject') or '')[:22]:<22} | "
+                  f"{(r.get('paper') or '')[:10]:<10} | "
+                  f"{(r.get('level') or '')[:10]:<10} | "
+                  f"{qno:>3} | {qtype:<11} | {preview}")
 
-        bracket_val = color_text(f"[{val}] ", COLORS.CYAN, bold=True)
-        id_str = f"{row['id']:3}"
-        date_str = row.get('question_date', '')
-        if isinstance(date_str, (date, datetime)):
-            date_str = date_str.strftime('%Y-%m-%d')
-        inst = (row.get('institution') or '')[:25]
-        subj = (row.get('subject') or '')[:25]
-        paper = (row.get('paper') or '')[:15]
-        level = (row.get('level') or '')[:12]
-        qno = row.get('question_number', '')
-        qtype = row.get('type', 'essay')
-        # Preview
-        preview = row.get('nepali_transcription') or row.get('english_transcription') or ''
-        preview = preview[:40] + '...' if len(preview) > 40 else preview
+    while True:
+        start = (page - 1) * PAGE_SIZE
+        end = min(start + PAGE_SIZE, total)
+        _print_page(rows[start:end], page)
 
-        print(f"{bracket_val}{id_str} | {date_str} | {inst:<25} | {subj:<25} | {paper:<15} | {level:<12} | Q{qno} | {qtype:<10} | {preview}")
+        print("\n  [n]ext  [p]rev  [g]oto <page>  [i]d <ID> to view  [Enter] exit")
+        cmd = input(color_text("> ", COLORS.MAGENTA)).strip().lower()
 
-    print(f"\n  Total: {len(rows)} questions.")
+        if cmd in ('', 'q', 'exit'):
+            return
+        elif cmd == 'n':
+            if page < pages:
+                page += 1
+            else:
+                print_colored("Already on last page.", COLORS.YELLOW)
+        elif cmd == 'p':
+            if page > 1:
+                page -= 1
+            else:
+                print_colored("Already on first page.", COLORS.YELLOW)
+        elif cmd.startswith('g '):
+            try:
+                p = int(cmd.split()[1])
+                if 1 <= p <= pages:
+                    page = p
+                else:
+                    print_colored(f"[!] Page must be 1–{pages}.", COLORS.RED)
+            except Exception:
+                print_colored("[!] Usage: g <page>", COLORS.RED)
+        elif cmd.startswith('i '):
+            try:
+                qid = int(cmd.split()[1])
+                q = get_question_by_id(qid)
+                if q:
+                    _display_single_question(q)
+                else:
+                    print_colored(f"[!] Question ID {qid} not found.", COLORS.RED)
+            except Exception:
+                print_colored("[!] Usage: i <ID>", COLORS.RED)
+        else:
+            print_colored("[!] Unknown command.", COLORS.RED)
 
 def view_whole_paper_interactive():
     print("\n" + "═" * 50)
@@ -1491,7 +1677,9 @@ def view_whole_paper_interactive():
         print_colored("[i] No questions found.", COLORS.YELLOW)
         return
 
-    _display_paper(results)
+    show = input(color_text("Include options / correct answers / explanations? (y/n, default n): ",
+                            COLORS.MAGENTA)).strip().lower() == 'y'
+    _display_paper(results, show_answers=show)
 
 def advanced_search_interactive():
     print("\n" + "═" * 50)
@@ -1555,16 +1743,28 @@ def advanced_search_interactive():
             else:
                 print(f"\n--- SEARCH RESULTS ({len(results)} matches) ---")
                 for r in results:
-                    preview = r.get('nepali_transcription') or r.get('english_transcription') or ''
-                    preview = preview[:50] + '...' if len(preview) > 50 else preview
+                    preview = _short_preview(
+                        r.get('nepali_transcription') or r.get('english_transcription') or '', 55
+                    )
                     print(f"  {r['id']:3} | {r['question_date']} | {r['institution'][:20]:20} | {r['subject'][:20]:20} | {r['chapter'][:15]:15} | Q{r['question_number']} | {r.get('type', 'essay'):10}")
                     print(f"      {preview}")
                 print(f"  Total: {len(results)} matches.")
-                choice_id = input(color_text("\nEnter ID to view full details, or press Enter to continue: ", COLORS.MAGENTA)).strip()
-                if choice_id.isdigit():
+                while True:
+                    choice_id = input(color_text(
+                        "\nEnter ID to view (Enter/b/q = back to search): ",
+                        COLORS.MAGENTA)).strip().lower()
+                    if choice_id in ('', 'b', 'back', 'q', 'quit'):
+                        break
+                    if not choice_id.isdigit():
+                        print_colored("[!] Enter a numeric ID, or press Enter to return.", COLORS.RED)
+                        continue
+                    if int(choice_id) == 0:
+                        break
                     q = get_question_by_id(int(choice_id))
                     if q:
                         _display_single_question(q)
+                    else:
+                        print_colored(f"[!] ID {choice_id} not found.", COLORS.RED)
             continue
 
         elif choice == '0':
@@ -1596,7 +1796,8 @@ def update_question_interactive():
     fields = [
         'question_date', 'institution', 'subject', 'paper', 'group',
         'marks', 'chapter', 'question_number',
-        'nepali_transcription', 'english_transcription', 'level', 'notes', 'type'
+        'nepali_transcription', 'english_transcription', 'level', 'notes', 'type',
+        'options',   # special: opens the interactive editor for MCQ/TF/Matching
     ]
     updates = {}
 
@@ -1649,6 +1850,54 @@ def update_question_interactive():
 
         field = fields[idx - 1]
         current = row.get(field, '')
+
+        # ---- Special: options / pairs / hints ----
+        if field == 'options':
+            q_full = get_question_by_id(int(qid))
+            q_type = q_full.get('type', 'essay')
+            if q_type == 'multichoice':
+                print("\n  Current options:")
+                for i, o in enumerate(q_full.get('options', []), 1):
+                    marker = "✓" if o.get('correct') else " "
+                    print(f"    {i}. [{marker}] {o['text']}")
+                print("\n  Enter new options (one per line, '*' = correct). Empty line when done.")
+                print("  Or press Enter immediately to keep existing.")
+                new_options = _prompt_mcq_options()
+                if new_options:
+                    correct_n = sum(1 for o in new_options if o['correct'])
+                    if correct_n != 1:
+                        print_colored(f"[!] Need exactly 1 correct (got {correct_n}). Keeping existing.", COLORS.RED)
+                    else:
+                        updates['options'] = new_options
+                        print_colored(f"[✓] {len(new_options)} new option(s) staged.", COLORS.GREEN)
+                else:
+                    print_colored("[i] No change to options.", COLORS.YELLOW)
+            elif q_type == 'truefalse':
+                print("\n  Current:")
+                for o in q_full.get('options', []):
+                    print(f"    [{'✓' if o.get('correct') else ' '}] {o['text']}")
+                c = input(color_text("Change correct answer to (t/f, Enter to keep): ", COLORS.MAGENTA)).strip().lower()
+                if c in ('t', 'f'):
+                    is_true = (c == 't')
+                    updates['options'] = [
+                        {'text': 'True',  'correct':  is_true, 'fraction': 100 if is_true else -20},
+                        {'text': 'False', 'correct': not is_true, 'fraction': -20 if is_true else 100},
+                    ]
+                    print_colored(f"[✓] Correct answer set to {c.upper()}.", COLORS.GREEN)
+            elif q_type == 'matching':
+                print("\n  Current pairs:")
+                for p in q_full.get('pairs', []):
+                    print(f"    {p['subquestion']}  ↔  {p['answer']}")
+                if input(color_text("Replace all pairs? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y':
+                    new_pairs = _prompt_matching_pairs()
+                    if new_pairs and len(new_pairs) >= 2:
+                        updates['pairs'] = new_pairs
+                        print_colored(f"[✓] {len(new_pairs)} pair(s) staged.", COLORS.GREEN)
+                    else:
+                        print_colored("[i] Not enough pairs — keeping existing.", COLORS.YELLOW)
+            else:
+                print_colored("[i] Essay questions have no options/pairs.", COLORS.YELLOW)
+            continue
 
         print(f"\nCurrent value: {color_text(current if current != '' else '(empty)', COLORS.BLUE)}")
         prompt = color_text(f"New value (press Enter to skip, or type 'clear' to empty): ", COLORS.MAGENTA)
@@ -2526,3 +2775,110 @@ def get_distinct_chapters_like(search_term):
     cursor.close()
     conn.close()
     return [row[0] for row in rows]
+
+def find_duplicates_interactive():
+    print("\n" + "═" * 60)
+    print_colored("  FIND DUPLICATE QUESTIONS", COLORS.CYAN, bold=True)
+    print("═" * 60)
+    print("  Groups by (date, institution, level, paper, group, number).")
+    print("  Any group with more than one row is a duplicate cluster.\n")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("""
+        SELECT question_date, institution, level, paper, `group`, question_number,
+               COUNT(*) AS n, GROUP_CONCAT(id ORDER BY id) AS ids
+        FROM questions
+        GROUP BY question_date, institution, level, paper, `group`, question_number
+        HAVING n > 1
+        ORDER BY n DESC, question_date DESC
+    """)
+    groups = cursor.fetchall()
+    cursor.close(); conn.close()
+
+    if not groups:
+        print_colored("[✓] No duplicate clusters found.", COLORS.GREEN); return
+
+    print_colored(f"[!] {len(groups)} duplicate cluster(s):\n", COLORS.YELLOW)
+    for g in groups:
+        ids = g['ids'].split(',')
+        print(f"  {g['question_date']} | {g['institution']} | {g['level']} "
+              f"| {g['paper'] or '-'} | {g['group'] or '-'} | Q{g['question_number']} "
+              f"→ {g['n']} copies  (IDs: {', '.join(ids)})")
+
+    pick = input(color_text("\nEnter IDs to view (comma-separated) or Enter to skip: ", COLORS.MAGENTA)).strip()
+    if pick:
+        for qid in [x.strip() for x in pick.split(',') if x.strip().isdigit()]:
+            q = get_question_by_id(int(qid))
+            if q:
+                _display_single_question(q); print()
+
+
+def question_statistics_interactive():
+    print("\n" + "═" * 60)
+    print_colored("  📊 QUESTION BANK STATISTICS", COLORS.CYAN, bold=True)
+    print("═" * 60)
+
+    conn = get_connection(); cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT COUNT(*) AS n FROM questions")
+    total = cursor.fetchone()['n']
+    cursor.execute("SELECT COALESCE(type,'essay') AS type, COUNT(*) AS n FROM questions GROUP BY type ORDER BY n DESC")
+    by_type = cursor.fetchall()
+    cursor.execute("SELECT institution, COUNT(*) AS n FROM questions WHERE institution IS NOT NULL AND institution != '' GROUP BY institution ORDER BY n DESC LIMIT 10")
+    by_inst = cursor.fetchall()
+    cursor.execute("SELECT subject, COUNT(*) AS n FROM questions WHERE subject IS NOT NULL AND subject != '' GROUP BY subject ORDER BY n DESC LIMIT 10")
+    by_subj = cursor.fetchall()
+    cursor.execute("SELECT COUNT(*) AS n FROM questions WHERE source IS NULL OR source = ''")
+    no_source = cursor.fetchone()['n']
+    cursor.execute("SELECT COUNT(*) AS n FROM questions WHERE general_feedback IS NULL OR general_feedback = ''")
+    no_fb = cursor.fetchone()['n']
+    cursor.close(); conn.close()
+
+    print(f"\n  Total questions     : {color_text(str(total), COLORS.GREEN, bold=True)}")
+    print(f"  Missing source tag  : {no_source}")
+    print(f"  Missing explanation : {no_fb}")
+    print(f"\n  By type:")
+    for r in by_type: print(f"    {r['type']:<12}: {r['n']}")
+    print(f"\n  Top institutions:")
+    for r in by_inst: print(f"    {(r['institution'] or '')[:40]:<40}: {r['n']}")
+    print(f"\n  Top subjects:")
+    for r in by_subj: print(f"    {(r['subject'] or '')[:40]:<40}: {r['n']}")
+
+
+def bulk_rename_interactive():
+    print("\n" + "═" * 50)
+    print_colored("  BULK RENAME FIELD", COLORS.CYAN, bold=True)
+    print("═" * 50)
+    fields = ['institution', 'subject', 'paper', 'level', 'group']
+    for i, f in enumerate(fields, 1):
+        print(f"  {i}. {f}")
+    print("  0. Cancel")
+    try:
+        idx = int(input(color_text("Choose field (0-5): ", COLORS.MAGENTA)).strip())
+    except ValueError:
+        return
+    if not (1 <= idx <= len(fields)):
+        return
+
+    field = fields[idx - 1]
+    old = input(color_text(f"Old {field} (exact match): ", COLORS.MAGENTA)).strip()
+    if not old:
+        print_colored("Cancelled.", COLORS.YELLOW); return
+    new = input(color_text(f"New {field}: ", COLORS.MAGENTA)).strip()
+    if not new:
+        print_colored("Cancelled.", COLORS.YELLOW); return
+
+    col_expr = f"`{field}`" if field == 'group' else field
+    conn = get_connection(); cursor = conn.cursor()
+    cursor.execute(f"SELECT COUNT(*) FROM questions WHERE {col_expr} = %s", (old,))
+    count = cursor.fetchone()[0]
+    if count == 0:
+        print_colored(f"[i] No rows match {field} = '{old}'.", COLORS.YELLOW)
+        cursor.close(); conn.close(); return
+    print_colored(f"[i] {count} question(s) match.", COLORS.BLUE)
+    if input(color_text(f"Rename all to '{new}'? (y/n): ", COLORS.MAGENTA)).strip().lower() != 'y':
+        print_colored("Cancelled.", COLORS.YELLOW); cursor.close(); conn.close(); return
+    cursor.execute(f"UPDATE questions SET {col_expr} = %s WHERE {col_expr} = %s", (new, old))
+    conn.commit(); updated = cursor.rowcount
+    cursor.close(); conn.close()
+    print_colored(f"[✓] Updated {updated} row(s).", COLORS.GREEN)
