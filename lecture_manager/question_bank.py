@@ -100,13 +100,65 @@ def _should_clear_english(nepali, english):
     return nepali.strip().lower() == english.strip().lower()
 
 def normalize_question_number(qno):
-    """Convert to zero‑padded two‑digit string (e.g., 1 → '01', 10 → '10')."""
+    """
+    Clean a question number for storage.
+
+    - Trim whitespace
+    - Strip an optional 'Q' / 'Q.' / 'Question ' prefix
+    - Reject empty → None (so it becomes NULL, not '00')
+    - Leave everything else as typed:  '1', '01', '1a', '1(a)', '1.5', '10a'
+
+    Display-side: whatever comes out of this is what the user sees.
+    Comparison/sort use the helpers below.
+    """
     if qno is None:
         return None
-    try:
-        return f"{int(qno):02d}"
-    except (ValueError, TypeError):
-        return str(qno).strip().zfill(2)
+    s = str(qno).strip()
+    if not s:
+        return None
+    # Strip common prefixes
+    s = re.sub(r'^(?:Q\.?\s*|Question\s+)', '', s, flags=re.IGNORECASE).strip()
+    if not s:
+        return None
+    if len(s) > 50:
+        s = s[:50]
+    return s
+
+
+def canonical_qno(qno):
+    """
+    Canonical form for comparison only (dup detection, equality).
+    '01', '1', 'Q1', 'Q.1'  →  '1'
+    '1A'                    →  '1a'
+    '1a'                    →  '1a'
+    '1.5', '1(a)'           →  unchanged (structure preserved)
+    """
+    if qno is None:
+        return None
+    s = str(qno).strip()
+    if not s:
+        return None
+    s = re.sub(r'^(?:Q\.?\s*|Question\s+)', '', s, flags=re.IGNORECASE).strip()
+    # Strip leading zeros from the numeric prefix only
+    m = re.match(r'^0*(\d+)(.*)$', s)
+    if m:
+        return f"{int(m.group(1))}{m.group(2).lower()}"
+    return s.lower()
+
+
+def sort_key_qno(qno):
+    """
+    Python-side sort key: numeric prefix, then remainder.
+    '1' < '1a' < '1b' < '2' < '10' < '10a' < '10b' < '11'
+    Non-numeric labels sort after numeric ones.
+    """
+    if not qno:
+        return (999999, '', '')
+    s = canonical_qno(qno) or ''
+    m = re.match(r'^(\d+)(.*)$', s)
+    if m:
+        return (int(m.group(1)), m.group(2), '')
+    return (999998, s, '')
 
 def format_bilingual_text(nepali, english):
     """Display Nepali and English combined.
@@ -196,10 +248,17 @@ def _get_filtered_questions_interactive():
                 filtered = [q for q in filtered
                             if (q.get('paper') or '').lower() == value.lower()]
             elif key == 'question_number':
-                # Normalise to two digits on both sides
-                want = value.strip().zfill(2) if value.strip().isdigit() else value.strip()
-                filtered = [q for q in filtered
-                            if str(q.get('question_no') or '').strip().zfill(2) == want]
+                # Family match: '1' → 1, 01, 1a, 1b (never 10, 11)
+                want = canonical_qno(value)
+                if want is not None:
+                    def _in_family(qno):
+                        c = canonical_qno(qno) or ''
+                        if not c.startswith(want):
+                            return False
+                        tail = c[len(want):]
+                        return (not tail) or (not tail[0].isdigit())
+                    filtered = [q for q in filtered
+                                if _in_family(q.get('question_no'))]
             else:
                 # Text fields remain substring matches (subject, institution, etc.)
                 filtered = [q for q in filtered
@@ -280,6 +339,9 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
         group = None
     if notes == '':
         notes = None
+
+    # Normalise the question number centrally so every caller behaves the same
+    question_number = normalize_question_number(question_number)
 
     # Check duplicate
     if not force:
@@ -459,7 +521,9 @@ def get_questions_by_criteria(date=None, institution=None, level=None, paper=Non
     sql = f"SELECT * FROM {TABLE_NAME}"
     if conditions:
         sql += " WHERE " + " AND ".join(conditions)
-    sql += " ORDER BY question_date DESC, institution, level, `group`, subject, question_number"
+    sql += (" ORDER BY question_date DESC, institution, level, `group`, subject, "
+            # numeric prefix first, then the rest of the string
+            "CAST(question_number AS UNSIGNED), question_number")
     cursor.execute(sql, params)
     rows = cursor.fetchall()
     cursor.close()
@@ -492,7 +556,13 @@ def get_all_questions(sort_by='question_date', order='DESC', search=None):
         """
         cursor.execute(sql, (search, search))
     else:
-        cursor.execute(f"SELECT * FROM questions ORDER BY {sort_by} {order}")
+        if sort_by == 'question_number':
+            cursor.execute(
+                f"SELECT * FROM questions "
+                f"ORDER BY CAST(question_number AS UNSIGNED) {order}, question_number {order}"
+            )
+        else:
+            cursor.execute(f"SELECT * FROM questions ORDER BY {sort_by} {order}")
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -645,22 +715,32 @@ def check_duplicate(date, institution, level, paper, group, question_number, exc
                 conditions.append(f"{field} = %s")
                 params.append(value)
 
+        # Paper, group, level, date, institution — exact DB values are fine
         add_condition("question_date", date)
         add_condition("institution", institution)
         add_condition("level", level)
         add_condition("paper", paper)
         add_condition("`group`", group)
-        add_condition("question_number", question_number)
 
-        sql = "SELECT id FROM questions WHERE " + " AND ".join(conditions)
+        # Question number — compare canonical forms so '1' and '01' collide
+        want = canonical_qno(question_number)
+        if want is None:
+            conditions.append("(question_number IS NULL OR question_number = '')")
+        else:
+            # Fetch candidates with the same numeric prefix, then filter in Python
+            conditions.append("question_number IS NOT NULL AND question_number != ''")
+            # We'll do the canonical comparison after fetching.
+
+        sql = "SELECT id, question_number FROM questions WHERE " + " AND ".join(conditions)
         if exclude_id:
             sql += " AND id != %s"
             params.append(exclude_id)
-        sql += " LIMIT 1"
 
         cursor.execute(sql, params)
-        row = cursor.fetchone()
-        return row['id'] if row else None
+        for row in cursor.fetchall():
+            if canonical_qno(row['question_number']) == want:
+                return row['id']
+        return None
     finally:
         cursor.close()
         conn.close()
@@ -1729,10 +1809,40 @@ def advanced_search_interactive():
                 val = criteria[field].strip()
                 if val:
                     kwargs[field] = val
-            # If type is set, we need to fetch and filter manually because get_questions_by_criteria doesn't have type
-            results = get_questions_by_criteria(**{k: v for k, v in kwargs.items() if k != 'type'})
+
+            # Family mode is always on — '1' matches 1, 01, 1a, 1b, 1(a), 1.5
+            family_mode = True
+
+            # Don't pass question_number to SQL — we filter it in Python below
+            # so that '1' can match '1a', '1b', etc. when in family mode.
+            sql_kwargs = {k: v for k, v in kwargs.items() if k not in ('type', 'question_number')}
+            results = get_questions_by_criteria(**sql_kwargs)
+
+            # ─── BLOCK 2: apply the question_number filter in Python ───
+            if 'question_number' in kwargs:
+                want = canonical_qno(kwargs['question_number'])
+                if want is None:
+                    # User typed something that canonicalised to nothing (e.g. just 'Q').
+                    # Nothing to match — skip question_number filtering entirely.
+                    pass
+                else:
+                    def _in_family(qno):
+                        c = canonical_qno(qno) or ''
+                        if not c.startswith(want):
+                            return False
+                        tail = c[len(want):]
+                        return (not tail) or (not tail[0].isdigit())
+
+                    if family_mode:
+                        results = [q for q in results if _in_family(q.get('question_number'))]
+                    else:
+                        results = [q for q in results
+                                   if canonical_qno(q.get('question_number')) == want]
+
+            # Type filter (unchanged)
             if 'type' in kwargs:
                 results = [q for q in results if q.get('type', '').lower() == kwargs['type'].lower()]
+
             if not results:
                 print_colored("[i] No matches found.", COLORS.YELLOW)
                 continue
