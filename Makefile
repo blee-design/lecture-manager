@@ -182,7 +182,7 @@ setup: install db-init
 .PHONY: backup
 backup: $(BACKUP_DIR)
 	@echo "$(BLUE)Creating backup of $(PROJECT_NAME)...$(NC)"
-	tar -cvJf $(BACKUP_FILE) $(EXCLUDE) .
+	tar -cJf $(BACKUP_FILE) $(EXCLUDE) .
 	@echo "$(GREEN)Backup created: $(BACKUP_FILE)$(NC)"
 
 $(BACKUP_DIR):
