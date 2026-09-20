@@ -1844,12 +1844,29 @@ class PomodoroApp:
 
         try:
             if completed_phase == "work":
-                import random
-                if QUOTES:
-                    quote = random.choice(QUOTES)
-                else:
-                    quote = "Great work!"
+                # ============================================================
+                # 1. PERSIST FIRST — before any blocking modal.
+                #    If the user closes the window (or walks away) before
+                #    clicking OK on the notification, the session must already
+                #    be in the DB.
+                # ============================================================
 
+                # Midnight rollover check (updates today_count from DB)
+                self._check_day_rollover()
+
+                # Insert the log row NOW
+                self.log_work_session()
+
+                # Refresh the on-screen log so it shows the new row immediately
+                self.log = self.load_log()
+                self.refresh_log()
+                self.log_text.update_idletasks()
+
+                # ============================================================
+                # 2. NOW show the completion notification
+                # ============================================================
+                import random
+                quote = random.choice(QUOTES) if QUOTES else "Great work!"
                 session_type_shown = self.type_var.get().strip() or 'study'
                 messagebox.showinfo(
                     "🎉 Session Complete!",
@@ -1858,18 +1875,9 @@ class PomodoroApp:
                     f"{quote}"
                 )
 
-                # ---- NEW: in case we just crossed midnight, reset first ----
-                self._check_day_rollover()
-
-                # ----- CREATE THE LOG ENTRY NOW -----
-                self.log_work_session()
-
-                # Reload log and refresh UI
-                self.log = self.load_log()
-                self.refresh_log()
-                self.log_text.update_idletasks()
-
-                # Award badges
+                # ============================================================
+                # 3. Post-notification: badges, counters, phase switch
+                # ============================================================
                 try:
                     self.check_and_award_badges()
                 except Exception as e:
@@ -1879,7 +1887,7 @@ class PomodoroApp:
                 self.today_count += 1
                 self.update_progress()
 
-                # Decide which break to take
+                # Which break next?
                 if self.cycles_completed % self.config["cycles_before_long"] == 0:
                     self.current_phase = "long_break"
                     self.remaining_seconds = self.config["long_break_min"] * 60
@@ -1899,13 +1907,17 @@ class PomodoroApp:
 
             self.update_display()
             self.save_state()
-            messagebox.showinfo("Pomodoro", f"{completed_phase.capitalize()} phase completed!")
+
+            # Only show the "phase completed" popup for BREAKS.
+            # For work sessions, the "Session Complete!" popup above already
+            # told the user — showing a second dialog on top of it is redundant.
+            if completed_phase != "work":
+                messagebox.showinfo("Pomodoro", f"{completed_phase.capitalize()} phase completed!")
 
         except Exception as e:
             print(f"[ERROR] timer_complete() crashed: {e}")
             import traceback
             traceback.print_exc()
-            # Reset to work phase
             self.current_phase = "work"
             self.remaining_seconds = self.config["work_min"] * 60
             self.phase_label.config(text="Work")
