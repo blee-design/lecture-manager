@@ -21,6 +21,9 @@ os.makedirs(TRASH_DIR, exist_ok=True)
 
 # Runtime cache — refreshed on demand
 _PAPER_CACHE = {"papers": None, "keywords": None}
+# Subject lookups (avoid N+1 DB connections per record)
+_SUBJECT_KEY_TO_NAME = None      # {(paper_key, chapter_code): subject_name}
+_SUBJECT_NAME_TO_PAPER = None    # {subject_name: paper_key}
 
 # Pretest subjects (01-10)
 PRETEST_SUBJECTS = {
@@ -103,8 +106,49 @@ PAPER_KEYWORDS = {
 
 def reload_paper_cache():
     """Call after any change to papers/subjects."""
+    global _SUBJECT_KEY_TO_NAME, _SUBJECT_NAME_TO_PAPER
     _PAPER_CACHE["papers"] = None
     _PAPER_CACHE["keywords"] = None
+    _SUBJECT_KEY_TO_NAME = None
+    _SUBJECT_NAME_TO_PAPER = None
+
+
+def _subject_lookup():
+    """
+    {(paper_key, chapter_code): subject_name} — one DB hit for the whole session.
+    chapter_code is left-padded to 2 digits to match parse_syllabus_id().
+    """
+    global _SUBJECT_KEY_TO_NAME
+    if _SUBJECT_KEY_TO_NAME is None:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT paper, chapter, name FROM subjects WHERE active = 1")
+        cache = {}
+        for row in cursor.fetchall():
+            paper = row.get('paper')
+            if not paper:
+                continue
+            ch = (row.get('chapter') or '01')
+            ch = str(ch).zfill(2)
+            cache[(paper, ch)] = row['name']
+        cursor.close()
+        conn.close()
+        _SUBJECT_KEY_TO_NAME = cache
+    return _SUBJECT_KEY_TO_NAME
+
+
+def _subject_name_lookup():
+    """{subject_name: paper_key} — one DB hit for the whole session."""
+    global _SUBJECT_NAME_TO_PAPER
+    if _SUBJECT_NAME_TO_PAPER is None:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT name, paper FROM subjects WHERE active = 1")
+        cache = {row['name']: row['paper'] for row in cursor.fetchall() if row.get('paper')}
+        cursor.close()
+        conn.close()
+        _SUBJECT_NAME_TO_PAPER = cache
+    return _SUBJECT_NAME_TO_PAPER
 
 def _papers():
     if _PAPER_CACHE["papers"] is None:
@@ -120,9 +164,9 @@ def _keywords():
         _PAPER_CACHE["keywords"] = kws
     return _PAPER_CACHE["keywords"]
 
-def get_paper_breakdown():
+def get_paper_breakdown(tally_data=None):
     """Return a breakdown of records and files per paper, using the DB-defined papers."""
-    data = collect_tally_data()
+    data = tally_data if tally_data is not None else collect_tally_data()
     records = data['records']
     correctly_placed = data['correctly_placed']
     missing = data['missing']
@@ -191,9 +235,9 @@ def get_paper_breakdown():
 
     return breakdown
 
-def show_paper_breakdown():
+def show_paper_breakdown(tally_data=None):
     """Display a formatted paper breakdown with fixed column alignment."""
-    breakdown = get_paper_breakdown()
+    breakdown = get_paper_breakdown(tally_data=tally_data)
 
     # Build paper display names from the DB
     paper_names = {p['paper_key']: p['display_name'] for p in _papers().values()}
@@ -213,7 +257,9 @@ def show_paper_breakdown():
         })
 
     # Determine column widths (max of header and data)
-    width_name = max(max(len(row['name']) for row in rows), len('Paper'))
+    # Cap display width so super-long names don't blow out the table
+    MAX_NAME_WIDTH = 40
+    width_name = min(max(max(len(row['name']) for row in rows), len('Paper')), MAX_NAME_WIDTH)
     width_records = max(max(len(str(row['records'])) for row in rows), len('Records'))
     width_files = max(max(len(str(row['files'])) for row in rows), len('Files'))
     width_matched = max(max(len(str(row['matched'])) for row in rows), len('Matched'))
@@ -245,7 +291,10 @@ def show_paper_breakdown():
         else:
             colour = COLORS.RED
 
-        line = (f"  {color_text(row['name'][:width_name], colour):<{width_name}}" + " " * SEP +
+        # Pad the plain string first, THEN apply colour.
+        # Otherwise Python counts the ANSI escape codes as visible width.
+        name_col = row['name'][:width_name].ljust(width_name)
+        line = (f"  {color_text(name_col, colour)}" + " " * SEP +
                 f"{row['records']:>{width_records}}" + " " * SEP +
                 f"{row['files']:>{width_files}}" + " " * SEP +
                 f"{row['matched']:>{width_matched}}" + " " * SEP +
@@ -370,22 +419,18 @@ def parse_syllabus_id(syllabus_id):
 def detect_paper(subject, syllabus_id=None, chapter=None, interactive=True):
     """
     Determine which paper a record belongs to.
-    Reads subject→paper mappings from the DB. Falls back to keyword matching.
-    Returns None if nothing matches and user doesn't pick.
+    Reads subject->paper mappings from an in-memory cache (loaded once).
+    Falls back to keyword matching. Returns None if nothing matches and
+    the user doesn't pick.
     """
-    from .db import get_connection
-    conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
-    # exact name match in subjects table
-    cursor.execute("SELECT paper FROM subjects WHERE name = %s AND active = 1",
-                   (subject.strip(),))
-    row = cursor.fetchone()
-    cursor.close(); conn.close()
-    if row:
-        return row["paper"]
+    # 1. Exact subject name match (from cache — no DB hit)
+    if subject:
+        lookup = _subject_name_lookup()
+        if subject.strip() in lookup:
+            return lookup[subject.strip()]
 
-    # keyword fallback
-    combined = f"{subject} {chapter or ''}".lower()
+    # 2. Keyword fallback
+    combined = f"{subject or ''} {chapter or ''}".lower()
     matches = []
     for paper_key, kws in _keywords().items():
         if any(kw in combined for kw in kws):
@@ -400,7 +445,7 @@ def detect_paper(subject, syllabus_id=None, chapter=None, interactive=True):
             print(f"  {i}. {p['display_name']}")
         c = input(color_text("Choose (blank to cancel): ", COLORS.MAGENTA)).strip()
         if c.isdigit() and 1 <= int(c) <= len(papers):
-            return papers[int(c)-1]["paper_key"]
+            return papers[int(c) - 1]["paper_key"]
     return None
 
 def get_target_path(record, interactive=True):
@@ -423,25 +468,16 @@ def get_target_path(record, interactive=True):
         return None, None
 
     paper_cfg = papers[paper_key]
-    # subject folder: look up by numeric code in the subjects table
-    from .db import get_connection
-    conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("""
-        SELECT name FROM subjects
-        WHERE paper = %s AND chapter = %s AND active = 1
-        LIMIT 1
-    """, (paper_key, subject_num))
-    subj_row = cursor.fetchone()
-    cursor.close(); conn.close()
-    if not subj_row:
+
+    # Subject folder name — from cached lookup, NOT a fresh DB connection
+    subj_name = _subject_lookup().get((paper_key, subject_num))
+    if not subj_name:
         return None, None
 
     base_dir = os.path.join(ROOT_DIR, paper_cfg["folder_name"],
-                            subj_row["name"], f"{subject_num}.{chapter_num}")
+                            subj_name, f"{subject_num}.{chapter_num}")
 
     syllabus = clean_field(record.get("syllabus_id"))
-
     chapter_display = record.get('chapter') or record.get('video_title', '').split('||')[0].strip() or "chapter"
     subject_display = clean_field(record.get('subject', ''))
     lecturer = clean_field(record.get('lecturer', ''))

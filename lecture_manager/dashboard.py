@@ -213,9 +213,9 @@ def show_dashboard():
         if not fb_tally['missing'] and not fb_tally['orphan']:
             print_colored("  ✅ All Facebook entries are synced!", COLORS.GREEN)
 
-    # ===== NEW: PAPER BREAKDOWN =====
-    # This will print the same table as Option 33.
-    show_paper_breakdown()
+    # ===== PAPER BREAKDOWN =====
+    # Pass the tally we already computed to avoid a second full scan
+    show_paper_breakdown(tally_data=tally)
 
     # ----- Final footer -----
     print("\n" + "═" * 60)
