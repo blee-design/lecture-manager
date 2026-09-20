@@ -25,9 +25,186 @@ PHOTO_BASE_DIR = os.path.join(DOWNLOAD_DIR, 'facebook_photos')
 FACEBOOK_VIDEO_DIR = os.path.join(ROOT_DIR, 'facebook', 'videos')
 FACEBOOK_PHOTO_DIR = os.path.join(ROOT_DIR, 'facebook', 'photos')
 
+def _parse_netscape_cookies(path):
+    """Parse a Netscape cookie file into a requests-compatible dict."""
+    cookies = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                parts = line.split('\t')
+                if len(parts) >= 7:
+                    domain = parts[0]
+                    name = parts[5]
+                    value = parts[6]
+                    if 'facebook.com' in domain:
+                        cookies[name] = value
+    except Exception:
+        pass
+    return cookies
+
+
+def _fast_probe(url, timeout=8):
+    """
+    Fast network probe using plain HTTP + Open Graph meta tags.
+    Returns a dict:
+      {
+        'kind': 'video' | 'photo' | 'album' | 'unknown',
+        'title': str | None,
+        'uploader': str | None,
+        'description': str | None,
+        'og_video': str | None,
+        'og_image': str | None,
+      }
+    or None if the probe failed entirely.
+    """
+    import re
+    import html as _html
+
+    try:
+        import requests
+    except ImportError:
+        return None
+
+    headers = {
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/131.0.0.0 Safari/537.36'
+        ),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+    }
+
+    cookies = {}
+    if os.path.exists('cookies.txt'):
+        cookies = _parse_netscape_cookies('cookies.txt')
+
+    try:
+        resp = requests.get(
+            url, headers=headers, cookies=cookies,
+            timeout=timeout, allow_redirects=True
+        )
+        if resp.status_code != 200:
+            return None
+        # Cap HTML size for speed — meta tags live in <head>
+        html_text = resp.text[:500_000]
+    except Exception:
+        return None
+
+    def _meta(prop):
+        # property="og:title" content="..." (either order)
+        for pat in (
+            rf'<meta[^>]+property=["\']{re.escape(prop)}["\'][^>]+content=["\']([^"\']*)["\']',
+            rf'<meta[^>]+content=["\']([^"\']*)["\'][^>]+property=["\']{re.escape(prop)}["\']',
+        ):
+            m = re.search(pat, html_text, re.I)
+            if m:
+                return _html.unescape(m.group(1)).strip()
+        return None
+
+    def _named_meta(name):
+        for pat in (
+            rf'<meta[^>]+name=["\']{re.escape(name)}["\'][^>]+content=["\']([^"\']*)["\']',
+            rf'<meta[^>]+content=["\']([^"\']*)["\'][^>]+name=["\']{re.escape(name)}["\']',
+        ):
+            m = re.search(pat, html_text, re.I)
+            if m:
+                return _html.unescape(m.group(1)).strip()
+        return None
+
+    og_type    = _meta('og:type') or ''
+    og_video   = (_meta('og:video:url')
+                  or _meta('og:video:secure_url')
+                  or _meta('og:video'))
+    og_image   = _meta('og:image') or _meta('og:image:url')
+    og_title   = _meta('og:title') or _named_meta('title') or ''
+    og_desc    = _meta('og:description') or _named_meta('description') or ''
+
+    # Fallback to <title> if OG title missing
+    if not og_title:
+        m = re.search(r'<title[^>]*>([^<]+)</title>', html_text, re.I)
+        if m:
+            og_title = _html.unescape(m.group(1)).strip()
+
+    # Strip Facebook suffix from titles
+    for suffix in (' | Facebook', ' - Facebook', ' | Facebook Watch', ' | Watch'):
+        if og_title.endswith(suffix):
+            og_title = og_title[:-len(suffix)].strip()
+
+    # ---- Classify ----
+    url_lower = url.lower()
+    kind = 'unknown'
+
+    if og_video:
+        kind = 'video'
+    elif 'video' in og_type.lower():
+        kind = 'video'
+    elif any(p in url_lower for p in
+             ('/reel/', '/videos/', '/watch', 'fb.watch', '/share/r/', '/share/v/')):
+        kind = 'video'
+    elif '/albums/' in url_lower or 'set=a.' in url_lower:
+        kind = 'album'
+    elif any(p in url_lower for p in ('/photos/', '/photo.php', 'photo/?fbid')):
+        kind = 'photo'
+    elif og_image and not og_video:
+        kind = 'photo'
+
+    # ---- Extract uploader ----
+    uploader = None
+
+    # 1. From URL path: facebook.com/<slug>/...
+    m = re.search(r'facebook\.com/([^/?#]+)', url, re.I)
+    if m:
+        slug = m.group(1)
+        IGNORE = {
+            'share', 'photo', 'photos', 'watch', 'reel', 'videos', 'posts',
+            'permalink', 'story', 'login', 'signup', 'p', 'groups', 'profile.php',
+            'media', 'permalink.php', 'photo.php', 'watch', 'reel',
+        }
+        if slug.lower() not in IGNORE:
+            uploader = slug.replace('.', ' ').strip()
+
+    # 2. From og:title patterns
+    if not uploader and og_title:
+        for pat in (
+            r'^(?:Post|Video|Photo|Reel|Live)\s+by\s+(.+?)(?:\s+on\s+Facebook)?$',
+            r'^(.+?)\s*[-–]\s*(?:Watch|Video|Reel|Photo)',
+        ):
+            m = re.match(pat, og_title, re.I)
+            if m:
+                uploader = m.group(1).strip()
+                break
+
+    return {
+        'kind': kind,
+        'title': og_title or None,
+        'uploader': uploader,
+        'description': og_desc or None,
+        'og_video': og_video,
+        'og_image': og_image,
+    }
+
 def _get_facebook_metadata(url, timeout=10):
-    """Get uploader and title using yt-dlp (primary) then gallery-dl."""
-    # 1. Try yt-dlp (works for videos and many photo posts)
+    """
+    Return (uploader, title) for a Facebook URL.
+
+    Flow:
+      1. Fast HTTP + OG probe (1-2 seconds, no cookies needed for public content)
+      2. yt-dlp fallback (only if probe yields nothing usable)
+      3. gallery-dl fallback (last resort)
+    """
+    # ---- 1. Fast probe ----
+    probe = _fast_probe(url, timeout=min(timeout, 8))
+    if probe:
+        title = probe.get('title')
+        uploader = probe.get('uploader')
+        if uploader and uploader.lower() not in ('unknown', 'facebook', ''):
+            return uploader, title
+
+    # ---- 2. yt-dlp fallback ----
     try:
         import yt_dlp
         _ensure_cookie_file()
@@ -36,24 +213,23 @@ def _get_facebook_metadata(url, timeout=10):
             'no_warnings': True,
             'extract_flat': False,
             'ignoreerrors': True,
+            'socket_timeout': timeout,
         }
         if os.path.exists('cookies.txt'):
             ydl_opts['cookiefile'] = 'cookies.txt'
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             if info:
-                uploader = (info.get('uploader') or info.get('creator') or
-                            info.get('channel') or info.get('uploader_id'))
-                title = info.get('title') or info.get('description') or info.get('alt_title')
+                uploader = (info.get('uploader') or info.get('creator')
+                            or info.get('channel') or info.get('uploader_id'))
+                title = (info.get('title') or info.get('description')
+                         or info.get('alt_title'))
                 if uploader and uploader.lower() not in ('unknown', 'facebook', ''):
-                    # Clean uploader
-                    uploader = uploader.strip()
-                    return uploader, title
-    except Exception as e:
-        # Silently fall through
+                    return uploader.strip(), title
+    except Exception:
         pass
 
-    # 2. Fallback: gallery-dl -j
+    # ---- 3. gallery-dl fallback ----
     try:
         import json, subprocess
         _ensure_cookie_file()
@@ -73,11 +249,12 @@ def _get_facebook_metadata(url, timeout=10):
                 elif isinstance(item, dict):
                     first = item
             if first:
-                uploader = first.get('uploader') or first.get('username') or first.get('owner') or first.get('author')
-                title = first.get('title') or first.get('caption') or first.get('description')
+                uploader = (first.get('uploader') or first.get('username')
+                            or first.get('owner') or first.get('author'))
+                title = (first.get('title') or first.get('caption')
+                         or first.get('description'))
                 if uploader and uploader.lower() not in ('unknown', 'facebook', ''):
-                    uploader = uploader.strip()
-                    return uploader, title
+                    return uploader.strip(), title
     except Exception:
         pass
 
@@ -153,19 +330,40 @@ def _extract_facebook_id(url):
     return url.rstrip('/').split('/')[-1]
 
 def _is_video_link(url):
-    """Heuristic to detect if a Facebook link is for a video/Reel."""
-    video_patterns = [
-        '/watch',
-        '/reel/',
-        '/share/r/',
-        '/share/v/',
-        '/videos/',
-        '/video/',
-    ]
-    url_lower = url.lower()
-    return any(pattern in url_lower for pattern in video_patterns)
+    """
+    Heuristic — returns True if the URL looks like a video/reel.
+    Covers Facebook's many URL shapes.
+    """
+    if not url:
+        return False
+    u = url.lower()
 
-def _download_video(url, custom_name=None, force=False):
+    # ---- Definite video markers ----
+    video_patterns = (
+        '/watch/?v=', '/watch?v=', '/watch/',
+        '/reel/', '/reels/',
+        '/share/r/', '/share/v/',
+        '/videos/', '/video/',
+        'fb.watch/',
+        'video_redirect/',
+    )
+    if any(p in u for p in video_patterns):
+        return True
+
+    # ---- Definite photo markers (short-circuit) ----
+    photo_patterns = (
+        '/photo.php', '/photo/?fbid', '/photos/',
+        '/albums/', 'set=a.',
+        '/share/p/',
+    )
+    if any(p in u for p in photo_patterns):
+        return False
+
+    # ---- Ambiguous: /posts/<id>, /permalink.php, /story.php ----
+    # These can be either. Return False and let the fast probe decide.
+    return False
+
+def _download_video(url, custom_name=None, force=False, probe=None):
     from .facebook_manager import add_facebook_entry, get_facebook_entry_by_url
 
     existing = get_facebook_entry_by_url(url)
@@ -174,33 +372,47 @@ def _download_video(url, custom_name=None, force=False):
         return
 
     _ensure_cookie_file()
-    cookie_opt = {'cookiefile': 'cookies.txt'} if os.path.exists('cookies.txt') else {'cookiesfrombrowser': ('edge',)}
+    cookie_opt = ({'cookiefile': 'cookies.txt'} if os.path.exists('cookies.txt')
+                  else {'cookiesfrombrowser': ('edge',)})
 
-    # Extract metadata
+    # ---- Extract metadata: probe first, yt-dlp only as fallback ----
     title = None
     uploader = None
     facebook_id = None
-    try:
-        ydl_opts_info = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'ignoreerrors': True,
-            **cookie_opt
-        }
-        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if info and isinstance(info, dict):
-                title = _extract_facebook_title(info)
-                uploader = info.get('uploader', '').strip()
-                facebook_id = info.get('id') or _extract_facebook_id(url)
-    except Exception as e:
-        print_colored(f"[!] Could not fetch metadata: {e}", COLORS.YELLOW)
+
+    if probe:
+        title = probe.get('title')
+        uploader = probe.get('uploader')
+
+    # Extract ID from URL even when probe succeeded
+    facebook_id = _extract_facebook_id(url)
+
+    # Only hit yt-dlp for metadata if we're still missing something
+    if not title or not uploader or not facebook_id:
+        try:
+            ydl_opts_info = {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': False,
+                'ignoreerrors': True,
+                **cookie_opt,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if info and isinstance(info, dict):
+                    if not title:
+                        title = _extract_facebook_title(info)
+                    if not uploader:
+                        uploader = (info.get('uploader') or '').strip()
+                    if not facebook_id:
+                        facebook_id = info.get('id') or _extract_facebook_id(url)
+        except Exception as e:
+            print_colored(f"[i] Metadata fallback: {e}", COLORS.YELLOW)
 
     if not title:
         title = "Facebook Video"
     if not uploader:
-        uploader = "Unknown"
+        uploader = _extract_facebook_uploader_from_url(url) or "Unknown"
     if not facebook_id:
         facebook_id = _extract_facebook_id(url)
 
@@ -219,12 +431,12 @@ def _download_video(url, custom_name=None, force=False):
         'quiet': False,
         'no_warnings': True,
         'ignoreerrors': True,
-        **cookie_opt
+        **cookie_opt,
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
-            print_colored(f"[⏳] Downloading Facebook video...", COLORS.BLUE)
+            print_colored("[⏳] Downloading Facebook video...", COLORS.BLUE)
             ydl.download([url])
 
         import glob
@@ -236,7 +448,6 @@ def _download_video(url, custom_name=None, force=False):
         temp_path = matches[0]
         print_colored(f"[✓] Downloaded to {temp_path}", COLORS.GREEN)
 
-        # Compute hash and move
         file_hash = compute_md5(temp_path)
         _, ext = os.path.splitext(temp_path)
         if not ext:
@@ -251,7 +462,6 @@ def _download_video(url, custom_name=None, force=False):
         shutil.move(temp_path, final_path)
         print_colored(f"[✓] File stored at: {final_path}", COLORS.BLUE)
 
-        # Insert DB
         entry_id = add_facebook_entry(
             facebook_id=facebook_id,
             entry_type='video',
@@ -260,7 +470,7 @@ def _download_video(url, custom_name=None, force=False):
             url=url,
             file_hash=file_hash,
             original_filename=original_name,
-            notes=None
+            notes=None,
         )
         if entry_id:
             print_colored(f"[✓] Facebook entry added (ID: {entry_id})", COLORS.GREEN)
@@ -362,13 +572,59 @@ def download_facebook():
         print_colored("Cancelled.", COLORS.YELLOW)
         return
 
-    if _is_video_link(url):
-        print_colored("[i] Detected as video/Reel link.", COLORS.BLUE)
-        custom_name = input(color_text("Custom filename (optional, press Enter to auto-detect): ", COLORS.MAGENTA)).strip()
-        _download_video(url, custom_name if custom_name else None)
+    # ---- Fast probe (1-2 seconds) ----
+    print_colored("[i] Detecting content type...", COLORS.BLUE)
+    probe = _fast_probe(url, timeout=8)
+
+    if probe:
+        kind = probe.get('kind', 'unknown')
+        title = probe.get('title')
+        uploader = probe.get('uploader')
+        if kind != 'unknown':
+            print_colored(f"[✓] Detected: {kind.upper()}", COLORS.GREEN)
+        if title:
+            print(f"     Title    : {title[:80]}")
+        if uploader:
+            print(f"     Uploader : {uploader}")
     else:
-        custom_name = input(color_text("Custom filename (optional, press Enter to auto-detect): ", COLORS.MAGENTA)).strip()
-        _download_single_photo(url, custom_name if custom_name else None)
+        kind = 'unknown'
+        print_colored("[i] Fast probe unavailable — falling back to URL heuristics.", COLORS.YELLOW)
+
+    # ---- Decide route ----
+    if kind == 'video':
+        is_video = True
+    elif kind == 'album':
+        is_video = False
+        is_album = True
+    elif kind == 'photo':
+        is_video = False
+        is_album = False
+    else:
+        # Probe failed or ambiguous — use URL heuristic
+        is_video = _is_video_link(url)
+        is_album = ('/albums/' in url.lower()) or ('set=a.' in url.lower())
+
+    # ---- Confirm with user (only in ambiguous case) ----
+    if probe is None or kind == 'unknown':
+        guess = 'video/Reel' if is_video else ('photo album' if is_album else 'photo')
+        print_colored(f"[i] Guessing: {guess}", COLORS.YELLOW)
+        override = input(color_text("Correct? (Enter=yes, 'v'=video, 'p'=photo, 'a'=album): ", COLORS.MAGENTA)).strip().lower()
+        if override == 'v':
+            is_video = True; is_album = False
+        elif override == 'p':
+            is_video = False; is_album = False
+        elif override == 'a':
+            is_video = False; is_album = True
+
+    custom_name = input(color_text("Custom filename (optional, press Enter to auto-detect): ", COLORS.MAGENTA)).strip()
+
+    # ---- Route ----
+    if is_video:
+        _download_video(url, custom_name if custom_name else None, probe=probe)
+    elif is_album:
+        _download_photos(url)
+    else:
+        _download_single_photo(url, custom_name if custom_name else None, probe=probe)
 
 def _process_album_files(file_paths, url, uploader=None, title=None):
     from .facebook_manager import add_facebook_entry
@@ -416,7 +672,7 @@ def _process_album_files(file_paths, url, uploader=None, title=None):
     print()  # newline after progress
     print_colored(f"[✓] Album processed: {len(file_paths)} photos added to {album_folder}.", COLORS.GREEN)
 
-def _download_single_photo(url, custom_name=None):
+def _download_single_photo(url, custom_name=None, probe=None):
     from .facebook_manager import add_facebook_entry, get_facebook_entry_by_url
     import subprocess, tempfile, shutil, re
 
@@ -425,8 +681,19 @@ def _download_single_photo(url, custom_name=None):
         print_colored(f"[i] URL already exists (ID: {existing['id']}). Skipping.", COLORS.YELLOW)
         return
 
-    # Get metadata (uploader, title) with a 10‑second timeout
-    uploader, title = _get_facebook_metadata(url, timeout=10)
+    # ---- Metadata: probe first, fall back only if needed ----
+    uploader = None
+    title = None
+    if probe:
+        uploader = probe.get('uploader')
+        title = probe.get('title')
+
+    if not uploader or not title:
+        print_colored("[i] Fetching metadata...", COLORS.BLUE)
+        fb_uploader, fb_title = _get_facebook_metadata(url, timeout=10)
+        uploader = uploader or fb_uploader
+        title = title or fb_title
+
     if not uploader or uploader == "Unknown":
         uploader = _extract_facebook_uploader_from_url(url)
     if not title:
@@ -449,8 +716,7 @@ def _download_single_photo(url, custom_name=None):
             print_colored(f"[!] Download failed with code {proc.returncode}", COLORS.RED)
             return
 
-        # Collect image files
-        image_exts = ('.jpg','.jpeg','.png','.gif','.bmp','.webp')
+        image_exts = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
         files = []
         for root, _, fnames in os.walk(tmpdir):
             for f in fnames:
@@ -461,13 +727,11 @@ def _download_single_photo(url, custom_name=None):
             print_colored("[!] No photo file found.", COLORS.RED)
             return
 
-        # If multiple → album
         if len(files) > 1:
             print_colored(f"[i] Detected {len(files)} photos – processing as album.", COLORS.YELLOW)
-            _process_album_files(files, url, uploader, title)   # pass title
+            _process_album_files(files, url, uploader, title)
             return
 
-        # Single photo
         downloaded_file = files[0]
         file_hash = compute_md5(downloaded_file)
         _, ext = os.path.splitext(downloaded_file)
@@ -490,7 +754,7 @@ def _download_single_photo(url, custom_name=None):
             url=url,
             file_hash=file_hash,
             original_filename=os.path.basename(downloaded_file),
-            notes=None
+            notes=None,
         )
         if entry_id:
             print_colored(f"[✓] Facebook entry added (ID: {entry_id})", COLORS.GREEN)
