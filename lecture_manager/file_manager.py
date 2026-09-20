@@ -15,8 +15,12 @@ from .utils import clean_field, sanitize_filename, print_colored, color_text, CO
 from .youtube import extract_video_id
 from .utils import compute_md5, ROOT_DIR, clean_field, sanitize_filename, print_colored, color_text, COLORS, TRASH_DIR
 from .constants import DISPLAY_SEPARATOR
+from . import syllabus_config as SC
 
 os.makedirs(TRASH_DIR, exist_ok=True)
+
+# Runtime cache — refreshed on demand
+_PAPER_CACHE = {"papers": None, "keywords": None}
 
 # Pretest subjects (01-10)
 PRETEST_SUBJECTS = {
@@ -97,17 +101,38 @@ PAPER_KEYWORDS = {
     ]
     }
 
+def reload_paper_cache():
+    """Call after any change to papers/subjects."""
+    _PAPER_CACHE["papers"] = None
+    _PAPER_CACHE["keywords"] = None
+
+def _papers():
+    if _PAPER_CACHE["papers"] is None:
+        _PAPER_CACHE["papers"] = {p["paper_key"]: p for p in SC.get_papers()}
+    return _PAPER_CACHE["papers"]
+
+def _keywords():
+    if _PAPER_CACHE["keywords"] is None:
+        kws = {}
+        for p in SC.get_papers():
+            kws[p["paper_key"]] = [k.strip().lower()
+                                   for k in (p.get("keywords") or "").split(",") if k.strip()]
+        _PAPER_CACHE["keywords"] = kws
+    return _PAPER_CACHE["keywords"]
+
 def get_paper_breakdown():
-    """Return a breakdown of records and files per paper, excluding files outside paper folders."""
+    """Return a breakdown of records and files per paper, using the DB-defined papers."""
     data = collect_tally_data()
     records = data['records']
-    all_files = data['all_files']  # but we'll count only files in paper folders
     correctly_placed = data['correctly_placed']
     missing = data['missing']
     orphan = data['orphan']
 
-    papers = ['pretest', 'paper_i', 'paper_ii', 'paper_iii']
-    breakdown = {p: {'records': 0, 'files': 0, 'correctly_placed': 0, 'missing': 0, 'orphan': 0} for p in papers}
+    papers = _papers()   # {paper_key: {paper_key, display_name, folder_name, ...}}
+    paper_keys = list(papers.keys())
+
+    breakdown = {p: {'records': 0, 'files': 0, 'correctly_placed': 0, 'missing': 0, 'orphan': 0}
+                 for p in paper_keys}
     breakdown['unknown'] = {'records': 0, 'files': 0, 'correctly_placed': 0, 'missing': 0, 'orphan': 0}
 
     # Count records per paper
@@ -137,9 +162,9 @@ def get_paper_breakdown():
     # Count orphan files per paper (by folder path)
     for fp in orphan:
         found = False
-        for paper_key, config in PAPER_CONFIG.items():
-            folder = config['folder']
-            if folder in fp:
+        for paper_key, config in papers.items():
+            folder = config.get('folder_name', '')
+            if folder and folder in fp:
                 breakdown[paper_key]['orphan'] += 1
                 found = True
                 break
@@ -147,8 +172,11 @@ def get_paper_breakdown():
             breakdown['unknown']['orphan'] += 1
 
     # Count total video files per paper (only in paper folders)
-    for paper_key, config in PAPER_CONFIG.items():
-        folder = config['folder']
+    for paper_key, config in papers.items():
+        folder = config.get('folder_name', '')
+        if not folder:
+            breakdown[paper_key]['files'] = 0
+            continue
         full_path = os.path.join(ROOT_DIR, folder)
         count = 0
         if os.path.exists(full_path):
@@ -167,13 +195,9 @@ def show_paper_breakdown():
     """Display a formatted paper breakdown with fixed column alignment."""
     breakdown = get_paper_breakdown()
 
-    paper_names = {
-        'pretest': 'Pretest Officer',
-        'paper_i': 'Paper I (Economics)',
-        'paper_ii': 'Paper II (Management)',
-        'paper_iii': 'Paper III (Research, ICT, Banking)',
-        'unknown': 'Unknown (no paper)'
-    }
+    # Build paper display names from the DB
+    paper_names = {p['paper_key']: p['display_name'] for p in _papers().values()}
+    paper_names['unknown'] = 'Unknown (no paper)'
 
     # Build data rows
     rows = []
@@ -196,17 +220,14 @@ def show_paper_breakdown():
     width_missing = max(max(len(str(row['missing'])) for row in rows), len('Missing'))
     width_orphan = max(max(len(str(row['orphan'])) for row in rows), len('Orphan'))
 
-    # Column spacing (constant gap between columns)
-    SEP = 4  # spaces between columns
+    SEP = 4
 
-    # Calculate total width for the separator line
-    total_width = (width_name + SEP) + (width_records + SEP) + (width_files + SEP) + (width_matched + SEP) + (width_missing + SEP) + width_orphan + 2  # leading spaces
+    total_width = (width_name + SEP) + (width_records + SEP) + (width_files + SEP) + (width_matched + SEP) + (width_missing + SEP) + width_orphan + 2
 
     print("\n" + "═" * total_width)
     print_colored("  📊 PAPER BREAKDOWN", COLORS.CYAN, bold=True)
     print("═" * total_width)
 
-    # Header
     header = (f"  {'Paper':<{width_name}}" + " " * SEP +
               f"{'Records':>{width_records}}" + " " * SEP +
               f"{'Files':>{width_files}}" + " " * SEP +
@@ -216,9 +237,7 @@ def show_paper_breakdown():
     print(header)
     print("─" * total_width)
 
-    # Data rows
     for row in rows:
-        # Colour based on missing/orphan
         if row['missing'] == 0 and row['orphan'] == 0:
             colour = COLORS.GREEN
         elif row['missing'] == 0 and row['orphan'] > 0:
@@ -236,7 +255,6 @@ def show_paper_breakdown():
 
     print("═" * total_width)
 
-    # Totals
     total_records = sum(row['records'] for row in rows)
     total_files = sum(row['files'] for row in rows)
     total_matched = sum(row['matched'] for row in rows)
@@ -252,7 +270,6 @@ def show_paper_breakdown():
     print(total_line)
     print("═" * total_width)
 
-    # Discrepancy note
     if total_files != total_records:
         diff = abs(total_files - total_records)
         print_colored(f"[i] There are {diff} more {'files' if total_files > total_records else 'records'} than {'records' if total_files > total_records else 'files'}. Run Option 19 (Tally) to investigate.", COLORS.YELLOW)
@@ -353,126 +370,77 @@ def parse_syllabus_id(syllabus_id):
 def detect_paper(subject, syllabus_id=None, chapter=None, interactive=True):
     """
     Determine which paper a record belongs to.
-    Checks syllabus_id first, then subject, then chapter for disambiguation.
+    Reads subject→paper mappings from the DB. Falls back to keyword matching.
+    Returns None if nothing matches and user doesn't pick.
     """
-    first_part = None
-    if syllabus_id:
-        parts = syllabus_id.split('.')
-        if parts and parts[0].isdigit():
-            first_part = parts[0].zfill(2)
+    from .db import get_connection
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    # exact name match in subjects table
+    cursor.execute("SELECT paper FROM subjects WHERE name = %s AND active = 1",
+                   (subject.strip(),))
+    row = cursor.fetchone()
+    cursor.close(); conn.close()
+    if row:
+        return row["paper"]
 
-    candidates = []
-    for paper_key, config in PAPER_CONFIG.items():
-        if first_part and first_part in config["subjects"]:
-            candidates.append(paper_key)
-
-    if len(candidates) == 1:
-        return candidates[0]
-
-    if len(candidates) > 1:
-        subject_lower = subject.lower().strip()
-        chapter_lower = chapter.lower().strip() if chapter else ""
-
-        # Combine subject and chapter for keyword search
-        combined = f"{subject_lower} {chapter_lower}"
-
-        # Paper‑specific keywords
-        if any(word in combined for word in ["economics", "micro", "macro", "development", "public", "monetary", "international"]):
-            return "paper_i"
-        if any(word in combined for word in ["management", "hr", "financial", "managerial"]):
-            return "paper_ii"
-        if any(word in combined for word in ["research", "methodology", "ict", "banking", "regulation", "law", "act", "aml", "compliance"]):
-            return "paper_iii"
-
-        # If pretest is among candidates, assume pretest (covers 01-10)
-        if "pretest" in candidates:
-            return "pretest"
-
-        # Interactive fallback if allowed
-        if interactive:
-            print_colored(f"[!] Subject '{subject}' matches multiple papers: {candidates}", COLORS.YELLOW)
-            print("Please choose the correct paper:")
-            options = list(PAPER_CONFIG.keys())
-            for i, key in enumerate(options, 1):
-                print(f"  {i}. {key} ({PAPER_CONFIG[key]['folder']})")
-            choice = input(color_text("Enter number (or leave blank to cancel): ", COLORS.MAGENTA)).strip()
-            if choice.isdigit() and 1 <= int(choice) <= len(options):
-                return options[int(choice)-1]
-            return None
-        else:
-            return None
-
-    # No candidate from syllabus_id → fallback to subject mapping
-    subject_lower = subject.lower().strip()
-    for paper_key, config in PAPER_CONFIG.items():
-        for subj_num, subj_name in config["subjects"].items():
-            if subject_lower == subj_name.lower():
-                return paper_key
-
-    # Keyword‑based fallback (subject only)
+    # keyword fallback
+    combined = f"{subject} {chapter or ''}".lower()
     matches = []
-    for paper_key, keywords in PAPER_KEYWORDS.items():
-        for kw in keywords:
-            if kw in subject_lower:
-                matches.append(paper_key)
-                break
+    for paper_key, kws in _keywords().items():
+        if any(kw in combined for kw in kws):
+            matches.append(paper_key)
+
     if len(matches) == 1:
         return matches[0]
-    elif len(matches) > 1:
-        if interactive:
-            print_colored(f"[!] Subject '{subject}' matches multiple papers: {matches}", COLORS.YELLOW)
-            print("Please choose the correct paper:")
-            options = list(PAPER_CONFIG.keys())
-            for i, key in enumerate(options, 1):
-                print(f"  {i}. {key} ({PAPER_CONFIG[key]['folder']})")
-            choice = input(color_text("Enter number (or leave blank to cancel): ", COLORS.MAGENTA)).strip()
-            if choice.isdigit() and 1 <= int(choice) <= len(options):
-                return options[int(choice)-1]
-            return None
-        else:
-            return None
-    else:
-        if interactive:
-            print_colored(f"[!] Could not detect paper for subject '{subject}'.", COLORS.YELLOW)
-            print("Please choose the paper manually:")
-            options = list(PAPER_CONFIG.keys())
-            for i, key in enumerate(options, 1):
-                print(f"  {i}. {key} ({PAPER_CONFIG[key]['folder']})")
-            choice = input(color_text("Enter number (or leave blank to cancel): ", COLORS.MAGENTA)).strip()
-            if choice.isdigit() and 1 <= int(choice) <= len(options):
-                return options[int(choice)-1]
-            return None
-        else:
-            return None
+    if len(matches) > 1 and interactive:
+        print_colored(f"[!] Matches multiple papers: {matches}", COLORS.YELLOW)
+        papers = list(_papers().values())
+        for i, p in enumerate(papers, 1):
+            print(f"  {i}. {p['display_name']}")
+        c = input(color_text("Choose (blank to cancel): ", COLORS.MAGENTA)).strip()
+        if c.isdigit() and 1 <= int(c) <= len(papers):
+            return papers[int(c)-1]["paper_key"]
+    return None
 
 def get_target_path(record, interactive=True):
-    syllabus_id = record.get('syllabus_id')
-    subject = record.get('subject', '')
-    if not syllabus_id:
+    papers = _papers()
+    if not papers:
+        print_colored("[!] No papers configured. Run 'Setup Syllabus' first.", COLORS.RED)
         return None, None
 
-    # Use paper column if present, otherwise detect
-    paper_key = record.get('paper')
+    paper_key = record.get("paper")
     if not paper_key:
-        paper_key = detect_paper(subject, syllabus_id, record.get('chapter'), interactive=interactive)
-
-    if not paper_key:
+        paper_key = detect_paper(record.get("subject", ""),
+                                 record.get("syllabus_id"),
+                                 record.get("chapter"),
+                                 interactive=interactive)
+    if not paper_key or paper_key not in papers:
         return None, None
 
-    subject_num, chapter_num, _ = parse_syllabus_id(syllabus_id)
+    subject_num, chapter_num, _ = parse_syllabus_id(record.get("syllabus_id"))
     if not subject_num:
         return None, None
 
-    config = PAPER_CONFIG[paper_key]
-    paper_folder = config["folder"]
-    subject_mapping = config["subjects"]
-    subject_folder_name = subject_mapping.get(subject_num)
-    if not subject_folder_name:
+    paper_cfg = papers[paper_key]
+    # subject folder: look up by numeric code in the subjects table
+    from .db import get_connection
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("""
+        SELECT name FROM subjects
+        WHERE paper = %s AND chapter = %s AND active = 1
+        LIMIT 1
+    """, (paper_key, subject_num))
+    subj_row = cursor.fetchone()
+    cursor.close(); conn.close()
+    if not subj_row:
         return None, None
-    chapter_folder = f"{subject_num}.{chapter_num}"
-    base_dir = os.path.join(ROOT_DIR, paper_folder, subject_folder_name, chapter_folder)
 
-    syllabus = clean_field(syllabus_id)
+    base_dir = os.path.join(ROOT_DIR, paper_cfg["folder_name"],
+                            subj_row["name"], f"{subject_num}.{chapter_num}")
+
+    syllabus = clean_field(record.get("syllabus_id"))
 
     chapter_display = record.get('chapter') or record.get('video_title', '').split('||')[0].strip() or "chapter"
     subject_display = clean_field(record.get('subject', ''))

@@ -5,7 +5,7 @@
 <!-- ===== PAPER FILTER BAR (preserves all filters) ===== -->
 <div class="row mb-3">
   <div class="col">
-    <div class="btn-group" role="group" aria-label="Paper filter">
+    <div class="btn-group flex-wrap" role="group" aria-label="Paper filter">
       {% set all_params = {
           'search': search,
           'sort': sort_by,
@@ -21,16 +21,13 @@
           'mirror_id': mirror_id,
           'exact': exact
       } %}
+      {% set current_paper = request.args.get('paper', '') %}
       <a href="{{ url_for('lectures', paper='', **all_params) }}"
-         class="btn btn-outline-secondary {% if not request.args.get('paper') %}active{% endif %}">All</a>
-      <a href="{{ url_for('lectures', paper='pretest', **all_params) }}"
-         class="btn btn-outline-primary {% if request.args.get('paper') == 'pretest' %}active{% endif %}">Pretest</a>
-      <a href="{{ url_for('lectures', paper='paper_i', **all_params) }}"
-         class="btn btn-outline-primary {% if request.args.get('paper') == 'paper_i' %}active{% endif %}">Paper I</a>
-      <a href="{{ url_for('lectures', paper='paper_ii', **all_params) }}"
-         class="btn btn-outline-primary {% if request.args.get('paper') == 'paper_ii' %}active{% endif %}">Paper II</a>
-      <a href="{{ url_for('lectures', paper='paper_iii', **all_params) }}"
-         class="btn btn-outline-primary {% if request.args.get('paper') == 'paper_iii' %}active{% endif %}">Paper III</a>
+         class="btn btn-outline-secondary {% if not current_paper %}active{% endif %}">All</a>
+      {% for p in papers %}
+        <a href="{{ url_for('lectures', paper=p.paper_key, **all_params) }}"
+           class="btn btn-outline-primary {% if current_paper == p.paper_key %}active{% endif %}">{{ p.display_name }}</a>
+      {% endfor %}
     </div>
   </div>
 </div>

@@ -36,7 +36,7 @@ def create_table():
         notes TEXT,
         mirror_video_id VARCHAR(20) NULL,
         file_hash VARCHAR(32) NULL,
-        paper ENUM('pretest','paper_i','paper_ii','paper_iii') NULL,
+        paper VARCHAR(50) NULL,
         UNIQUE INDEX idx_mirror_video_id (mirror_video_id),
         INDEX idx_paper (paper)
     );
@@ -133,7 +133,7 @@ def create_table():
     CREATE TABLE IF NOT EXISTS subjects (
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(255) NOT NULL UNIQUE,
-        paper ENUM('pretest','paper_i','paper_ii','paper_iii') NULL,
+        paper VARCHAR(50) NULL,
         chapter VARCHAR(50) NULL,
         active BOOLEAN DEFAULT TRUE,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -198,7 +198,7 @@ def migrate_table():
     # Add paper column if missing
     cursor.execute("SHOW COLUMNS FROM youtube_lectures LIKE 'paper'")
     if not cursor.fetchone():
-        cursor.execute("ALTER TABLE youtube_lectures ADD COLUMN paper ENUM('pretest','paper_i','paper_ii','paper_iii') NULL")
+        cursor.execute("ALTER TABLE youtube_lectures ADD COLUMN paper VARCHAR(50) NULL")
         print_colored("[✓] Added 'paper' column.", COLORS.GREEN)
         cursor.execute("ALTER TABLE youtube_lectures ADD INDEX idx_paper (paper)")
         print_colored("[✓] Added index on 'paper'.", COLORS.GREEN)
@@ -805,36 +805,91 @@ def migrate_table():
         cursor.execute("ALTER TABLE youtube_lectures ADD FULLTEXT INDEX ft_search (syllabus_id, subject, chapter, lecturer, notes, video_title)")
         print_colored("[✓] Full‑text index added.", COLORS.GREEN)
 
+    # ---------- Papers table (user-definable) ----------
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS papers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        paper_key VARCHAR(50) NOT NULL UNIQUE,     -- 'paper_i', 'semester_3'
+        display_name VARCHAR(255) NOT NULL,        -- 'First Paper: Economics'
+        folder_name VARCHAR(255) NOT NULL,         -- 'First Paper: Economics'
+        keywords TEXT,                             -- comma-separated for auto-detect
+        active BOOLEAN DEFAULT TRUE,
+        display_order INT DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """)
+
+    # ---------- Relax ENUMs to VARCHAR (only if still ENUM) ----------
+    for tbl, col in [('youtube_lectures', 'paper'), ('subjects', 'paper')]:
+        cursor.execute(f"""
+            SELECT DATA_TYPE, COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s
+        """, (tbl, col))
+        row = cursor.fetchone()
+        if row and row[0].lower() == 'enum':
+            cursor.execute(f"ALTER TABLE {tbl} MODIFY {col} VARCHAR(50) NULL")
+            print_colored(f"[✓] Converted {tbl}.{col} from ENUM to VARCHAR.", COLORS.GREEN)
+
+    # ---------- Backfill papers table from legacy hardcoded keys ----------
+    # Runs only when the papers table is empty AND legacy paper keys exist in DB.
+    # This makes existing installs keep working without losing anything.
+    cursor.execute("SELECT COUNT(*) FROM papers")
+    paper_count = cursor.fetchone()[0]
+
+    if paper_count == 0:
+        # Collect paper keys actually used in the DB
+        cursor.execute("SELECT DISTINCT paper FROM subjects WHERE paper IS NOT NULL AND paper != ''")
+        used_keys = [row[0] for row in cursor.fetchall()]
+        cursor.execute("SELECT DISTINCT paper FROM youtube_lectures WHERE paper IS NOT NULL AND paper != ''")
+        for row in cursor.fetchall():
+            if row[0] not in used_keys:
+                used_keys.append(row[0])
+
+        if used_keys:
+            print_colored(f"[i] Backfilling {len(used_keys)} legacy paper(s) into 'papers' table...", COLORS.BLUE)
+            LEGACY_FOLDERS = {
+                'pretest':   'Pretest Officer',
+                'paper_i':   'First Paper: Economics',
+                'paper_ii':  'Second Paper: Management',
+                'paper_iii': 'Third Paper: Research Methodologies, ICT and Banking Laws & Regulation',
+            }
+            LEGACY_KEYWORDS = {
+                'pretest':   'gk,pretest,english,nepali,geography,history,constitution',
+                'paper_i':   'microeconomics,development economics,public economics,macroeconomics,economics',
+                'paper_ii':  'general management,human resource,financial economics,managerial economics',
+                'paper_iii': 'research methodology,information technology,ict,banking laws,regulations',
+            }
+            # Canonical order for legacy keys so menus render naturally
+            LEGACY_ORDER = {
+                'pretest':   10,
+                'paper_i':   20,
+                'paper_ii':  30,
+                'paper_iii': 40,
+            }
+            for idx, key in enumerate(used_keys):
+                folder = LEGACY_FOLDERS.get(key, key.replace('_', ' ').title())
+                keywords = LEGACY_KEYWORDS.get(key, '')
+                display_order = LEGACY_ORDER.get(key, 100 + idx)
+                cursor.execute("""
+                    INSERT IGNORE INTO papers (paper_key, display_name, folder_name, keywords, display_order)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (key, folder, folder, keywords, display_order))
+            print_colored(f"[✓] Backfilled {len(used_keys)} legacy paper(s).", COLORS.GREEN)
+        else:
+            print_colored("[i] Fresh install — no legacy papers to backfill.", COLORS.BLUE)
+
     conn.commit()
     cursor.close()
     conn.close()
 
 def ensure_subjects_populated():
-    """Check if subjects table is empty; if so, repopulate from PAPER_CONFIG."""
-    from .file_manager import PAPER_CONFIG
-    from .utils import print_colored, COLORS
-
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT COUNT(*) FROM subjects")
-    count = cursor.fetchone()[0]
-
-    if count == 0:
-        print_colored("[i] Subjects table is empty. Re‑populating from PAPER_CONFIG...", COLORS.YELLOW)
-        for paper_key, config in PAPER_CONFIG.items():
-            for subject_code, subject_name in config["subjects"].items():
-                cursor.execute("""
-                    INSERT INTO subjects (name, paper, chapter, active)
-                    VALUES (%s, %s, %s, 1)
-                """, (subject_name, paper_key, subject_code))
-        conn.commit()
-        print_colored("[✓] Subjects re‑populated successfully.", COLORS.GREEN)
-    else:
-        print_colored("[✓] Subjects table already populated.", COLORS.BLUE)
-
-    cursor.close()
-    conn.close()
+    from .syllabus_config import is_configured
+    if not is_configured():
+        print_colored("[i] No syllabus configured yet. "
+                      "Use '📚 Syllabus Setup' or load the default template.",
+                      COLORS.YELLOW)
+        return
+    print_colored("[✓] Syllabus is configured.", COLORS.BLUE)
 
 def get_record_by_video_id(video_id):
     conn = get_connection()

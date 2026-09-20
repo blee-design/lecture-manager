@@ -6,12 +6,25 @@ import glob
 from .db import get_connection, TABLE_NAME, get_record_by_video_id, get_record_by_any_id, get_any_media_record
 from .youtube import extract_video_id, fetch_youtube_title, get_embed_link, _ensure_cookie_file
 from .utils import clean_field, get_display_title, sanitize_filename, parse_lecture_title, color_text, print_colored, COLORS, normalize_syllabus_id, build_original_filename
-from .file_manager import organize_video, sync_record_files, detect_paper, PAPER_CONFIG, get_target_path, ROOT_DIR
+from .file_manager import organize_video, sync_record_files, detect_paper, get_target_path, ROOT_DIR
 from .facebook_manager import add_facebook_lecture
 from .upload import upload_video_to_youtube, update_youtube_title
 from .constants import DISPLAY_SEPARATOR
 
 DOWNLOAD_DIR = './downloads'
+
+
+def _paper_choices():
+    """
+    Return a list of (paper_key, display_name, folder_name) tuples for
+    the currently configured papers, ordered by display_order.
+    Empty list if none configured.
+    """
+    from .file_manager import _papers
+    return [
+        (k, p.get('display_name') or k, p.get('folder_name') or k)
+        for k, p in _papers().items()
+    ]
 
 def download_video(record, output_dir=DOWNLOAD_DIR, video_id_to_download=None, silent=False):
     """
@@ -166,10 +179,20 @@ def add_lecture():
         # ---- Auto‑detect paper ----
         detected_paper = detect_paper(parsed['subject'], syllabus_id, chapter, interactive=True)
         if not detected_paper:
-            print_colored("[!] Could not auto‑detect paper. Please select manually.", COLORS.YELLOW)
-            print("Options: pretest, paper_i, paper_ii, paper_iii")
-            paper_choice = input(color_text("Enter paper: ", COLORS.MAGENTA)).strip()
-            detected_paper = paper_choice if paper_choice in ('pretest','paper_i','paper_ii','paper_iii') else None
+            choices = _paper_choices()
+            if not choices:
+                print_colored("[!] No papers configured. Please set up your syllabus first.", COLORS.RED)
+                print_colored("   Use '📚 Syllabus Setup' from the main menu (option 9).", COLORS.YELLOW)
+                return
+            print_colored("[!] Could not auto-detect paper. Please select manually:", COLORS.YELLOW)
+            for i, (k, name, _folder) in enumerate(choices, 1):
+                print(f"  {i}. {k} ({name})")
+            paper_choice = input(color_text("Enter paper number (or blank to cancel): ", COLORS.MAGENTA)).strip()
+            if paper_choice.isdigit() and 1 <= int(paper_choice) <= len(choices):
+                detected_paper = choices[int(paper_choice) - 1][0]
+            else:
+                print_colored("Cancelled.", COLORS.YELLOW)
+                return
 
         print("\n" + "─" * 40)
         print_colored("  Auto‑detected from video title:", COLORS.BLUE)
@@ -177,7 +200,8 @@ def add_lecture():
         print(f"  Lecturer     : {parsed['lecturer']}")
         print(f"  Nepali Date  : {parsed['nepali_date']}")
         print(f"  Time         : {parsed['time']}")
-        paper_display = f"{detected_paper} ({PAPER_CONFIG[detected_paper]['folder']})" if detected_paper and detected_paper in PAPER_CONFIG else "unknown"
+        _paper_map = {k: name for k, name, _folder in _paper_choices()}
+        paper_display = f"{detected_paper} ({_paper_map.get(detected_paper, 'unknown')})"
         print(f"  Paper        : {paper_display}")
         print("─" * 40)
         use = input(color_text("Use these values? (y/n, default y): ", COLORS.MAGENTA)).strip().lower()
@@ -236,28 +260,31 @@ def add_lecture():
                     if new_val:
                         fields['time'] = new_val
                 elif choice == '7':
+                    choices = _paper_choices()
+                    if not choices:
+                        print_colored("[!] No papers configured. Run Syllabus Setup first.", COLORS.RED)
+                        continue
                     print("\nAvailable papers:")
-                    paper_options = ['pretest', 'paper_i', 'paper_ii', 'paper_iii']
-                    for i, p in enumerate(paper_options, 1):
-                        folder = PAPER_CONFIG.get(p, {}).get('folder', '')
-                        print(f"  {i}. {p} ({folder})")
+                    for i, (k, name, _folder) in enumerate(choices, 1):
+                        print(f"  {i}. {k} ({name})")
                     print("  0. Cancel (keep current)")
-                    paper_choice = input(color_text(f"Choose paper (1-4, or 0 to keep '{fields['paper']}'): ", COLORS.MAGENTA)).strip()
+                    paper_choice = input(color_text(f"Choose paper (1-{len(choices)}, or 0 to keep '{fields['paper']}'): ", COLORS.MAGENTA)).strip()
                     if paper_choice.isdigit():
                         idx = int(paper_choice)
-                        if 1 <= idx <= len(paper_options):
-                            fields['paper'] = paper_options[idx-1]
+                        if 1 <= idx <= len(choices):
+                            fields['paper'] = choices[idx - 1][0]
                         elif idx == 0:
                             pass
                         else:
                             print_colored("[!] Invalid choice.", COLORS.RED)
                     else:
-                        new_val = input(color_text(f"Paper (or press Enter to keep '{fields['paper']}'): ", COLORS.MAGENTA)).strip()
+                        new_val = input(color_text(f"Paper key (or press Enter to keep '{fields['paper']}'): ", COLORS.MAGENTA)).strip()
                         if new_val:
-                            if new_val in ('pretest','paper_i','paper_ii','paper_iii'):
+                            valid_keys = {k for k, _n, _f in choices}
+                            if new_val in valid_keys:
                                 fields['paper'] = new_val
                             else:
-                                print_colored("[!] Invalid paper. Must be pretest, paper_i, paper_ii, or paper_iii.", COLORS.RED)
+                                print_colored(f"[!] Unknown paper key. Valid keys: {', '.join(sorted(valid_keys))}", COLORS.RED)
 
             syllabus_id = fields['syllabus_id']
             chapter = fields['chapter']
@@ -273,19 +300,23 @@ def add_lecture():
             time_str = parsed['time']
             paper = detected_paper
     else:
-        print_colored("[i] Could not auto‑parse title. Please enter manually.", COLORS.YELLOW)
+        print_colored("[i] Could not auto-parse title. Please enter manually.", COLORS.YELLOW)
         subject = input(color_text("Subject (course name): ", COLORS.MAGENTA)).strip()
         lecturer = input(color_text("Lecturer Name: ", COLORS.MAGENTA)).strip()
         nepali_date = input(color_text("Nepali Date (B.S.): ", COLORS.MAGENTA)).strip()
         time_str = input(color_text("Time: ", COLORS.MAGENTA)).strip()
+        choices = _paper_choices()
+        if not choices:
+            print_colored("[!] No papers configured. Please set up your syllabus first.", COLORS.RED)
+            return
         print("Select paper:")
-        print("  pretest  - Pretest Officer")
-        print("  paper_i  - First Paper: Economics")
-        print("  paper_ii - Second Paper: Management")
-        print("  paper_iii- Third Paper: Research, ICT & Banking")
-        paper = input(color_text("Paper (default pretest): ", COLORS.MAGENTA)).strip()
-        if paper not in ('pretest','paper_i','paper_ii','paper_iii'):
-            paper = 'pretest'
+        for i, (k, name, _folder) in enumerate(choices, 1):
+            print(f"  {i}. {k} - {name}")
+        paper_choice = input(color_text("Paper number (default 1): ", COLORS.MAGENTA)).strip()
+        if paper_choice.isdigit() and 1 <= int(paper_choice) <= len(choices):
+            paper = choices[int(paper_choice) - 1][0]
+        else:
+            paper = choices[0][0]
 
     # ---- Mirror ID ----
     mirror_id = input(color_text("Mirror Video ID (optional, press Enter to skip): ", COLORS.MAGENTA)).strip()
@@ -611,27 +642,30 @@ def update_lecture():
 
             # --- Special handling for paper field (show options) ---
             if field == 'paper':
+                choices = _paper_choices()
+                if not choices:
+                    print_colored("[!] No papers configured. Run Syllabus Setup first.", COLORS.RED)
+                    continue
                 print("\nAvailable papers:")
-                paper_options = ['pretest', 'paper_i', 'paper_ii', 'paper_iii']
-                for i, p in enumerate(paper_options, 1):
-                    folder = PAPER_CONFIG.get(p, {}).get('folder', '')
-                    print(f"  {i}. {p} ({folder})")
+                for i, (k, name, _folder) in enumerate(choices, 1):
+                    print(f"  {i}. {k} ({name})")
                 print("  0. Cancel (keep current)")
-                paper_choice = input(color_text(f"Choose paper (1-4, or 0 to keep '{row['paper'] if row['paper'] else 'none'}'): ", COLORS.MAGENTA)).strip()
+                paper_choice = input(color_text(f"Choose paper (1-{len(choices)}, or 0 to keep '{row['paper'] if row['paper'] else 'none'}'): ", COLORS.MAGENTA)).strip()
 
                 if paper_choice.isdigit():
                     idx = int(paper_choice)
-                    if 1 <= idx <= len(paper_options):
-                        new_paper = paper_options[idx-1]
+                    if 1 <= idx <= len(choices):
+                        new_paper = choices[idx - 1][0]
                     elif idx == 0:
                         new_paper = row['paper']  # keep existing
                     else:
                         print_colored("[!] Invalid choice.", COLORS.RED)
                         continue
                 else:
-                    new_paper = input(color_text(f"Paper (or press Enter to keep '{row['paper'] if row['paper'] else 'none'}'): ", COLORS.MAGENTA)).strip()
-                    if new_paper and new_paper not in ('pretest', 'paper_i', 'paper_ii', 'paper_iii'):
-                        print_colored("[!] Invalid paper. Must be pretest, paper_i, paper_ii, or paper_iii.", COLORS.RED)
+                    new_paper = input(color_text(f"Paper key (or press Enter to keep '{row['paper'] if row['paper'] else 'none'}'): ", COLORS.MAGENTA)).strip()
+                    valid_keys = {k for k, _n, _f in choices}
+                    if new_paper and new_paper not in valid_keys:
+                        print_colored(f"[!] Unknown paper key. Valid keys: {', '.join(sorted(valid_keys))}", COLORS.RED)
                         continue
 
                 # Now update

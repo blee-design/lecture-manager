@@ -34,6 +34,7 @@ from .question_bank import (
 from .question_converter import import_from_file, get_questions, export_to_file, create_tables
 from .question_converter.exceptions import ConverterError
 from .utils import print_colored, COLORS
+from . import syllabus_config as SC
 
 # ===== PLAYBACK CONFIGURATION =====
 PLAYBACK_SOURCE = 'mirror_only'   # Change this to your preference
@@ -118,6 +119,8 @@ def upload_to_youtube_web(id):
 # ---------- YouTube routes ----------
 @app.route('/')
 def index():
+    papers = SC.get_papers()
+
     # Get YouTube tally using hash-based matching
     yt_tally = collect_tally_data()
     total_yt = len(yt_tally['records'])
@@ -138,10 +141,13 @@ def index():
                            orphan_fb=orphan_fb,
                            orphan_yt=orphan_yt,       # pass orphan count
                            tally=yt_tally,            # for backward compatibility with template
+                           papers=papers,
                            playback_config=PLAYBACK_SOURCE)
 
 @app.route('/lectures')
 def lectures():
+    papers = SC.get_papers()
+
     # Get all filter parameters from the query string
     search = request.args.get('search', '')
     sort_by = request.args.get('sort', 'nepali_date')
@@ -229,7 +235,7 @@ def lectures():
                            lecturer=lecturer, subject=subject, syllabus=syllabus,
                            chapter=chapter, date_from=date_from, date_to=date_to,
                            notes=notes, video_id=video_id, mirror_id=mirror_id,
-                           exact=exact)
+                           exact=exact, papers=papers)
 
 @app.route('/lecture/<int:id>')
 def lecture_detail(id):
