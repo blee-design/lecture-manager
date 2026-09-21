@@ -1406,8 +1406,9 @@ def browse_by_syllabus_interactive():
 
         # ==================================================
         # LEVEL 2: Subject selection
-        # ================================================
-        while True:
+        # ==================================================
+        back_to_papers = False
+        while not back_to_papers:
             print()
             print_colored(f"  📘  {paper_display}", COLORS.CYAN, bold=True)
             print_colored("  " + _rule(), COLORS.CYAN)
@@ -1435,16 +1436,18 @@ def browse_by_syllabus_interactive():
             if not si.isdigit() or not (1 <= int(si) <= len(subjects)):
                 print_colored("[!] Invalid choice.", COLORS.RED)
                 continue
+
             selected_subject = subjects[int(si) - 1]
             subj_code = str(selected_subject.get('chapter') or '').zfill(2)
             subj_name = selected_subject['name']
 
             # ==================================================
             # LEVEL 3: Chapter selection
-            # ================================================
-            while True:
+            # ==================================================
+            back_to_subjects = False
+            while not back_to_subjects:
                 print()
-                print_colored(f"  📗  {subj_code} — {subj_name}", COLORS.CYAN, bold=True)
+                print_colored(f"  📗  {paper_display}  ›  {subj_code} {subj_name}", COLORS.CYAN, bold=True)
                 print_colored("  " + _rule(), COLORS.CYAN)
 
                 chapters = SC.get_chapters(subject_id=selected_subject['id'], active_only=True)
@@ -1470,45 +1473,93 @@ def browse_by_syllabus_interactive():
                 if not ci.isdigit() or not (1 <= int(ci) <= len(chapters)):
                     print_colored("[!] Invalid choice.", COLORS.RED)
                     continue
+
                 selected_chapter = chapters[int(ci) - 1]
                 chap_code = str(selected_chapter.get('chapter_code') or '').zfill(2)
                 chap_name = selected_chapter['name']
 
                 # ==================================================
-                # LEVEL 4: Question list
-                # ================================================
+                # LEVEL 4: Question list (stays here after viewing)
+                # ==================================================
                 qs = by_triple.get((paper_key, subj_code, chap_code), [])
-                print()
-                print_colored(f"  📄  {subj_code}.{chap_code} — {chap_name}", COLORS.CYAN, bold=True)
-                print_colored("  " + _rule(), COLORS.CYAN)
+                qs_sorted = sorted(
+                    qs,
+                    key=lambda x: (x.get('question_date') or '',
+                                   x.get('question_number') or '')
+                )
 
-                if not qs:
-                    print_colored("  [i] No questions in this chapter yet.", COLORS.YELLOW)
-                    input("\nPress Enter to continue...")
-                    continue
+                while True:
+                    print()
+                    print_colored(
+                        f"  📄  {paper_display}  ›  {subj_code} {subj_name}  ›  "
+                        f"{chap_code} {chap_name}",
+                        COLORS.CYAN, bold=True
+                    )
+                    print_colored("  " + _rule(), COLORS.CYAN)
 
-                print(f"\n  {len(qs)} question(s):")
-                print(f"  {'ID':>5}  {'Date':<10}  {'Qno':<4}  {'Type':<12}  Preview")
-                print("  " + "─" * 70)
-                for q in sorted(qs, key=lambda x: (x.get('question_date') or '', x.get('question_number') or '')):
-                    qno = (q.get('question_number') or '')[:4]
-                    qtype = (q.get('type') or 'essay')[:12]
-                    preview = _short_preview(q.get('nepali_transcription') or q.get('english_transcription') or '', 40)
-                    print(f"  {q['id']:>5}  {(q.get('question_date') or ''):<10}  {qno:<4}  {qtype:<12}  {preview}")
-
-                print("\n  Enter ID to view details, [b] back to chapters, [0] back to subjects.")
-                cmd = input(color_text("  > ", COLORS.MAGENTA)).strip().lower()
-                if cmd in ('', 'b', 'back'):
-                    continue
-                if cmd == '0':
-                    break
-                if cmd.isdigit():
-                    q = get_question_by_id(int(cmd))
-                    if q:
-                        _display_single_question(q)
-                        input("\nPress Enter to continue...")
+                    if not qs_sorted:
+                        print_colored("  [i] No questions in this chapter yet.", COLORS.YELLOW)
                     else:
-                        print_colored(f"[!] Question {cmd} not found.", COLORS.RED)
+                        print(f"\n  {len(qs_sorted)} question(s):")
+                        print(f"  {'ID':>5}  {'Date':<10}  {'Qno':<4}  "
+                              f"{'Type':<12}  Preview")
+                        print("  " + "─" * 70)
+                        for q in qs_sorted:
+                            qno = (q.get('question_number') or '')[:4]
+                            qtype = (q.get('type') or 'essay')[:12]
+                            preview = _short_preview(
+                                q.get('nepali_transcription')
+                                or q.get('english_transcription')
+                                or '',
+                                40
+                            )
+                            print(f"  {q['id']:>5}  "
+                                  f"{(q.get('question_date') or ''):<10}  "
+                                  f"{qno:<4}  {qtype:<12}  {preview}")
+
+                    print()
+                    print_colored("  Options:", COLORS.WHITE, bold=True)
+                    if qs_sorted:
+                        print("    <ID>     view that question (stay on this list)")
+                    print("    b        back to chapter list")
+                    print("    0        back to subject list")
+                    print("    q        back to paper list / exit")
+
+                    cmd = input(color_text("  > ", COLORS.MAGENTA)).strip().lower()
+
+                    if cmd == 'q':
+                        return  # full exit from browse
+
+                    if cmd in ('', 'b', 'back'):
+                        # Exit question list → back to chapter menu
+                        break
+
+                    if cmd == '0':
+                        # Exit question list AND chapter menu → back to subject menu
+                        back_to_subjects = True
+                        break
+
+                    if cmd.isdigit():
+                        q = get_question_by_id(int(cmd))
+                        if q:
+                            _display_single_question(q)
+                            input("\nPress Enter to continue...")
+                            continue
+                        else:
+                            print_colored(f"[!] Question {cmd} not found.", COLORS.RED)
+                            input("\nPress Enter to continue...")
+                            continue
+
+                    print_colored(
+                        "[!] Enter a numeric ID, 'b' for chapters, "
+                        "'0' for subjects, or 'q' to exit.",
+                        COLORS.RED
+                    )
+
+                if back_to_subjects:
+                    continue
+                else:
+                    continue
 
 def import_export_submenu():
     while True:
