@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
 """
-Convert old JSON question format (with options, pairs, hints) to the new format
-compatible with the current question bank import.
+Convert old JSON question format (with options, pairs, hints) to the format
+compatible with the current lecture-manager importer (v3.0.2+).
 
 Handles: multichoice, matching, essay, truefalse.
 
+What's new vs the old script:
+  • Emits `question_no` (the importer expects it; `question_number` was silently ignored).
+  • Emits `exam_type` (default: open).
+  • For truefalse, emits `correct_answer` (the importer ignores options for TF).
+  • Preserves `syllabus_code` and `notes` if present in the source.
+  • Extracts a numeric syllabus code from `chapter` text like "… (04.02)".
+  • Accepts `question_no` OR `question_number` from the source.
+
 Usage:
-    python convert_old_to_new.py old.json --output new.json
+    python convert_old_json.py old.json --output new.json
         [--date YYYY-MM-DD] [--institution STR] [--level STR] [--paper STR]
-        [--extract-subject] [--source STR]
-        [--auto-detect]   # enable automatic Nepali/English detection (default)
-        [--no-auto-detect] # disable automatic detection (use manual split only)
+        [--exam-type open|internal|promotional|other]
+        [--source STR]
+        [--extract-subject]
+        [--auto-detect] / [--no-auto-detect]
 """
 
 import json
@@ -18,274 +27,394 @@ import os
 import sys
 import re
 import argparse
-from datetime import datetime
 
-# ---------- Helper functions ----------
+
+# ============================================================
+# Helpers
+# ============================================================
+_SYLLABUS_CODE_RE = re.compile(r'\b(\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?:-\S+)?)\b')
+
 
 def has_devanagari(text):
-    """Check if text contains Devanagari Unicode characters."""
+    """True if text contains Devanagari Unicode characters."""
     return bool(re.search(r'[\u0900-\u097F]', text))
+
 
 def split_nepali_english(text, auto_detect=True):
     """
-    Split text into Nepali and English parts.
-    Strategies (in order):
-      1. <br> separator (Nepali <br> English)
-      2. Parentheses at the end: Nepali (English)
-      3. If auto_detect is True and Devanagari is present:
-         - If only Devanagari -> Nepali, English empty
-         - If only non-Devanagari -> English, Nepali empty
-         - If both: try to separate by patterns, fallback to whole as Nepali.
+    Split text into (nepali, english) using these strategies, in order:
+      1. <br>, <br/>, <br />, or newline separator
+      2. Trailing parentheses: "Nepali (English)"
+      3. Devanagari presence (if auto_detect is on)
     """
     if not text:
         return "", ""
 
-    # Strategy 1: <br> separator
-    if "<br>" in text:
-        parts = text.split("<br>", 1)
-        nepali = parts[0].strip()
-        english = parts[1].strip() if len(parts) > 1 else ""
-        return nepali, english
+    # 1. Explicit separators
+    for sep in ('<br>', '<br/>', '<br />', '\n'):
+        if sep in text:
+            parts = text.split(sep, 1)
+            return parts[0].strip(), parts[1].strip()
 
-    # Strategy 2: Parentheses at the end: Nepali (English)
-    match = re.search(r'^(.*?)\s*\(([^)]+)\)$', text)
-    if match:
-        nepali = match.group(1).strip()
-        english = match.group(2).strip()
-        return nepali, english
+    # 2. Trailing parentheses
+    m = re.search(r'^(.*?)\s*\(([^)]+)\)\s*$', text, re.DOTALL)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
 
-    # Strategy 3: Automatic detection (if enabled)
+    # 3. Auto-detect by Unicode block
     if auto_detect:
-        has_nep = has_devanagari(text)
-        # If no Devanagari, treat as English
-        if not has_nep:
+        if not has_devanagari(text):
             return "", text
-        # If only Devanagari (no Latin letters), treat as Nepali
         if not re.search(r'[a-zA-Z]', text):
             return text, ""
-        # Mixed: try to extract English part (often at the end after a space or punctuation)
-        # Look for a pattern: Nepali text followed by space and English text,
-        # or Nepali text followed by English in parentheses (already handled)
-        # Simple heuristic: split on last occurrence of '।' or '। ' or '. '
-        # Or split on last occurrence of space before a Latin word.
-        # We'll do a more robust approach: find the longest suffix that is mostly Latin.
+        # Mixed: try to peel Latin-only words from the end
         words = text.split()
-        if len(words) > 1:
-            # Check from the end for Latin-only words
-            eng_words = []
-            nep_words = []
-            for w in reversed(words):
-                if re.search(r'[a-zA-Z]', w) and not has_devanagari(w):
-                    eng_words.append(w)
-                else:
-                    break
-            if eng_words:
-                # The English part is the last N words
-                eng_part = ' '.join(reversed(eng_words))
-                nep_part = ' '.join(words[:-len(eng_words)])
-                return nep_part.strip(), eng_part.strip()
-        # Fallback: whole as Nepali
+        eng_words = []
+        for w in reversed(words):
+            if re.search(r'[a-zA-Z]', w) and not has_devanagari(w):
+                eng_words.append(w)
+            else:
+                break
+        if eng_words:
+            eng = ' '.join(reversed(eng_words))
+            nep = ' '.join(words[:-len(eng_words)])
+            return nep.strip(), eng.strip()
         return text, ""
 
-    # If auto_detect is disabled and no separators found, treat whole as Nepali
     return text, ""
 
+
 def extract_subject_from_group(group):
-    """Extract subject from group string (text before first parenthesis)."""
+    """Pull subject text from a group string like 'Physics (P1-B2.1)'."""
     if not group:
         return ""
     if '(' in group:
-        subject = group.split('(')[0].strip()
-        return subject.rstrip(',')
-    return group
+        return group.split('(', 1)[0].strip().rstrip(',')
+    return group.strip()
+
+
+def extract_syllabus_code(text):
+    """Find a code like '04' or '04.02' or '04.02.01' or '04.02-1' inside text."""
+    if not text:
+        return ''
+    m = _SYLLABUS_CODE_RE.search(str(text))
+    return m.group(1) if m else ''
+
 
 def pad_question_number(qno):
-    try:
-        return f"{int(qno):02d}"
-    except (ValueError, TypeError):
-        return str(qno).strip().zfill(2)
+    """Return a 2-digit string for numeric input, else the raw trimmed string."""
+    if qno is None:
+        return '01'
+    s = str(qno).strip()
+    if s.isdigit():
+        return s.zfill(2)
+    return s
 
-def convert_options(options):
-    """Convert options from {text, correct} to {text, fraction, feedback, display_order}."""
-    new_opts = []
-    if not options:
-        return new_opts
-    for idx, opt in enumerate(options):
-        fraction = 100.0 if opt.get('correct', False) else 0.0
-        new_opts.append({
+
+# ============================================================
+# Field converters
+# ============================================================
+def convert_options(raw_options, q_type):
+    """
+    Normalise options to { text, fraction, feedback, correct } (all as the
+    importer expects). Preserves fraction if the source provides it; otherwise
+    derives it from `correct`.
+    """
+    out = []
+    if not raw_options:
+        return out
+    for idx, opt in enumerate(raw_options):
+        # Source might use: correct (bool), fraction (num), or both
+        is_correct = opt.get('correct')
+        fraction = opt.get('fraction')
+        if fraction is None:
+            fraction = 100.0 if is_correct else 0.0
+        out.append({
             'text': opt.get('text', ''),
-            'fraction': fraction,
+            'fraction': float(fraction),
             'feedback': opt.get('feedback', ''),
-            'display_order': idx
+            'correct': bool(is_correct) if is_correct is not None else (float(fraction) > 0),
+            'display_order': idx,
         })
-    return new_opts
+    return out
 
-def convert_pairs(pairs):
-    """Convert pairs from {subquestion, answer} to new format with display_order."""
-    new_pairs = []
-    if not pairs:
-        return new_pairs
-    for idx, pair in enumerate(pairs):
-        new_pairs.append({
+
+def derive_tf_correct_answer(raw_options, fallback=True):
+    """
+    Given a TF question's options, decide the boolean correct_answer.
+    """
+    for opt in raw_options or []:
+        text = (opt.get('text') or '').strip().lower()
+        if opt.get('correct') or (opt.get('fraction') and float(opt.get('fraction')) > 0):
+            if text == 'true':
+                return True
+            if text == 'false':
+                return False
+    return fallback
+
+
+def convert_pairs(raw_pairs):
+    """Return pairs in the { subquestion, answer } shape the importer expects."""
+    out = []
+    if not raw_pairs:
+        return out
+    for idx, pair in enumerate(raw_pairs):
+        out.append({
             'subquestion': pair.get('subquestion', ''),
             'answer': pair.get('answer', ''),
-            'display_order': idx
+            'display_order': idx,
         })
-    return new_pairs
+    return out
 
-def convert_hints(hints):
-    """Convert hints to new format (if any)."""
-    new_hints = []
-    if not hints:
-        return new_hints
-    for idx, hint in enumerate(hints):
-        new_hints.append({
+
+def convert_hints(raw_hints):
+    """Return hints in the { text, clear_incorrect, show_num_correct } shape."""
+    out = []
+    if not raw_hints:
+        return out
+    for hint in raw_hints:
+        out.append({
             'text': hint.get('text', ''),
-            'clear_incorrect': hint.get('clear_incorrect', False),
-            'show_num_correct': hint.get('show_num_correct', False),
-            'hint_number': idx + 1
+            'clear_incorrect': bool(hint.get('clear_incorrect', False)),
+            'show_num_correct': bool(hint.get('show_num_correct', False)),
         })
-    return new_hints
+    return out
 
-def convert_old_json(input_file, output_file, defaults, extract_subject=False, source=None, auto_detect=True):
+
+# ============================================================
+# Main conversion
+# ============================================================
+def convert_old_json(input_file, output_file, defaults,
+                     extract_subject=False, source=None, auto_detect=True):
     with open(input_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
     if not isinstance(data, list):
-        print("Error: JSON must be a list of questions.")
+        print("Error: input JSON must be a list of question objects.")
         sys.exit(1)
 
     new_data = []
+    type_counts = {'essay': 0, 'multichoice': 0, 'truefalse': 0, 'matching': 0, 'other': 0}
+    tf_fixed = 0
+    code_extracted = 0
+
     for item in data:
-        qno = item.get('question_no')
-        question_number = pad_question_number(qno)
+        # ---------- Question number (accept either key) ----------
+        raw_qno = item.get('question_no')
+        if raw_qno is None:
+            raw_qno = item.get('question_number')
+        question_no = pad_question_number(raw_qno)
 
-        # Split text using automatic detection if enabled
-        text = item.get('text', '')
-        nepali, english = split_nepali_english(text, auto_detect)
+        # ---------- Text ----------
+        # If the source already has nepali_transcription / english_transcription,
+        # trust them. Otherwise split the combined `text`.
+        src_nep = (item.get('nepali_transcription') or '').strip()
+        src_eng = (item.get('english_transcription') or '').strip()
+        if src_nep or src_eng:
+            nepali, english = src_nep, src_eng
+        else:
+            nepali, english = split_nepali_english(item.get('text', ''), auto_detect)
 
-        # Determine type
-        qtype = item.get('type', 'essay').lower()
+        # ---------- Type ----------
+        qtype = (item.get('type') or 'essay').lower()
+        if qtype not in ('essay', 'multichoice', 'truefalse', 'matching'):
+            type_counts['other'] += 1
+        else:
+            type_counts[qtype] += 1
 
-        # Convert type-specific fields
+        # ---------- Fields per type ----------
+        raw_options = item.get('options', []) or []
         options = []
         pairs = []
-        hints = []
+        hints = convert_hints(item.get('hints', []))
+        correct_answer = None
 
-        if qtype in ('multichoice', 'truefalse'):
-            options = convert_options(item.get('options', []))
+        if qtype == 'multichoice':
+            options = convert_options(raw_options, qtype)
+        elif qtype == 'truefalse':
+            # The importer ignores `options` for TF — it reads `correct_answer`.
+            # Preserve options too (harmless), but always emit correct_answer.
+            if 'correct_answer' in item and isinstance(item['correct_answer'], bool):
+                correct_answer = item['correct_answer']
+            else:
+                correct_answer = derive_tf_correct_answer(raw_options, fallback=True)
+                tf_fixed += 1
+            options = convert_options(raw_options, qtype)
         elif qtype == 'matching':
-            pairs = convert_pairs(item.get('pairs', []))
+            pairs = convert_pairs(item.get('pairs', []) or [])
         # essay: no options/pairs
 
-        # Hints are optional for any type
-        hints = convert_hints(item.get('hints', []))
+        # ---------- Chapter / syllabus code ----------
+        raw_chapter = item.get('chapter') or ''
+        syllabus_code = (item.get('syllabus_code') or '').strip()
+        if not syllabus_code and raw_chapter:
+            extracted = extract_syllabus_code(raw_chapter)
+            if extracted:
+                syllabus_code = extracted
+                code_extracted += 1
 
-        # Build new question dict
+        # ---------- Subject ----------
+        if extract_subject:
+            subject = extract_subject_from_group(item.get('group') or '')
+        else:
+            subject = item.get('subject') or ''
+
+        # ---------- Marks: prefer `marks`, fall back to `grade` ----------
+        raw_marks = item.get('marks')
+        if raw_marks is None:
+            raw_marks = item.get('grade', 1)
+
+        # ---------- exam_type ----------
+        et = (item.get('exam_type') or defaults.get('exam_type') or 'open').lower()
+        if et not in ('open', 'internal', 'promotional', 'other'):
+            et = 'other'
+
+        # ---------- Build the new question ----------
         new_q = {
-            'question_number': question_number,
-            'type': qtype,
+            # --- Identity ---
+            'question_no': question_no,
+            # Also include the legacy key so older tools keep working
+            'question_number': question_no,
+
+            # --- Text ---
             'nepali_transcription': nepali,
             'english_transcription': english,
+
+            # --- Type-specific payload ---
+            'type': qtype,
             'options': options,
             'pairs': pairs,
             'hints': hints,
+
+            # --- TF fix ---
+            'correct_answer': correct_answer if qtype == 'truefalse' else None,
+
+            # --- Feedback / grading ---
             'general_feedback': item.get('general_feedback', ''),
             'grader_info': item.get('grader_info', ''),
-            'marks': item.get('grade', 1),          # grade becomes marks
-            'grade': 1,                             # default (Moodle grade, not used)
+            'marks': raw_marks,
+            'grade': 1,                              # Moodle defaultgrade; not used here
             'lines': item.get('lines', 15),
+            'response_lines': item.get('lines', 15),
             'penalty': item.get('penalty', 0),
-            'group': item.get('group', ''),
             'fraction_correct': item.get('fraction_correct', 100),
             'fraction_wrong': item.get('fraction_wrong', -20),
-            'shuffle_answers': True,
-            'show_num_correct': False,
-            'correct_feedback': '',
-            'partially_correct_feedback': '',
-            'incorrect_feedback': '',
-            'response_lines': item.get('lines', 15),
-            'attachments': 0,
-            'filetypes': '.doc,.docx,.pdf,.png,.jpg,.jpeg',
-            'maxbytes': 2097152,
-            'notes': '',
-            'chapter': '',
-            'syllabus_code': '',
-            'source': source or os.path.basename(input_file),
-            # Defaults from user
-            'question_date': defaults.get('date', ''),
-            'institution': defaults.get('institution', ''),
-            'level': defaults.get('level', ''),
-            'paper': defaults.get('paper', ''),
-            'subject': ''
+            'shuffle_answers': item.get('shuffle_answers', True),
+            'show_num_correct': item.get('show_num_correct', False),
+            'correct_feedback': item.get('correct_feedback', ''),
+            'partially_correct_feedback': item.get('partially_correct_feedback', ''),
+            'incorrect_feedback': item.get('incorrect_feedback', ''),
+            'feedback_true': item.get('feedback_true', ''),
+            'feedback_false': item.get('feedback_false', ''),
+
+            # --- Attachment defaults (essay only, harmless otherwise) ---
+            'attachments': item.get('attachments', 0),
+            'filetypes': item.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg'),
+            'maxbytes': item.get('maxbytes', 2097152),
+
+            # --- Metadata ---
+            'group': item.get('group') or '',
+            'notes': item.get('notes') or '',
+            'chapter': raw_chapter,
+            'syllabus_code': syllabus_code,
+            'source': item.get('source') or source or os.path.basename(input_file),
+            'exam_type': et,
+
+            # --- Defaults applied to every question ---
+            'question_date': item.get('question_date') or defaults.get('date', ''),
+            'institution': item.get('institution') or defaults.get('institution', ''),
+            'level': item.get('level') or defaults.get('level', ''),
+            'paper': item.get('paper') or defaults.get('paper', ''),
+            'subject': subject,
         }
 
-        # Extract subject if requested
-        if extract_subject:
-            new_q['subject'] = extract_subject_from_group(new_q['group'])
-        else:
-            new_q['subject'] = ''
+        # Drop None-only keys we don't want to persist
+        if new_q['correct_answer'] is None:
+            del new_q['correct_answer']
 
         new_data.append(new_q)
 
-    # Write output
+    # ---------- Write output ----------
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(new_data, f, indent=2, ensure_ascii=False)
 
-    print(f"✅ Converted {len(new_data)} questions to {output_file}")
+    # ---------- Report ----------
+    print(f"✅ Converted {len(new_data)} questions → {output_file}")
+    print(f"   Types: essay={type_counts['essay']}  mcq={type_counts['multichoice']}  "
+          f"tf={type_counts['truefalse']}  matching={type_counts['matching']}"
+          + (f"  other={type_counts['other']}" if type_counts['other'] else ""))
+    if tf_fixed:
+        print(f"   ℹ️  Derived `correct_answer` for {tf_fixed} True/False question(s)")
+    if code_extracted:
+        print(f"   ℹ️  Extracted syllabus code from `chapter` text for {code_extracted} question(s)")
 
+
+# ============================================================
+# CLI
+# ============================================================
 def main():
-    parser = argparse.ArgumentParser(description="Convert old MCQ/matching/essay JSON to new format.")
+    parser = argparse.ArgumentParser(
+        description="Convert old JSON question format to the current importer format."
+    )
     parser.add_argument('input', help='Input JSON file (old format)')
     parser.add_argument('-o', '--output', help='Output JSON file (new format)')
-    parser.add_argument('--date', help='Default Date (YYYY-MM-DD)')
-    parser.add_argument('--institution', help='Default Institution')
-    parser.add_argument('--level', help='Default Level')
-    parser.add_argument('--paper', help='Default Paper')
+    parser.add_argument('--date', help='Default question_date (YYYY-MM-DD)')
+    parser.add_argument('--institution', help='Default institution')
+    parser.add_argument('--level', help='Default level')
+    parser.add_argument('--paper', help='Default paper (Paper I / Paper II / Paper III / Pretest)')
+    parser.add_argument('--exam-type', dest='exam_type',
+                        choices=['open', 'internal', 'promotional', 'other'],
+                        default='open', help='Default exam type (default: open)')
     parser.add_argument('--extract-subject', action='store_true',
-                        help='Extract subject from group field')
-    parser.add_argument('--source', help='Source name (default: filename)')
+                        help='Extract subject text from the group field')
+    parser.add_argument('--source', help='Source name (default: input filename)')
     parser.add_argument('--auto-detect', action='store_true', default=True,
                         help='Enable automatic Nepali/English detection (default)')
     parser.add_argument('--no-auto-detect', action='store_false', dest='auto_detect',
-                        help='Disable automatic detection (use manual split only)')
+                        help='Disable automatic detection (only use <br> / parens splits)')
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
         print(f"Error: Input file '{args.input}' not found.")
         sys.exit(1)
 
-    # Determine output filename
     if args.output:
         output_file = args.output
     else:
         base, _ = os.path.splitext(args.input)
         output_file = f"{base}_converted.json"
 
-    # Gather defaults interactively if not provided
     defaults = {}
-    defaults['date'] = args.date or input("Enter default Date (YYYY-MM-DD): ").strip()
-    defaults['institution'] = args.institution or input("Enter default Institution: ").strip()
-    defaults['level'] = args.level or input("Enter default Level: ").strip()
-    defaults['paper'] = args.paper or input("Enter default Paper: ").strip()
+    defaults['date']        = args.date        or input("Default Date (YYYY-MM-DD): ").strip()
+    defaults['institution'] = args.institution or input("Default Institution: ").strip()
+    defaults['level']       = args.level       or input("Default Level: ").strip()
+    defaults['paper']       = args.paper       or input("Default Paper (Paper I / Paper II / Paper III / Pretest): ").strip()
+    defaults['exam_type']   = args.exam_type
 
-    # Confirm
-    print("\nDefaults to apply to ALL questions:")
-    print(f"  Date        : {defaults['date']}")
-    print(f"  Institution : {defaults['institution']}")
-    print(f"  Level       : {defaults['level']}")
-    print(f"  Paper       : {defaults['paper']}")
+    print()
+    print("Defaults to apply to ALL questions:")
+    print(f"   Date        : {defaults['date']}")
+    print(f"   Institution : {defaults['institution']}")
+    print(f"   Level       : {defaults['level']}")
+    print(f"   Paper       : {defaults['paper']}")
+    print(f"   Exam type   : {defaults['exam_type']}")
     if args.extract_subject:
-        print("  Subject will be extracted from 'group' field.")
+        print("   Subject     : extracted from 'group' field")
     else:
-        print("  Subject will be left empty (you can update later).")
-    print(f"  Auto‑detect : {'ON' if args.auto_detect else 'OFF'}")
-    confirm = input("\nProceed? (y/n): ").strip().lower()
-    if confirm != 'y':
+        print("   Subject     : left empty (update later)")
+    print(f"   Auto-detect : {'ON' if args.auto_detect else 'OFF'}")
+
+    if input("\nProceed? (y/n): ").strip().lower() != 'y':
         print("Aborted.")
         sys.exit(0)
 
-    convert_old_json(args.input, output_file, defaults, args.extract_subject, args.source, args.auto_detect)
+    convert_old_json(
+        args.input, output_file, defaults,
+        extract_subject=args.extract_subject,
+        source=args.source,
+        auto_detect=args.auto_detect,
+    )
+
 
 if __name__ == "__main__":
     main()
