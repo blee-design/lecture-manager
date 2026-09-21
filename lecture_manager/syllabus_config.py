@@ -230,17 +230,22 @@ def delete_subject(subject_id):
     cursor.close(); conn.close()
     return ok
 
-
 def clear_all():
-    """Wipe papers + subjects + chapters (used by first-run wizard)."""
+    """
+    Wipe papers + subjects + chapters.
+
+    chapters has a FK to subjects with ON DELETE CASCADE, so deleting
+    subjects alone would work — we delete chapters explicitly anyway
+    so the intent is clear and we don't depend on the FK.
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM chapters")
     cursor.execute("DELETE FROM subjects")
     cursor.execute("DELETE FROM papers")
     conn.commit()
-    cursor.close(); conn.close()
-
+    cursor.close()
+    conn.close()
 
 # ---------- SEED (optional) ----------
 # Intentionally empty. New users start with a clean slate.
@@ -264,12 +269,25 @@ def seed_from_default_template():
 # ---------- EXPORT / IMPORT ----------
 def export_syllabus(filepath):
     """
-    Write all papers + subjects to a JSON file.
+    Write all papers + subjects + chapters to a JSON file (v2).
+
     Structure:
     {
-      "version": 1,
+      "version": 2,
       "exported_at": "...",
-      "papers": [ {paper_key, display_name, folder_name, keywords, display_order, subjects:[{name, chapter}]} ]
+      "papers": [
+        {
+          paper_key, display_name, folder_name, keywords, display_order,
+          subjects: [
+            {
+              name, chapter,
+              chapters: [
+                { chapter_code, name, description, display_order }
+              ]
+            }
+          ]
+        }
+      ]
     }
     """
     import json
@@ -277,29 +295,53 @@ def export_syllabus(filepath):
 
     papers = get_papers(active_only=False)
     data = {
-        "version": 1,
+        "version": 2,
         "exported_at": datetime.now().isoformat(),
-        "papers": []
+        "papers": [],
     }
+
+    total_subjects = 0
+    total_chapters = 0
+
     for p in papers:
         subs = get_subjects(paper_key=p["paper_key"], active_only=False)
+        sub_list = []
+        for s in subs:
+            chapters = get_chapters(subject_id=s["id"], active_only=False)
+            sub_list.append({
+                "name": s["name"],
+                "chapter": s.get("chapter") or "",
+                "chapters": [
+                    {
+                        "chapter_code": c.get("chapter_code") or "",
+                        "name": c.get("name") or "",
+                        "description": c.get("description") or "",
+                        "display_order": c.get("display_order", 0),
+                    }
+                    for c in chapters
+                ],
+            })
+            total_subjects += 1
+            total_chapters += len(chapters)
+
         data["papers"].append({
             "paper_key": p["paper_key"],
             "display_name": p["display_name"],
             "folder_name": p["folder_name"],
             "keywords": p.get("keywords") or "",
             "display_order": p.get("display_order", 0),
-            "subjects": [
-                {"name": s["name"], "chapter": s.get("chapter") or ""}
-                for s in subs
-            ],
+            "subjects": sub_list,
         })
 
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-    print_colored(f"[✓] Exported {len(papers)} papers to {filepath}", COLORS.GREEN)
-    return True
 
+    print_colored(
+        f"[✓] Exported {len(papers)} papers, {total_subjects} subjects, "
+        f"{total_chapters} chapters to {filepath}",
+        COLORS.GREEN
+    )
+    return True
 
 def import_syllabus(filepath, merge=True):
     """

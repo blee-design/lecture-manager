@@ -42,6 +42,7 @@ questions_export*.xml
 facebook_export*.json
 facebook_export*.csv
 questions_export_*.html
+*.json
 
 syllabus_export_*.json 
 

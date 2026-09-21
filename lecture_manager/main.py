@@ -287,6 +287,7 @@ def syllabus_menu():
             from datetime import datetime
             default_name = f"syllabus_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             path = input(f"Output path [{default_name}]: ").strip() or default_name
+            print_colored(f"[i] Exporting papers, subjects and chapters...", COLORS.BLUE)
             try:
                 SC.export_syllabus(path)
             except Exception as e:
@@ -298,6 +299,7 @@ def syllabus_menu():
             if not path:
                 continue
             existing = SC.get_papers(active_only=False)
+            merge = True
             if existing:
                 print_colored(f"[i] You already have {len(existing)} paper(s).", COLORS.YELLOW)
                 mode = input("(m)erge — add new only, or (r)eplace — wipe first? [m/r]: ").strip().lower()
@@ -305,12 +307,25 @@ def syllabus_menu():
                     confirm = input("Type 'yes' to wipe existing syllabus: ").strip().lower()
                     if confirm != 'yes':
                         print_colored("Cancelled.", COLORS.YELLOW); continue
-                    SC.import_syllabus(path, merge=False)
+                    merge = False
                 else:
-                    SC.import_syllabus(path, merge=True)
+                    merge = True
             else:
-                SC.import_syllabus(path, merge=False)
-            reload_paper_cache()
+                merge = False
+
+            print_colored("[i] Importing...", COLORS.BLUE)
+            try:
+                result = SC.import_syllabus(path, merge=merge)
+                # import_syllabus now returns a 3-tuple
+                if isinstance(result, tuple) and len(result) == 3:
+                    p, s, c = result
+                    print_colored(
+                        f"[✓] Imported: {p} new papers, {s} new subjects, {c} new chapters.",
+                        COLORS.GREEN
+                    )
+                reload_paper_cache()
+            except Exception as e:
+                print_colored(f"[!] Import failed: {e}", COLORS.RED)
 
         # ---------- 9. Clear all ----------
         elif choice == "9":
