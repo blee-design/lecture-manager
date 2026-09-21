@@ -140,6 +140,22 @@ def create_table():
     );
     """)
 
+    # ---------- Chapters (linked to subjects) ----------
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS chapters (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        subject_id INT NOT NULL,
+        chapter_code VARCHAR(10) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        description TEXT NULL,
+        display_order INT DEFAULT 0,
+        active BOOLEAN DEFAULT TRUE,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY idx_subject_chapter (subject_id, chapter_code),
+        FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    """)
+
     # ---- Question supporting tables (from merged converter) ----
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS question_options (

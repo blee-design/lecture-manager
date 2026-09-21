@@ -139,6 +139,7 @@ def syllabus_menu():
         print("  7. Export current syllabus to JSON")
         print("  8. Import syllabus from JSON")
         print("  9. Clear all (start fresh)")
+        print("  c. Manage chapters (add / edit / delete)")
         print("  0. Back")
         print("─" * 50)
         choice = input(color_text("Choose: ", COLORS.MAGENTA)).strip()
@@ -318,9 +319,148 @@ def syllabus_menu():
                 reload_paper_cache()
                 print_colored("[✓] Syllabus cleared.", COLORS.GREEN)
 
+        # ---------- c. Chapter management ----------
+        elif choice == "c":
+            chapters_submenu(SC, reload_paper_cache, papers)
+
         # ---------- 0. Back ----------
         elif choice == "0":
             break
+        else:
+            print_colored("[!] Invalid option.", COLORS.RED)
+
+def chapters_submenu(SC, reload_paper_cache, papers):
+    """Nested menu for managing chapters under subjects."""
+    while True:
+        print("\n" + "─" * 50)
+        print_colored("  📖 CHAPTER MANAGEMENT", COLORS.CYAN, bold=True)
+        print("─" * 50)
+        print("  1. List chapters of a subject")
+        print("  2. Add a chapter")
+        print("  3. Edit a chapter")
+        print("  4. Delete a chapter")
+        print("  0. Back")
+        choice = input(color_text("Choose: ", COLORS.MAGENTA)).strip()
+
+        if choice == "0":
+            return
+
+        if not papers and choice in ("1", "2", "3", "4"):
+            print_colored("No papers configured. Add a paper first.", COLORS.YELLOW)
+            continue
+
+        # ----- 1. List -----
+        if choice == "1":
+            for i, p in enumerate(papers, 1):
+                print(f"  {i}. {p['display_name']}")
+            pi = input("Paper number (or blank to cancel): ").strip()
+            if not pi.isdigit() or not (1 <= int(pi) <= len(papers)):
+                continue
+            subj_list = SC.get_subjects(paper_key=papers[int(pi) - 1]["paper_key"], active_only=False)
+            if not subj_list:
+                print_colored("No subjects in that paper.", COLORS.YELLOW); continue
+            for i, s in enumerate(subj_list, 1):
+                print(f"  {i}. [{s['chapter']}] {s['name']}")
+            si = input("Subject number: ").strip()
+            if not si.isdigit() or not (1 <= int(si) <= len(subj_list)):
+                continue
+            subj = subj_list[int(si) - 1]
+            chs = SC.get_chapters(subject_id=subj["id"], active_only=False)
+            print(f"\n  Chapters of [{subj['chapter']}] {subj['name']}:")
+            if not chs:
+                print("    (none)")
+            for c in chs:
+                print(f"    [{c['chapter_code']}] {c['name']}")
+
+        # ----- 2. Add -----
+        elif choice == "2":
+            for i, p in enumerate(papers, 1):
+                print(f"  {i}. {p['display_name']}")
+            pi = input("Paper number: ").strip()
+            if not pi.isdigit() or not (1 <= int(pi) <= len(papers)):
+                continue
+            subj_list = SC.get_subjects(paper_key=papers[int(pi) - 1]["paper_key"], active_only=False)
+            if not subj_list:
+                print_colored("No subjects.", COLORS.YELLOW); continue
+            for i, s in enumerate(subj_list, 1):
+                print(f"  {i}. [{s['chapter']}] {s['name']}")
+            si = input("Subject number: ").strip()
+            if not si.isdigit() or not (1 <= int(si) <= len(subj_list)):
+                continue
+            subj = subj_list[int(si) - 1]
+            code = input("Chapter code (e.g. 01, 02): ").strip()
+            if not code:
+                continue
+            name = input("Chapter name: ").strip()
+            if not name:
+                continue
+            desc = input("Description (optional): ").strip() or None
+            if SC.add_chapter(subj["id"], code, name, description=desc):
+                print_colored("[✓] Chapter added.", COLORS.GREEN)
+                reload_paper_cache()
+            else:
+                print_colored("[!] Could not add chapter.", COLORS.RED)
+
+        # ----- 3. Edit -----
+        elif choice == "3":
+            all_subjects = SC.get_subjects(active_only=False)
+            if not all_subjects:
+                print_colored("No subjects.", COLORS.YELLOW); continue
+            for i, s in enumerate(all_subjects, 1):
+                print(f"  {i}. [{s['paper']}] [{s['chapter']}] {s['name']}")
+            si = input("Subject number (blank to cancel): ").strip()
+            if not si.isdigit() or not (1 <= int(si) <= len(all_subjects)):
+                continue
+            subj = all_subjects[int(si) - 1]
+            chs = SC.get_chapters(subject_id=subj["id"], active_only=False)
+            if not chs:
+                print_colored("No chapters.", COLORS.YELLOW); continue
+            for i, c in enumerate(chs, 1):
+                print(f"  {i}. [{c['chapter_code']}] {c['name']}")
+            ci = input("Chapter number (blank to cancel): ").strip()
+            if not ci.isdigit() or not (1 <= int(ci) <= len(chs)):
+                continue
+            c = chs[int(ci) - 1]
+            print(f"\n  Current name       : {c['name']}")
+            print(f"  Current description: {c.get('description') or '(none)'}")
+            new_name = input("New name (blank to keep): ").strip()
+            new_desc = input("New description (blank to keep): ").strip()
+            updates = {}
+            if new_name: updates['name'] = new_name
+            if new_desc: updates['description'] = new_desc
+            if not updates:
+                print_colored("No changes.", COLORS.YELLOW); continue
+            if SC.update_chapter(c['id'], **updates):
+                print_colored("[✓] Chapter updated.", COLORS.GREEN)
+                reload_paper_cache()
+
+        # ----- 4. Delete -----
+        elif choice == "4":
+            all_subjects = SC.get_subjects(active_only=False)
+            if not all_subjects:
+                print_colored("No subjects.", COLORS.YELLOW); continue
+            for i, s in enumerate(all_subjects, 1):
+                print(f"  {i}. [{s['paper']}] [{s['chapter']}] {s['name']}")
+            si = input("Subject number (blank to cancel): ").strip()
+            if not si.isdigit() or not (1 <= int(si) <= len(all_subjects)):
+                continue
+            subj = all_subjects[int(si) - 1]
+            chs = SC.get_chapters(subject_id=subj["id"], active_only=False)
+            if not chs:
+                print_colored("No chapters.", COLORS.YELLOW); continue
+            for i, c in enumerate(chs, 1):
+                print(f"  {i}. [{c['chapter_code']}] {c['name']}")
+            ci = input("Delete which chapter? number: ").strip()
+            if not ci.isdigit() or not (1 <= int(ci) <= len(chs)):
+                continue
+            c = chs[int(ci) - 1]
+            if input(f"Delete '{c['name']}'? (y/n): ").strip().lower() == 'y':
+                if SC.delete_chapter(c['id']):
+                    print_colored("[✓] Chapter deleted.", COLORS.GREEN)
+                    reload_paper_cache()
+                else:
+                    print_colored("[!] Delete failed.", COLORS.RED)
+
         else:
             print_colored("[!] Invalid option.", COLORS.RED)
 

@@ -33,6 +33,115 @@ from .question_converter.exceptions import (
 
 _last_filtered_questions = None
 
+# ============================================================
+# Display helpers (ANSI-aware) + syllabus linking
+# ============================================================
+_QB_WIDTH = 76
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
+
+
+def _vlen(s):
+    """Visible width of a string (strips ANSI)."""
+    return len(_ANSI_RE.sub('', s))
+
+
+def _rule():
+    return "─" * _QB_WIDTH
+
+
+def _title_rule(text):
+    """Centered text with side rules."""
+    padded = f"  {text}  "
+    vis = _vlen(padded)
+    side = max(0, (_QB_WIDTH - vis) // 2)
+    left = "─" * side
+    right = "─" * max(0, _QB_WIDTH - side - vis)
+    return left + padded + right
+
+
+def _section_header(text):
+    return color_text(f"  {text}", COLORS.CYAN, bold=True)
+
+
+# ---------- Syllabus resolver ----------
+_SYLLABUS_CODE_RE = re.compile(r'\b(\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?:-\d+)?)\b')
+
+
+def resolve_question_syllabus(q):
+    """
+    Return a dict describing the question's syllabus context:
+      {paper_key, paper_display, subject_code, subject_name,
+       chapter_code, chapter_name, code_display, reason}
+
+    'reason' is a short string explaining how we resolved it
+    ('code match', 'chapter name match', 'raw code', 'none').
+    """
+    from .file_manager import _papers, describe_syllabus_id, _chapter_lookup, _subject_lookup
+
+    out = {
+        'paper_key': q.get('paper'),
+        'paper_display': None,
+        'subject_code': None,
+        'subject_name': None,
+        'chapter_code': None,
+        'chapter_name': None,
+        'code_display': None,
+        'reason': 'none',
+    }
+
+    paper_key = out['paper_key']
+
+    # Paper display
+    if paper_key:
+        papers = _papers()
+        if paper_key in papers:
+            out['paper_display'] = papers[paper_key]['display_name']
+        else:
+            out['paper_display'] = paper_key
+
+    # Try to extract a numeric code from syllabus_code, then chapter
+    candidate = None
+    for source in (q.get('syllabus_code') or '', q.get('chapter') or ''):
+        m = _SYLLABUS_CODE_RE.search(str(source))
+        if m:
+            candidate = m.group(1)
+            break
+
+    if not paper_key:
+        out['code_display'] = candidate or (q.get('syllabus_code') or '').strip() or None
+        return out
+
+    if candidate:
+        out['code_display'] = candidate
+        desc = describe_syllabus_id(candidate, paper_key)
+        out['subject_code'] = desc.get('subject_code')
+        out['subject_name'] = desc.get('subject_name')
+        out['chapter_code'] = desc.get('chapter_code')
+        out['chapter_name'] = desc.get('chapter_name')
+        if out['chapter_name'] or out['subject_name']:
+            out['reason'] = 'code match'
+            return out
+
+    # Fallback: raw text
+    out['code_display'] = (q.get('syllabus_code') or '').strip() or None
+
+    # Fallback: match chapter name text
+    chapter_text = (q.get('chapter') or '').strip().lower()
+    if chapter_text and paper_key:
+        lookup = _chapter_lookup()
+        for (p, s, c), name in lookup.items():
+            if p == paper_key and name.lower() in chapter_text:
+                out['subject_code'] = s
+                out['chapter_code'] = c
+                out['chapter_name'] = name
+                out['subject_name'] = _subject_lookup().get((paper_key, s))
+                out['reason'] = 'chapter name match'
+                return out
+
+    if out['code_display']:
+        out['reason'] = 'raw code'
+    return out
+
 TABLE_NAME = 'questions'
 
 # ---------- Database ----------
@@ -747,140 +856,187 @@ def check_duplicate(date, institution, level, paper, group, question_number, exc
 
 # ---------- Display helpers ----------
 def _display_single_question(q):
-    print("\n" + "═" * 70)
-    print_colored("  QUESTION DETAILS", COLORS.CYAN, bold=True)
-    print("═" * 70)
+    qid = q.get('id', '?')
+    qno = normalize_question_number(q.get('question_number'))
+    qtype = q.get('type', 'essay')
 
-    inst = color_text(f"{q.get('institution', '')}", COLORS.BLUE, bold=True)
-    level = color_text(f"({q.get('level', '')})", COLORS.BLUE)
-    print(f"  {inst:^30} {level:^20}")
-    date_str = q.get('question_date', '')
-    print(f"  {color_text(date_str, COLORS.MAGENTA):^50}")
+    print()
+    print_colored("  " + _title_rule(f"📄 QUESTION DETAILS   ID: {qid}"), COLORS.CYAN)
 
-    group = q.get('group', '')
-    subject = q.get('subject', '')
-    chapter = q.get('chapter', '')
+    # ---------- Institution / Level / Date ----------
+    inst = q.get('institution') or '(unknown institution)'
+    level = q.get('level') or ''
+    date_str = q.get('question_date') or ''
+    group = q.get('group') or ''
+    subject = q.get('subject') or ''
+
+    print(f"  {'Institution':<14}: {color_text(inst, COLORS.BLUE, bold=True)}")
+    if level:
+        print(f"  {'Level':<14}: {level}")
+    if date_str:
+        print(f"  {'Date':<14}: {date_str}")
     if group:
-        print(f"  Group: {color_text(group, COLORS.YELLOW)}")
-    print(f"  Subject: {color_text(subject, COLORS.CYAN)}")
-    if chapter:
-        print(f"  Chapter: {color_text(chapter, COLORS.GREEN)}")
-    if q.get('syllabus_code'):
-        print(f"  Syllabus Code: {color_text(q['syllabus_code'], COLORS.MAGENTA)}")
+        print(f"  {'Group':<14}: {group}")
+    if subject:
+        print(f"  {'Subject':<14}: {subject}")
 
-    q_no = normalize_question_number(q.get('question_number'))
-    from .utils import html_to_terminal
-    nepali = html_to_terminal(q.get('nepali_transcription', ''))
-    english = html_to_terminal(q.get('english_transcription', ''))
-    marks = q.get('marks', '')
-    notes = q.get('notes')
-    q_type = q.get('type', 'essay')
+    # ---------- Syllabus context ----------
+    info = resolve_question_syllabus(q)
+    if info['paper_display'] or info['subject_name'] or info['chapter_name'] or info['code_display']:
+        print()
+        print_colored("  📖  Syllabus Link", COLORS.CYAN, bold=True)
+        print("  " + "─" * (_QB_WIDTH - 4))
+        if info['paper_display']:
+            print(f"     {'Paper':<10}: {info['paper_display']}")
+        if info['subject_name']:
+            code = info['subject_code'] or ''
+            print(f"     {'Subject':<10}: {code} — {info['subject_name']}")
+        elif info['subject_code']:
+            print(f"     {'Subject':<10}: {info['subject_code']}  (name not in syllabus)")
+        if info['chapter_name']:
+            code = info['chapter_code'] or ''
+            print(f"     {'Chapter':<10}: {code} — {info['chapter_name']}")
+        if info['code_display']:
+            print(f"     {'Code':<10}: {info['code_display']}   {color_text('(' + info['reason'] + ')', COLORS.YELLOW)}")
+        if not (info['subject_name'] or info['chapter_name']):
+            print_colored("     [i] No matching subject/chapter found in your syllabus.", COLORS.YELLOW)
 
-    print("\n" + "─" * 70)
-    line = f"  {color_text(f'Q.No. {q_no}.', COLORS.CYAN, bold=True)}"
-    if marks and str(marks).isdigit():
-        line += f" {color_text(f'[{marks} marks]', COLORS.YELLOW)}"
-    line += f"  {color_text(f'Type: {q_type}', COLORS.BLUE)}"
-    print(line)
-
-    # Question text
-    # Question text — only wrap in brackets when both exist
-    question_text = format_bilingual_text(nepali, english)
-    print(f"    {question_text}")
-
-    if notes:
-        print(f"    {color_text('📝 Note:', COLORS.YELLOW)} {notes}")
-
-    # ---- Type-specific details ----
-    if q_type == 'multichoice':
-        options = q.get('options', [])
-        if options:
-            print("\n  Options:")
-            for opt in options:
-                marker = " ✓" if opt.get('correct', False) else ""
-                print(f"    - {opt.get('text', '')}{marker}")
-        if q.get('fraction_correct') is not None or q.get('fraction_wrong') is not None:
-            print(f"    Correct fraction: {q.get('fraction_correct', 100)}% | "
-                  f"Wrong fraction: {q.get('fraction_wrong', -20)}%")
-
-    elif q_type == 'truefalse':
-        options = q.get('options', [])
-        if options:
-            print("\n  Options:")
-            for opt in options:
-                marker = " ✓" if opt.get('correct', False) else ""
-                print(f"    - {opt.get('text', '')}{marker}")
-        if q.get('fraction_correct') is not None or q.get('fraction_wrong') is not None:
-            print(f"    Correct fraction: {q.get('fraction_correct', 100)}% | "
-                  f"Wrong fraction: {q.get('fraction_wrong', -20)}%")
-
-    elif q_type == 'matching':
-        pairs = q.get('pairs', [])
-        if pairs:
-            print("\n  Matching pairs:")
-            for pair in pairs:
-                print(f"    {pair.get('subquestion', '')} ↔ {pair.get('answer', '')}")
-        if q.get('shuffle_answers') is not None:
-            print(f"    Shuffle answers: {'Yes' if q['shuffle_answers'] else 'No'}")
-        if q.get('show_num_correct'):
-            print("    Show number correct: Yes")
-        hints = q.get('hints', [])
-        if hints:
-            print("    Hints:")
-            for hint in hints:
-                line = f"      - {hint.get('text', '')}"
-                if hint.get('clear_incorrect'):
-                    line += " (clears incorrect)"
-                if hint.get('show_num_correct'):
-                    line += " (shows number correct)"
+    # ---------- Cross-linked lectures ----------
+    if info['paper_key'] and info['subject_code'] and info['chapter_code']:
+        lectures = find_lectures_for_chapter(
+            info['paper_key'], info['subject_code'], info['chapter_code']
+        )
+        if lectures:
+            print()
+            print_colored(
+                f"  📼  Lectures in this chapter  ({len(lectures)})",
+                COLORS.CYAN, bold=True
+            )
+            print("  " + "─" * (_QB_WIDTH - 4))
+            for lec in lectures:
+                sid = lec.get('syllabus_id') or ''
+                date_str = lec.get('nepali_date') or ''
+                lecturer = (lec.get('lecturer') or '')[:22]
+                title = (lec.get('chapter') or lec.get('subject') or '')[:36]
+                line = f"     {sid:<14}  {date_str:<12}  {lecturer:<22}  {title}"
                 print(line)
 
+    # ---------- Question text ----------
+    nepali = html_to_terminal(q.get('nepali_transcription') or '').strip()
+    english = html_to_terminal(q.get('english_transcription') or '').strip()
+    marks = q.get('marks')
+    notes = q.get('notes')
+
+    print()
+    print_colored("  📝  Question", COLORS.CYAN, bold=True)
+    print("  " + "─" * (_QB_WIDTH - 4))
+
+    line = f"     {color_text(f'Q.No. {qno}.', COLORS.CYAN, bold=True)}"
+    if marks and str(marks).isdigit():
+        line += f"  {color_text(f'[{marks} marks]', COLORS.YELLOW)}"
+    line += f"  {color_text(f'Type: {qtype}', COLORS.BLUE)}"
+    print(line)
+
+    if nepali and english and nepali.strip().lower() == english.strip().lower():
+        # Identical → show once
+        print(f"\n     {nepali}")
+    else:
+        if nepali:
+            print(f"\n     {nepali}")
+        if english:
+            prefix = "     " if not nepali else "     "
+            print(f"{prefix}{color_text('(' + english + ')', COLORS.WHITE) if nepali else english}")
+
+    if notes:
+        print(f"\n     {color_text('📝 Note:', COLORS.YELLOW)} {notes}")
+
+    # ---------- Type-specific details ----------
+    if qtype == 'multichoice':
+        options = q.get('options', [])
+        if options:
+            print()
+            print_colored("  🔘  Options", COLORS.CYAN, bold=True)
+            print("  " + "─" * (_QB_WIDTH - 4))
+            for idx, opt in enumerate(options):
+                letter = chr(ord('A') + idx)
+                mark = color_text("✓", COLORS.GREEN, bold=True) if opt.get('correct') else " "
+                text = opt.get('text', '')
+                print(f"     {mark}  {letter}. {text}")
+        fc = q.get('fraction_correct')
+        fw = q.get('fraction_wrong')
+        if fc is not None or fw is not None:
+            print(f"     {color_text('Scoring:', COLORS.WHITE)} correct {fc or 100}% · wrong {fw if fw is not None else -20}%")
+
+    elif qtype == 'truefalse':
+        options = q.get('options', [])
+        print()
+        print_colored("  ✅  Correct answer", COLORS.CYAN, bold=True)
+        print("  " + "─" * (_QB_WIDTH - 4))
+        for opt in options:
+            if opt.get('correct'):
+                print(f"     {color_text('✓', COLORS.GREEN, bold=True)}  {opt.get('text', '')}")
+                break
+        if q.get('feedback_true'):
+            print(f"     • If True : {html_to_terminal(q['feedback_true'])}")
+        if q.get('feedback_false'):
+            print(f"     • If False: {html_to_terminal(q['feedback_false'])}")
+
+    elif qtype == 'matching':
+        pairs = q.get('pairs', [])
+        if pairs:
+            print()
+            print_colored("  🔗  Matching pairs", COLORS.CYAN, bold=True)
+            print("  " + "─" * (_QB_WIDTH - 4))
+            for pair in pairs:
+                sub = pair.get('subquestion', '')
+                ans = pair.get('answer', '')
+                print(f"     {sub}  {color_text('↔', COLORS.CYAN)}  {ans}")
+        hints = q.get('hints', [])
+        if hints:
+            print()
+            print_colored("  💡  Hints", COLORS.CYAN, bold=True)
+            print("  " + "─" * (_QB_WIDTH - 4))
+            for i, h in enumerate(hints, 1):
+                extra = []
+                if h.get('clear_incorrect'): extra.append("clears incorrect")
+                if h.get('show_num_correct'): extra.append("shows count")
+                suffix = f"  ({', '.join(extra)})" if extra else ""
+                print(f"     Hint {i}: {h.get('text', '')}{suffix}")
+
     else:  # essay
-        print(f"\n  Response lines: {q.get('response_lines', 15)}")
-        print(f"  Attachments: {q.get('attachments', 0)}")
+        print()
+        print_colored("  📄  Essay settings", COLORS.CYAN, bold=True)
+        print("  " + "─" * (_QB_WIDTH - 4))
+        print(f"     Response lines : {q.get('response_lines', 15)}")
+        print(f"     Attachments    : {q.get('attachments', 0)}")
         if q.get('filetypes'):
-            print(f"  File types: {q['filetypes']}")
-        if q.get('maxbytes'):
-            print(f"  Max bytes: {q['maxbytes']}")
+            print(f"     File types     : {q['filetypes']}")
+        if q.get('grader_info'):
+            print(f"     Grader notes   : {html_to_terminal(q['grader_info'])}")
 
-    # ---- Unified ANSWER & EXPLANATION section ----
+    # ---------- Answer / explanation ----------
     answer_lines = []
-
-    if q_type == 'multichoice':
+    if qtype == 'multichoice':
         correct = next((o.get('text', '') for o in q.get('options', []) if o.get('correct')), None)
         if correct:
             answer_lines.append(f"✅ Correct option: {correct}")
-
-    elif q_type == 'truefalse':
+    elif qtype == 'truefalse':
         correct = next((o.get('text', '') for o in q.get('options', []) if o.get('correct')), None)
         if correct:
             answer_lines.append(f"✅ Correct answer: {correct}")
-        if q.get('feedback_true'):
-            answer_lines.append(f"   • If answered True : {html_to_terminal(q['feedback_true'])}")
-        if q.get('feedback_false'):
-            answer_lines.append(f"   • If answered False: {html_to_terminal(q['feedback_false'])}")
 
-    elif q_type == 'matching':
-        if q.get('correct_feedback'):
-            answer_lines.append(f"   • Correct          : {html_to_terminal(q['correct_feedback'])}")
-        if q.get('partially_correct_feedback'):
-            answer_lines.append(f"   • Partially correct: {html_to_terminal(q['partially_correct_feedback'])}")
-        if q.get('incorrect_feedback'):
-            answer_lines.append(f"   • Incorrect        : {html_to_terminal(q['incorrect_feedback'])}")
-
-    gf = q.get('general_feedback')
-    if gf:
-        answer_lines.append(f"💡 Explanation: {html_to_terminal(gf)}")
-
-    if q_type == 'essay' and q.get('grader_info'):
-        answer_lines.append(f"📝 Grader notes: {html_to_terminal(q['grader_info'])}")
+    if q.get('general_feedback'):
+        answer_lines.append(f"💡 Explanation: {html_to_terminal(q['general_feedback'])}")
 
     if answer_lines:
-        print("\n  " + color_text("📖 ANSWER & EXPLANATION", COLORS.GREEN, bold=True))
-        for line in answer_lines:
-            print(f"    {line}")
+        print()
+        print_colored("  📖  Answer & Explanation", COLORS.GREEN, bold=True)
+        print("  " + "─" * (_QB_WIDTH - 4))
+        for a in answer_lines:
+            print(f"     {a}")
 
-    print("─" * 70)
+    print()
+    print_colored("  " + _rule(), COLORS.CYAN)
 
 def _display_paper(questions, show_answers=False):
     if not questions:
@@ -888,74 +1044,90 @@ def _display_paper(questions, show_answers=False):
         return
 
     first = questions[0]
-    inst = color_text(f"{first.get('institution', '')}", COLORS.BLUE, bold=True)
-    level = color_text(f"{first.get('level', '')}", COLORS.BLUE)
-    date_str = first.get('question_date', '')
+    inst = first.get('institution') or '(unknown institution)'
+    level = first.get('level') or ''
+    date_str = first.get('question_date') or ''
 
-    width = shutil.get_terminal_size().columns if shutil.get_terminal_size().columns else 80
-    width = min(width, 100)
+    print()
+    print_colored("  " + _title_rule("📄 EXAM PAPER"), COLORS.CYAN)
+    print()
+    print(f"     {color_text(inst, COLORS.BLUE, bold=True)}")
+    if level:
+        print(f"     {level}")
+    if date_str:
+        print(f"     {color_text(date_str, COLORS.MAGENTA)}")
+    print_colored("  " + _rule(), COLORS.CYAN)
 
-    print("\n" + "═" * width)
-    print(f"  {inst:^30} {level:^20}")
-    print(f"  {color_text(date_str, COLORS.MAGENTA):^50}")
-    print("═" * width)
-
-    grouped = defaultdict(lambda: defaultdict(list))
+    # Group: subject → chapter → questions  (fall back to group → subject)
+    from collections import defaultdict
+    grouped = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     for q in questions:
-        grp = q.get('group', 'General')
-        subj = q.get('subject', '')
-        grouped[grp][subj].append(q)
+        info = resolve_question_syllabus(q)
+        subj = info['subject_name'] or q.get('subject') or 'Uncategorised'
+        subj_code = info['subject_code'] or ''
+        chap = info['chapter_name'] or q.get('chapter') or 'General'
+        chap_code = info['chapter_code'] or ''
+        key_subj = f"{subj_code} — {subj}" if subj_code else subj
+        key_chap = f"{chap_code} — {chap}" if chap_code else chap
+        grouped[key_subj][key_chap][
+            (q.get('group') or 'General')] = True   # dummy — just to track group
+        grouped[key_subj][key_chap][q['id']] = q     # hold the question itself
 
-    for grp, subjects in sorted(grouped.items()):
-        print_colored(f"\n  Group: {grp}", COLORS.YELLOW, bold=True)
-        for subj, qs in sorted(subjects.items()):
-            print_colored(f"    Subject: {subj}", COLORS.CYAN)
-            for q in sorted(qs, key=lambda x: x.get('question_number', '')):
+    # Flatten: grouped[subject][chapter] = list of q
+    flat = {}
+    for subj, chapters in grouped.items():
+        flat[subj] = {}
+        for chap, entries in chapters.items():
+            qs = [v for v in entries.values() if isinstance(v, dict)]
+            flat[subj][chap] = sorted(qs, key=lambda x: (x.get('question_number') or ''))
+
+    # Render
+    for subj_label in sorted(flat):
+        print()
+        print_colored(f"  📘  {subj_label}", COLORS.CYAN, bold=True)
+        for chap_label in sorted(flat[subj_label]):
+            qs = flat[subj_label][chap_label]
+            print()
+            print(f"     {color_text('📗 ' + chap_label, COLORS.GREEN)}  "
+                  f"{color_text(f'({len(qs)} question' + ('s' if len(qs) != 1 else '') + ')', COLORS.WHITE)}")
+            for q in qs:
                 q_no = normalize_question_number(q.get('question_number'))
-                nepali = html_to_terminal(q.get('nepali_transcription', ''))
-                english = html_to_terminal(q.get('english_transcription', ''))
-                marks = q.get('marks', '')
-                chapter = q.get('chapter', '')
-                notes = q.get('notes')
-                q_type = q.get('type', 'essay')
-
-                line = f"      {color_text(f'Q.No. {q_no}.', COLORS.CYAN, bold=True)}"
+                marks = q.get('marks')
+                qtype = q.get('type', 'essay')
+                line = f"        {color_text(f'Q.No. {q_no}.', COLORS.CYAN, bold=True)}"
                 if marks and str(marks).isdigit():
-                    line += f" {color_text(f'[{marks} marks]', COLORS.YELLOW)}"
-                line += f"  {color_text(f'[{q_type}]', COLORS.BLUE)}"
+                    line += f"  {color_text(f'[{marks} marks]', COLORS.YELLOW)}"
+                line += f"  {color_text(f'[{qtype}]', COLORS.BLUE)}"
                 print(line)
 
-                if chapter:
-                    print(f"        {color_text('Chapter:', COLORS.GREEN)} {chapter}")
-                if q.get('syllabus_code'):
-                    print(f"        {color_text('Syllabus Code:', COLORS.MAGENTA)} {q['syllabus_code']}")
+                nep = html_to_terminal(q.get('nepali_transcription') or '').strip()
+                eng = html_to_terminal(q.get('english_transcription') or '').strip()
+                if nep and eng and nep.lower() == eng.lower():
+                    print(f"           {nep}")
+                else:
+                    if nep:
+                        print(f"           {nep}")
+                    if eng:
+                        print(f"           {color_text('(' + eng + ')', COLORS.WHITE) if nep else eng}")
+                if q.get('notes'):
+                    print(f"           {color_text('Note:', COLORS.YELLOW)} {q['notes']}")
 
-                question_text = format_bilingual_text(nepali, english)
-                print(f"        {question_text}")
-
-                if notes:
-                    print(f"        {color_text('📝 Note:', COLORS.YELLOW)} {notes}")
-
-                # ---- Inline options + answer when requested ----
                 if show_answers:
-                    if q_type in ('multichoice', 'truefalse'):
+                    if qtype in ('multichoice', 'truefalse'):
                         for opt in q.get('options', []):
                             marker = color_text(" ✓", COLORS.GREEN, bold=True) if opt.get('correct') else ""
-                            print(f"            - {opt.get('text', '')}{marker}")
-                    elif q_type == 'matching':
+                            print(f"              - {opt.get('text', '')}{marker}")
+                    elif qtype == 'matching':
                         for pair in q.get('pairs', []):
-                            print(f"            {pair.get('subquestion','')} "
-                                  f"{color_text('↔', COLORS.CYAN)} "
-                                  f"{pair.get('answer','')}")
-
+                            print(f"              {pair.get('subquestion','')}  "
+                                  f"{color_text('↔', COLORS.CYAN)}  {pair.get('answer','')}")
                     if q.get('general_feedback'):
-                        print(f"            {color_text('💡', COLORS.GREEN)} "
-                              f"{html_to_terminal(q['general_feedback'])}")
-                    if q_type == 'essay' and q.get('grader_info'):
-                        print(f"            {color_text('📝 Grader:', COLORS.GREEN)} "
-                              f"{html_to_terminal(q['grader_info'])}")
+                        print(f"              {color_text('💡', COLORS.GREEN)} {html_to_terminal(q['general_feedback'])}")
+                    if qtype == 'essay' and q.get('grader_info'):
+                        print(f"              {color_text('📝 Grader:', COLORS.GREEN)} {html_to_terminal(q['grader_info'])}")
 
-                print()
+    print()
+    print_colored("  " + _rule(), COLORS.CYAN)
 
 # ---------- Quick parser ----------
 def parse_quick_input(text):
@@ -1093,6 +1265,237 @@ def quick_lookup_interactive():
         print("  • Type '0' or 'exit' to return to menu")
         print("  • Type a new search to start fresh")
 
+def find_lectures_for_chapter(paper_key, subj_code, chap_code):
+    """
+    Return list of youtube_lectures records matching
+    (paper_key, subj_code, chap_code) after parsing syllabus_id.
+    """
+    from .db import get_connection, TABLE_NAME
+    from .file_manager import parse_syllabus_id
+    if not (paper_key and subj_code and chap_code):
+        return []
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(f"""
+        SELECT id, video_id, mirror_video_id, video_title, syllabus_id,
+               subject, chapter, lecturer, nepali_date, time
+        FROM {TABLE_NAME}
+        WHERE paper = %s AND syllabus_id IS NOT NULL
+        ORDER BY syllabus_id
+    """, (paper_key,))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    matched = []
+    for r in rows:
+        s, c, _l = parse_syllabus_id(r.get('syllabus_id'))
+        if s == subj_code and c == chap_code:
+            matched.append(r)
+    return matched
+
+
+def find_questions_for_chapter(paper_key, subj_code, chap_code):
+    """
+    Return list of question rows matching a chapter, resolved via
+    resolve_question_syllabus().
+    """
+    from .db import get_connection
+    if not (paper_key and subj_code and chap_code):
+        return []
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM questions")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    out = []
+    for q in rows:
+        info = resolve_question_syllabus(q)
+        if (info['paper_key'] == paper_key
+                and info['subject_code'] == subj_code
+                and info['chapter_code'] == chap_code):
+            out.append(q)
+    return out
+
+def browse_by_syllabus_interactive():
+    """
+    Paper → Subject → Chapter → Questions drill-down.
+    Question counts come from (paper, subject_code, chapter_code) parsed
+    from each question's syllabus_code / chapter field.
+    """
+    from .file_manager import _papers
+    from . import syllabus_config as SC
+
+    while True:
+        print()
+        print_colored("  📖  BROWSE BY SYLLABUS", COLORS.CYAN, bold=True)
+        print_colored("  " + _rule(), COLORS.CYAN)
+
+        # --- Load all questions once ---
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM questions")
+        all_questions = cursor.fetchall()
+        cursor.close(); conn.close()
+
+        # --- Build indexes: (paper, subj, chap) -> [q...], (paper, subj) -> [q...] ---
+        from collections import defaultdict
+        by_triple = defaultdict(list)
+        by_pair = defaultdict(list)
+        by_paper = defaultdict(list)
+
+        for q in all_questions:
+            info = resolve_question_syllabus(q)
+            pk = info['paper_key']
+            if not pk:
+                continue
+            by_paper[pk].append(q)
+            subj = info['subject_code']
+            chap = info['chapter_code']
+            if subj:
+                by_pair[(pk, subj)].append(q)
+                if chap:
+                    by_triple[(pk, subj, chap)].append(q)
+
+        # ==================================================
+        # LEVEL 1: Paper selection
+        # ================================================
+        papers = list(_papers().values())
+        if not papers:
+            print_colored("[i] No papers configured.", COLORS.YELLOW)
+            input("\nPress Enter to continue...")
+            return
+
+        print()
+        print("  Papers:")
+        for i, p in enumerate(papers, 1):
+            pk = p['paper_key']
+            count = len(by_paper.get(pk, []))
+            n_subj = len(SC.get_subjects(paper_key=pk, active_only=True))
+            line = f"    {i:2}. {p['display_name']}"
+            pad = 52 - len(line) if len(line) < 52 else 4
+            line += " " * pad + f"{n_subj:>3} subj · {count:>4} Q"
+            print(line)
+        print("     0. Back")
+
+        pi = input(color_text("\n  Choose paper: ", COLORS.MAGENTA)).strip()
+        if pi == '0' or not pi:
+            return
+        if not pi.isdigit() or not (1 <= int(pi) <= len(papers)):
+            print_colored("[!] Invalid choice.", COLORS.RED)
+            continue
+        selected_paper = papers[int(pi) - 1]
+        paper_key = selected_paper['paper_key']
+        paper_display = selected_paper['display_name']
+
+        # ==================================================
+        # LEVEL 2: Subject selection
+        # ================================================
+        while True:
+            print()
+            print_colored(f"  📘  {paper_display}", COLORS.CYAN, bold=True)
+            print_colored("  " + _rule(), COLORS.CYAN)
+
+            subjects = SC.get_subjects(paper_key=paper_key, active_only=True)
+            if not subjects:
+                print_colored("[i] No subjects in this paper.", COLORS.YELLOW)
+                input("\nPress Enter to continue...")
+                break
+
+            print()
+            print("  Subjects:")
+            for i, s in enumerate(subjects, 1):
+                code = str(s.get('chapter') or '').zfill(2)
+                count = len(by_pair.get((paper_key, code), []))
+                line = f"    {i:2}. {code} — {s['name']}"
+                pad = 56 - len(line) if len(line) < 56 else 4
+                line += " " * pad + f"{count:>4} Q"
+                print(line)
+            print("     0. Back to papers")
+
+            si = input(color_text("\n  Choose subject: ", COLORS.MAGENTA)).strip()
+            if si == '0' or not si:
+                break
+            if not si.isdigit() or not (1 <= int(si) <= len(subjects)):
+                print_colored("[!] Invalid choice.", COLORS.RED)
+                continue
+            selected_subject = subjects[int(si) - 1]
+            subj_code = str(selected_subject.get('chapter') or '').zfill(2)
+            subj_name = selected_subject['name']
+
+            # ==================================================
+            # LEVEL 3: Chapter selection
+            # ================================================
+            while True:
+                print()
+                print_colored(f"  📗  {subj_code} — {subj_name}", COLORS.CYAN, bold=True)
+                print_colored("  " + _rule(), COLORS.CYAN)
+
+                chapters = SC.get_chapters(subject_id=selected_subject['id'], active_only=True)
+                if not chapters:
+                    print_colored("[i] No chapters in this subject.", COLORS.YELLOW)
+                    input("\nPress Enter to continue...")
+                    break
+
+                print()
+                print("  Chapters:")
+                for i, c in enumerate(chapters, 1):
+                    cc = str(c.get('chapter_code') or '').zfill(2)
+                    count = len(by_triple.get((paper_key, subj_code, cc), []))
+                    line = f"    {i:2}. {cc} — {c['name']}"
+                    pad = 56 - len(line) if len(line) < 56 else 4
+                    line += " " * pad + f"{count:>4} Q"
+                    print(line)
+                print("     0. Back to subjects")
+
+                ci = input(color_text("\n  Choose chapter: ", COLORS.MAGENTA)).strip()
+                if ci == '0' or not ci:
+                    break
+                if not ci.isdigit() or not (1 <= int(ci) <= len(chapters)):
+                    print_colored("[!] Invalid choice.", COLORS.RED)
+                    continue
+                selected_chapter = chapters[int(ci) - 1]
+                chap_code = str(selected_chapter.get('chapter_code') or '').zfill(2)
+                chap_name = selected_chapter['name']
+
+                # ==================================================
+                # LEVEL 4: Question list
+                # ================================================
+                qs = by_triple.get((paper_key, subj_code, chap_code), [])
+                print()
+                print_colored(f"  📄  {subj_code}.{chap_code} — {chap_name}", COLORS.CYAN, bold=True)
+                print_colored("  " + _rule(), COLORS.CYAN)
+
+                if not qs:
+                    print_colored("  [i] No questions in this chapter yet.", COLORS.YELLOW)
+                    input("\nPress Enter to continue...")
+                    continue
+
+                print(f"\n  {len(qs)} question(s):")
+                print(f"  {'ID':>5}  {'Date':<10}  {'Qno':<4}  {'Type':<12}  Preview")
+                print("  " + "─" * 70)
+                for q in sorted(qs, key=lambda x: (x.get('question_date') or '', x.get('question_number') or '')):
+                    qno = (q.get('question_number') or '')[:4]
+                    qtype = (q.get('type') or 'essay')[:12]
+                    preview = _short_preview(q.get('nepali_transcription') or q.get('english_transcription') or '', 40)
+                    print(f"  {q['id']:>5}  {(q.get('question_date') or ''):<10}  {qno:<4}  {qtype:<12}  {preview}")
+
+                print("\n  Enter ID to view details, [b] back to chapters, [0] back to subjects.")
+                cmd = input(color_text("  > ", COLORS.MAGENTA)).strip().lower()
+                if cmd in ('', 'b', 'back'):
+                    continue
+                if cmd == '0':
+                    break
+                if cmd.isdigit():
+                    q = get_question_by_id(int(cmd))
+                    if q:
+                        _display_single_question(q)
+                        input("\nPress Enter to continue...")
+                    else:
+                        print_colored(f"[!] Question {cmd} not found.", COLORS.RED)
+
 def import_export_submenu():
     while True:
         print("\n" + "─" * 40)
@@ -1130,393 +1533,303 @@ def import_export_submenu():
 # Question bank menu
 def unified_question_menu():
     global _last_filtered_questions
-    from .question_converter.db_handler import get_questions as get_questions_db
-    from .question_converter.constants import C
-    verbose_mode = False
 
     while True:
-        print("\n" + "═" * 60)
-        print_colored("  📚 QUESTION BANK (Unified)", COLORS.CYAN, bold=True)
-        print("═" * 60)
-        print("  1. Add question (manual)")
-        print("  2. View all questions")
-        print("  3. Quick lookup (by date/institution/level)")
-        print("  4. View whole paper")
-        print("  5. Advanced search")
-        print("  6. Update question")
-        print("  7. Delete question")
-        print("  8. Find duplicates")
-        print("  9. 📊 Statistics")
-        print(" 10. Bulk rename (institution/subject/paper/level/group)")
-        print("\n  " + color_text("📥 Import", COLORS.YELLOW, bold=True))
-        print("  a. From TXT (human-readable, universal)")
-        print("  b. From CSV (full backup, all columns)")
-        print("  c. From JSON (full backup, all columns)")
-        print("  d. From XML (Moodle format)")
-        print("  e. Advanced import (with --questions filter)")
-        print("\n  " + color_text("📤 Export", COLORS.YELLOW, bold=True))
-        print("  f. To TXT (human-readable)")
-        print("  g. To CSV (full backup, all columns)")
-        print("  h. To JSON (full backup, all columns)")
-        print("  i. To XML (Moodle format)")
-        print("  j. To HTML (web view)")
-        print("  k. To Exam HTML (interactive exam)")
-        print("  l. Advanced export (with question number filter)")
-        print("\n  " + color_text("🔄 Convert file to file (standalone, no DB)", COLORS.WHITE))
-        print("  m. Run converter with custom arguments (file‑to‑file)")
-        print("  0. Back to main menu")
-        print("═" * 60)
+        print()
+        print_colored("  📚  QUESTION BANK", COLORS.CYAN, bold=True)
+        print_colored("  " + _rule(), COLORS.CYAN)
+        print()
 
-        choice = input(color_text("Choose an option: ", COLORS.MAGENTA)).strip().lower()
+        print(_section_header("📖  BROWSE"))
+        print("      1. All questions          paginated, sortable list")
+        print("      2. Quick lookup           by date / institution / level")
+        print("      3. Whole paper view       grouped by section")
+        print("      4. " + color_text("Browse by syllabus", COLORS.GREEN) + "     paper → subject → chapter")
+        print("      5. Advanced search        multi-field filters")
+        print()
 
-        # ----- Bank operations (1-7) -----
+        print(_section_header("✏️   EDIT"))
+        print("      6. Add a question")
+        print("      7. Update a question")
+        print("      8. Delete a question")
+        print()
+
+        print(_section_header("🛠️   TOOLS"))
+        print("      9. Statistics")
+        print("     10. Find duplicates")
+        print("     11. Bulk rename a field")
+        print()
+
+        print(_section_header("📥  IMPORT  /  📤  EXPORT"))
+        print("     12. Import questions   (TXT / CSV / JSON / XML)")
+        print("     13. Export questions   (TXT / CSV / JSON / XML / HTML / Exam)")
+        print("     14. Convert file to file  (no DB)")
+        print()
+
+        print_colored("      0. Back to main menu", COLORS.WHITE)
+        print_colored("  " + _rule(), COLORS.CYAN)
+
+        choice = input(color_text("\n  Choose: ", COLORS.MAGENTA)).strip().lower()
+
         if choice == '1':
-            add_question_interactive()
-        elif choice == '2':
             view_all_questions_interactive()
-        elif choice == '3':
+        elif choice == '2':
             quick_lookup_interactive()
-        elif choice == '4':
+        elif choice == '3':
             view_whole_paper_interactive()
+        elif choice == '4':
+            browse_by_syllabus_interactive()
         elif choice == '5':
             advanced_search_interactive()
         elif choice == '6':
-            update_question_interactive()
+            add_question_interactive()
         elif choice == '7':
-            delete_question_interactive()
+            update_question_interactive()
         elif choice == '8':
-            find_duplicates_interactive()
+            delete_question_interactive()
         elif choice == '9':
             question_statistics_interactive()
         elif choice == '10':
+            find_duplicates_interactive()
+        elif choice == '11':
             bulk_rename_interactive()
+        elif choice == '12':
+            question_import_menu()
+        elif choice == '13':
+            question_export_menu()
+        elif choice == '14':
+            question_convert_menu()
+        elif choice == '0':
+            break
+        else:
+            print_colored("[!] Invalid option.", COLORS.RED)
 
-        # ----- Import -----
-        elif choice == 'a':
+
+# ---------- Submenus for import / export / convert ----------
+
+def question_import_menu():
+    """Import submenu (previously letters a-e)."""
+    while True:
+        print()
+        print_colored("  📥  IMPORT QUESTIONS", COLORS.CYAN, bold=True)
+        print_colored("  " + _rule(), COLORS.CYAN)
+        print("      1. From TXT   (human-readable)")
+        print("      2. From CSV   (full backup, all columns)")
+        print("      3. From JSON  (full backup, all columns)")
+        print("      4. From XML   (Moodle format)")
+        print("      5. Advanced import with filters (--questions ...)")
+        print_colored("      0. Back", COLORS.WHITE)
+        choice = input(color_text("\n  Choose: ", COLORS.MAGENTA)).strip()
+
+        if choice == '0':
+            return
+
+        if choice in ('1', '3', '4'):
             from .question_converter import import_from_file
             from .question_converter.exceptions import ConverterError
-            filepath = input(color_text("TXT file path: ", COLORS.MAGENTA)).strip()
+            label, fmt = {
+                '1': ("TXT", 'txt'),
+                '3': ("JSON", 'json'),
+                '4': ("XML", 'xml'),
+            }[choice]
+            filepath = input(color_text(f"{label} file path: ", COLORS.MAGENTA)).strip()
             if not filepath:
                 continue
             source = input(color_text("Source name (optional): ", COLORS.MAGENTA)).strip() or None
 
             print("\nHow to handle duplicates?")
             print("  1. Skip duplicates (keep existing)")
-            print("  2. Overwrite existing (by duplicate key)")
-            dup_choice = input(color_text("Choose (1-2): ", COLORS.MAGENTA)).strip()
-            if dup_choice not in ('1', '2'):
-                print_colored("[!] Invalid choice. Aborting.", COLORS.RED)
+            print("  2. Overwrite existing")
+            dup = input(color_text("Choose (1-2): ", COLORS.MAGENTA)).strip()
+            if dup not in ('1', '2'):
+                print_colored("[!] Invalid choice.", COLORS.RED)
                 continue
 
-            force = (dup_choice == '2')
+            force = (dup == '2')
             args = SimpleNamespace(verbose=True, bypass_duplicate=force,
-                                bypass_option=False, questions=None)
+                                   bypass_option=False, questions=None)
             try:
-                count, errors = import_from_file(filepath, 'txt', source=source, args=args)
+                count, errors = import_from_file(filepath, fmt, source=source, args=args)
                 if count == 0 and not errors:
                     print_colored("[i] No questions were imported.", COLORS.YELLOW)
                 else:
                     print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
-                    if errors:
-                        print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
-                        for e in errors[:5]:
-                            print(f"  {e}")
+                    for e in (errors or [])[:5]:
+                        print(f"  {e}")
             except ConverterError as e:
                 print_colored(f"[!] {e}", COLORS.RED)
 
-        elif choice == 'b':
+        elif choice == '2':
             import_questions_csv()
 
-        elif choice == 'c':
-            from .question_converter import import_from_file
-            from .question_converter.exceptions import ConverterError
-            filepath = input(color_text("JSON file path: ", COLORS.MAGENTA)).strip()
-            if not filepath:
-                continue
-            source = input(color_text("Source name (optional): ", COLORS.MAGENTA)).strip() or None
-
-            print("\nHow to handle duplicates?")
-            print("  1. Skip duplicates (keep existing)")
-            print("  2. Overwrite existing (by duplicate key)")
-            dup_choice = input(color_text("Choose (1-2): ", COLORS.MAGENTA)).strip()
-            if dup_choice not in ('1', '2'):
-                print_colored("[!] Invalid choice. Aborting.", COLORS.RED)
-                continue
-
-            force = (dup_choice == '2')
-            args = SimpleNamespace(verbose=True, bypass_duplicate=force,
-                                bypass_option=False, questions=None)
-            try:
-                count, errors = import_from_file(filepath, 'json', source=source, args=args)
-                if count == 0 and not errors:
-                    print_colored("[i] No questions were imported.", COLORS.YELLOW)
-                else:
-                    print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
-                    if errors:
-                        print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
-                        for e in errors[:5]:
-                            print(f"  {e}")
-            except ConverterError as e:
-                print_colored(f"[!] {e}", COLORS.RED)
-
-        elif choice == 'd':
-            from .question_converter import import_from_file
-            from .question_converter.exceptions import ConverterError
-            filepath = input(color_text("XML file path: ", COLORS.MAGENTA)).strip()
-            if not filepath:
-                continue
-            source = input(color_text("Source name (optional): ", COLORS.MAGENTA)).strip() or None
-
-            print("\nHow to handle duplicates?")
-            print("  1. Skip duplicates (keep existing)")
-            print("  2. Overwrite existing (by duplicate key)")
-            dup_choice = input(color_text("Choose (1-2): ", COLORS.MAGENTA)).strip()
-            if dup_choice not in ('1', '2'):
-                print_colored("[!] Invalid choice. Aborting.", COLORS.RED)
-                continue
-
-            force = (dup_choice == '2')
-            args = SimpleNamespace(verbose=True, bypass_duplicate=force,
-                                bypass_option=False, questions=None)
-            try:
-                count, errors = import_from_file(filepath, 'xml', source=source, args=args)
-                if count == 0 and not errors:
-                    print_colored("[i] No questions were imported.", COLORS.YELLOW)
-                else:
-                    print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
-                    if errors:
-                        print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
-                        for e in errors[:5]:
-                            print(f"  {e}")
-            except ConverterError as e:
-                print_colored(f"[!] {e}", COLORS.RED)
-
-        elif choice == 'e':
+        elif choice == '5':
             from .question_converter.converter_main import parser
             from .question_converter import import_from_file
             from .question_converter.exceptions import ConverterError, DuplicateQuestionError, ParseError
-            import shlex
-            import os
+            import shlex, os as _os
 
-            print("\n" + "═" * 50)
-            print_colored("  ADVANCED IMPORT (with filters)", COLORS.CYAN, bold=True)
-            print("═" * 50)
-            print("You can use the same arguments as the converter, e.g.:")
-            print("  -i input.txt --questions 1,5,10 --bypass-duplicate")
-            print("  -i input.xml --questions 3..7")
-            print("  -i input.json --questions 2,4,6")
-            print("The input file format is auto-detected from extension.")
-            print("The questions will be imported into the database.\n")
-
+            print("\nExample: -i input.txt --questions 1,5,10 --bypass-duplicate")
             args_str = input(color_text("Arguments: ", COLORS.MAGENTA)).strip()
             if not args_str:
                 continue
-
             try:
                 argv = shlex.split(args_str)
                 parsed = parser.parse_args(argv)
-
                 input_file = parsed.input
-                if not os.path.exists(input_file):
-                    print_colored(f"[!] Input file not found: {input_file}", COLORS.RED)
+                if not _os.path.exists(input_file):
+                    print_colored(f"[!] File not found: {input_file}", COLORS.RED)
                     continue
-
-                ext = os.path.splitext(input_file)[1].lower().lstrip('.')
-                if ext in ('txt', 'text'):
-                    fmt = 'txt'
-                elif ext == 'xml':
-                    fmt = 'xml'
-                elif ext == 'json':
-                    fmt = 'json'
-                else:
-                    print_colored(f"[!] Unsupported file extension: {ext}. Please use .txt, .xml, or .json.", COLORS.RED)
+                ext = _os.path.splitext(input_file)[1].lower().lstrip('.')
+                fmt = {'txt': 'txt', 'text': 'txt', 'xml': 'xml', 'json': 'json'}.get(ext)
+                if not fmt:
+                    print_colored(f"[!] Unsupported extension: .{ext}", COLORS.RED)
                     continue
-
-                source = input(color_text("Source name (optional, press Enter to skip): ", COLORS.MAGENTA)).strip() or None
-
-                import_args = SimpleNamespace(
-                    verbose=parsed.verbose,
-                    bypass_duplicate=parsed.bypass_duplicate,
-                    bypass_option=parsed.bypass_option,
-                    questions=parsed.questions
-                )
-
-                print_colored(f"\n📥 Importing from {input_file} (format: {fmt})", COLORS.BLUE)
-                if import_args.questions:
-                    print_colored(f"   Filter: {import_args.questions}", COLORS.BLUE)
-                if import_args.bypass_duplicate:
-                    print_colored("   Duplicates will be overwritten (--bypass-duplicate)", COLORS.YELLOW)
-                else:
-                    print_colored("   Duplicates will be skipped (use --bypass-duplicate to overwrite)", COLORS.YELLOW)
-
-                count, errors = import_from_file(input_file, fmt, source=source, args=import_args)
-
-                if count == 0 and not errors:
-                    print_colored("[i] No questions were imported.", COLORS.YELLOW)
-                else:
-                    print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
-                    if errors:
-                        print_colored(f"[!] {len(errors)} errors occurred.", COLORS.RED)
-                        for e in errors[:5]:
-                            print(f"  {e}")
-
+                source = input(color_text("Source name (optional): ", COLORS.MAGENTA)).strip() or None
+                iargs = SimpleNamespace(verbose=parsed.verbose,
+                                        bypass_duplicate=parsed.bypass_duplicate,
+                                        bypass_option=parsed.bypass_option,
+                                        questions=parsed.questions)
+                count, errors = import_from_file(input_file, fmt, source=source, args=iargs)
+                print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
+                for e in (errors or [])[:5]:
+                    print(f"  {e}")
             except SystemExit:
-                print_colored("[!] Invalid arguments. Please check your syntax.", COLORS.RED)
-                print("  Example: -i questions.txt --questions 1,5,10")
+                print_colored("[!] Invalid arguments.", COLORS.RED)
             except (ConverterError, ParseError, DuplicateQuestionError) as e:
                 print_colored(f"[!] {e}", COLORS.RED)
             except Exception as e:
-                print_colored(f"[!] Unexpected error: {e}", COLORS.RED)
-                import traceback
-                traceback.print_exc()
-
-        # ----- Export -----
-        elif choice == 'f':
-            from .question_converter import export_to_file
-            from .question_converter.db_handler import get_questions as get_questions_db
-            questions = get_questions_db()
-            if not questions:
-                print_colored("[i] No questions to export.", COLORS.YELLOW)
-                continue
-            default_name = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            outfile = input(color_text(f"Output TXT file (default: {default_name}): ", COLORS.MAGENTA)).strip()
-            if not outfile:
-                outfile = default_name
-            try:
-                args = SimpleNamespace(verbose=True)
-                export_to_file(questions, outfile, 'txt', args=args)
-                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
-            except Exception as e:
                 print_colored(f"[!] {e}", COLORS.RED)
-
-        elif choice == 'g':
-            export_questions_csv()
-
-        elif choice == 'h':
-            from .question_converter import export_to_file
-            from .question_converter.db_handler import get_questions as get_questions_db
-            questions = get_questions_db()
-            if not questions:
-                print_colored("[i] No questions to export.", COLORS.YELLOW)
-                continue
-            default_name = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            outfile = input(color_text(f"Output JSON file (default: {default_name}): ", COLORS.MAGENTA)).strip()
-            if not outfile:
-                outfile = default_name
-            try:
-                args = SimpleNamespace(verbose=True)
-                export_to_file(questions, outfile, 'json', args=args)
-                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
-            except Exception as e:
-                print_colored(f"[!] {e}", COLORS.RED)
-
-        elif choice == 'i':
-            from .question_converter import export_to_file
-            from .question_converter.db_handler import get_questions
-            questions = get_questions_db()
-            if not questions:
-                print_colored("[i] No questions to export.", COLORS.YELLOW)
-                continue
-            default_name = f"questions_export_moodle_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
-            outfile = input(color_text(f"Output XML file (default: {default_name}): ", COLORS.MAGENTA)).strip()
-            if not outfile:
-                outfile = default_name
-            try:
-                args = SimpleNamespace(verbose=True)
-                export_to_file(questions, outfile, 'xml', args=args)
-                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
-            except Exception as e:
-                print_colored(f"[!] {e}", COLORS.RED)
-
-        elif choice == 'j':
-            from .question_converter import export_to_file
-            from .question_converter.db_handler import get_questions
-            questions = get_questions_db()
-            if not questions:
-                print_colored("[i] No questions to export.", COLORS.YELLOW)
-                continue
-            default_name = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-            outfile = input(color_text(f"Output HTML file (default: {default_name}): ", COLORS.MAGENTA)).strip()
-            if not outfile:
-                outfile = default_name
-            try:
-                args = SimpleNamespace(verbose=True)
-                export_to_file(questions, outfile, 'html', args=args)
-                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
-            except Exception as e:
-                print_colored(f"[!] {e}", COLORS.RED)
-
-        elif choice == 'k':
-            filtered, cancelled = _get_filtered_questions_interactive()
-            if cancelled:
-                print_colored("Cancelled.", COLORS.YELLOW)
-                continue
-            if not filtered:
-                print_colored("[i] No questions match the filters. Export cancelled.", COLORS.YELLOW)
-                continue
-            _last_filtered_questions = filtered
-            from .question_converter.exam_output import create_exam_html
-            default_name = f"exam_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-            outfile = input(color_text(f"Output Exam HTML file (default: {default_name}): ", COLORS.MAGENTA)).strip()
-            if not outfile:
-                outfile = default_name
-            time_str = input(color_text("Time limit in minutes (default 90): ", COLORS.MAGENTA)).strip()
-            time_min = int(time_str) if time_str.isdigit() else 90
-            create_exam_html(filtered, outfile, verbose=True, time_minutes=time_min, pass_marks=45)
-            print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
-
-        elif choice == 'l':
-            filtered, cancelled = _get_filtered_questions_interactive()
-            if cancelled:
-                print_colored("Cancelled.", COLORS.YELLOW)
-                continue
-            if not filtered:
-                print_colored("[i] No questions match the filters. Export cancelled.", COLORS.YELLOW)
-                continue
-
-            _last_filtered_questions = filtered
-
-            fmt = input(color_text("Format (xml, json, html, txt): ", COLORS.MAGENTA)).strip()
-            if not fmt:
-                print_colored("[!] Format is required.", COLORS.RED)
-                continue
-
-            default_name = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{fmt}"
-            outfile = input(color_text(f"Output file (default: {default_name}): ", COLORS.MAGENTA)).strip()
-            if not outfile:
-                outfile = default_name
-
-            try:
-                from .question_converter import export_to_file
-                args = SimpleNamespace(verbose=True)
-                export_to_file(filtered, outfile, fmt)
-                print_colored(f"[✓] Exported {len(filtered)} questions to {outfile}", COLORS.GREEN)
-            except Exception as e:
-                print_colored(f"[!] {e}", COLORS.RED)
-
-        # ----- Convert file to file -----
-        elif choice == 'm':
-            from .question_converter.converter_main import parser, run_conversion
-            print("\n[Run converter with custom arguments]")
-            print("💡 If your file paths contain spaces, enclose them in quotes (e.g., -i \"my file.txt\").")
-            args_str = input(color_text("Arguments (e.g., -i input.txt -o output.xml --shuffle): ", COLORS.MAGENTA)).strip()
-            if not args_str:
-                continue
-            import shlex
-            try:
-                argv = shlex.split(args_str)
-                parsed = parser.parse_args(argv)
-                run_conversion(parsed)
-            except SystemExit:
-                print_colored("💡 If your path contains spaces, try wrapping it in quotes, e.g., -i \"my file.txt\"", COLORS.YELLOW)
-            except Exception as e:
-                print_colored(f"[!] Unexpected error: {e}", COLORS.RED)
-
-        elif choice == '0':
-            break
 
         else:
             print_colored("[!] Invalid option.", COLORS.RED)
+
+
+def question_export_menu():
+    """Export submenu (previously letters f-l)."""
+    while True:
+        print()
+        print_colored("  📤  EXPORT QUESTIONS", COLORS.CYAN, bold=True)
+        print_colored("  " + _rule(), COLORS.CYAN)
+        print("      1. To TXT      (human-readable)")
+        print("      2. To CSV      (full backup)")
+        print("      3. To JSON     (full backup)")
+        print("      4. To XML      (Moodle)")
+        print("      5. To HTML     (web view)")
+        print("      6. To Exam HTML (interactive, timed)")
+        print("      7. Advanced export with filters")
+        print_colored("      0. Back", COLORS.WHITE)
+        choice = input(color_text("\n  Choose: ", COLORS.MAGENTA)).strip()
+
+        if choice == '0':
+            return
+
+        if choice == '1':
+            from .question_converter import export_to_file
+            from .question_converter.db_handler import get_questions as get_qs
+            qs = get_qs()
+            if not qs:
+                print_colored("[i] No questions to export.", COLORS.YELLOW)
+                continue
+            default = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            outfile = input(color_text(f"Output (default: {default}): ", COLORS.MAGENTA)).strip() or default
+            try:
+                export_to_file(qs, outfile, 'txt', args=SimpleNamespace(verbose=True))
+                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
+            except Exception as e:
+                print_colored(f"[!] {e}", COLORS.RED)
+
+        elif choice == '2':
+            export_questions_csv()
+        elif choice == '3':
+            from .question_converter import export_to_file
+            from .question_converter.db_handler import get_questions as get_qs
+            qs = get_qs()
+            if not qs:
+                print_colored("[i] No questions to export.", COLORS.YELLOW); continue
+            default = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            outfile = input(color_text(f"Output (default: {default}): ", COLORS.MAGENTA)).strip() or default
+            try:
+                export_to_file(qs, outfile, 'json', args=SimpleNamespace(verbose=True))
+                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
+            except Exception as e:
+                print_colored(f"[!] {e}", COLORS.RED)
+        elif choice == '4':
+            from .question_converter import export_to_file
+            from .question_converter.db_handler import get_questions as get_qs
+            qs = get_qs()
+            if not qs:
+                print_colored("[i] No questions to export.", COLORS.YELLOW); continue
+            default = f"questions_export_moodle_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
+            outfile = input(color_text(f"Output (default: {default}): ", COLORS.MAGENTA)).strip() or default
+            try:
+                export_to_file(qs, outfile, 'xml', args=SimpleNamespace(verbose=True))
+                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
+            except Exception as e:
+                print_colored(f"[!] {e}", COLORS.RED)
+        elif choice == '5':
+            from .question_converter import export_to_file
+            from .question_converter.db_handler import get_questions as get_qs
+            qs = get_qs()
+            if not qs:
+                print_colored("[i] No questions to export.", COLORS.YELLOW); continue
+            default = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            outfile = input(color_text(f"Output (default: {default}): ", COLORS.MAGENTA)).strip() or default
+            try:
+                export_to_file(qs, outfile, 'html', args=SimpleNamespace(verbose=True))
+                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
+            except Exception as e:
+                print_colored(f"[!] {e}", COLORS.RED)
+        elif choice == '6':
+            filtered, cancelled = _get_filtered_questions_interactive()
+            if cancelled or not filtered:
+                continue
+            global _last_filtered_questions
+            _last_filtered_questions = filtered
+            from .question_converter.exam_output import create_exam_html
+            default = f"exam_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            outfile = input(color_text(f"Output (default: {default}): ", COLORS.MAGENTA)).strip() or default
+            t = input(color_text("Time limit in minutes (default 90): ", COLORS.MAGENTA)).strip()
+            time_min = int(t) if t.isdigit() else 90
+            create_exam_html(filtered, outfile, verbose=True, time_minutes=time_min, pass_marks=45)
+            print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
+        elif choice == '7':
+            filtered, cancelled = _get_filtered_questions_interactive()
+            if cancelled or not filtered:
+                continue
+            _last_filtered_questions = filtered
+            fmt = input(color_text("Format (xml / json / html / txt): ", COLORS.MAGENTA)).strip()
+            if not fmt:
+                continue
+            default = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{fmt}"
+            outfile = input(color_text(f"Output (default: {default}): ", COLORS.MAGENTA)).strip() or default
+            try:
+                from .question_converter import export_to_file
+                export_to_file(filtered, outfile, fmt, args=SimpleNamespace(verbose=True))
+                print_colored(f"[✓] Exported {len(filtered)} questions to {outfile}", COLORS.GREEN)
+            except Exception as e:
+                print_colored(f"[!] {e}", COLORS.RED)
+        else:
+            print_colored("[!] Invalid option.", COLORS.RED)
+
+
+def question_convert_menu():
+    """File-to-file converter (no DB) — previously option 'm'."""
+    from .question_converter.converter_main import parser, run_conversion
+    import shlex
+
+    print("\n[File → File converter — no DB writes]")
+    print("💡 Enclose paths with spaces in quotes: -i \"my file.txt\"")
+    args_str = input(color_text("Arguments (e.g. -i input.txt -o output.xml --shuffle): ", COLORS.MAGENTA)).strip()
+    if not args_str:
+        return
+    try:
+        argv = shlex.split(args_str)
+        parsed = parser.parse_args(argv)
+        run_conversion(parsed)
+    except SystemExit:
+        print_colored("💡 If your path has spaces, wrap it in quotes.", COLORS.YELLOW)
+    except Exception as e:
+        print_colored(f"[!] {e}", COLORS.RED)
 
 # ---------- Interactive functions ----------
 

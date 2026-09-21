@@ -568,6 +568,39 @@ def view_one():
     print(f"Embed URL (original): {get_embed_link(row['video_id'])}")
     if row['mirror_video_id']:
         print(f"Embed URL (mirror) : {get_embed_link(row['mirror_video_id'])}")
+
+    # ---------- Cross-linked questions ----------
+    try:
+        from .file_manager import parse_syllabus_id
+        from .question_bank import (
+            resolve_question_syllabus,
+            find_questions_for_chapter,
+        )
+        paper_key = row.get('paper')
+        subj_code, chap_code, _ = parse_syllabus_id(row.get('syllabus_id'))
+        if paper_key and subj_code and chap_code:
+            qs = find_questions_for_chapter(paper_key, subj_code, chap_code)
+            if qs:
+                print("═" * 50)
+                print_colored(
+                    f"  📚  Questions in this chapter  ({len(qs)})",
+                    COLORS.CYAN, bold=True
+                )
+                print("─" * 50)
+                for q in sorted(qs, key=lambda x: (x.get('question_date') or '',
+                                                    x.get('question_number') or '')):
+                    qno = q.get('question_number') or ''
+                    qtype = (q.get('type') or 'essay')[:10]
+                    qdate = q.get('question_date') or ''
+                    preview = (q.get('nepali_transcription')
+                               or q.get('english_transcription')
+                               or '')[:38].replace('\n', ' ')
+                    print(f"  [ID {q['id']:>4}]  {qdate:<12}  {qno:<4}  "
+                          f"{qtype:<10}  {preview}")
+    except Exception as e:
+        # Silently skip — questions are nice-to-have here
+        pass
+
     print("═" * 50)
 
 def update_lecture():

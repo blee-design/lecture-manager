@@ -64,6 +64,117 @@ def get_tally_data():
         ],
     }
 
+def _syllabus_parts(sid):
+    """Parse a syllabus_id into a tuple of zero-padded string parts.
+    '4.2.5-1' → ('04','02','05'). Empty/None → ()."""
+    if not sid:
+        return ()
+    base = str(sid).strip().split('-')[0]
+    return tuple(p.zfill(2) for p in base.split('.') if p)
+
+
+def _syllabus_matches(record_sid, filter_sid):
+    """True if filter_sid is a prefix of record_sid when both are parsed
+    into parts. Compares '04.02' against '4.2.5' correctly."""
+    f = _syllabus_parts(filter_sid)
+    if not f:
+        return True
+    r = _syllabus_parts(record_sid)
+    return r[:len(f)] == f
+
+def _build_syllabus_tree():
+    """
+    Return a nested tree for the syllabus browser:
+      [ { paper_key, display_name, folder_name, lecture_count,
+          subjects: [ { code, name, lecture_count,
+                        chapters: [ { code, name, description, lecture_count } ] } ] } ]
+    Lecture counts come from the youtube_lectures table, keyed by
+    (paper, subject_code, chapter_code) parsed from syllabus_id.
+    """
+    from .file_manager import _papers
+    from . import syllabus_config as SC
+
+    # --- Lecture counts ---
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(f"SELECT paper, syllabus_id FROM {TABLE_NAME}")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    lecture_counts = {}      # (paper, subj, chap) -> count
+    subject_totals = {}      # (paper, subj) -> count
+    paper_totals = {}        # paper -> count
+
+    for r in rows:
+        paper = r.get('paper')
+        sid = (r.get('syllabus_id') or '').strip()
+        if not paper:
+            continue
+        paper_totals[paper] = paper_totals.get(paper, 0) + 1
+        if not sid:
+            continue
+        base = sid.split('-')[0]
+        parts = [p for p in base.split('.') if p]
+        if not parts:
+            continue
+        subj = parts[0].zfill(2)
+        subject_totals[(paper, subj)] = subject_totals.get((paper, subj), 0) + 1
+        if len(parts) >= 2:
+            chap = parts[1].zfill(2)
+            lecture_counts[(paper, subj, chap)] = lecture_counts.get((paper, subj, chap), 0) + 1
+
+    # --- Question counts ---
+    from .question_bank import resolve_question_syllabus
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM questions")
+    q_rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    question_counts = {}
+    for q in q_rows:
+        info = resolve_question_syllabus(q)
+        pk = info.get('paper_key')
+        s = info.get('subject_code')
+        c = info.get('chapter_code')
+        if pk and s and c:
+            question_counts[(pk, s, c)] = question_counts.get((pk, s, c), 0) + 1
+
+    # --- Build tree ---
+    tree = []
+    for paper in SC.get_papers():
+        paper_key = paper['paper_key']
+        subjects_list = []
+        for subj in SC.get_subjects(paper_key=paper_key, active_only=True):
+            subj_code = str(subj.get('chapter') or '').zfill(2)
+            chapters_list = []
+            for ch in SC.get_chapters(subject_id=subj['id'], active_only=True):
+                ch_code = str(ch.get('chapter_code') or '').zfill(2)
+                chapters_list.append({
+                    'code': ch_code,
+                    'name': ch['name'],
+                    'description': ch.get('description') or '',
+                    'lecture_count': lecture_counts.get((paper_key, subj_code, ch_code), 0),
+                    'question_count': question_counts.get((paper_key, subj_code, ch_code), 0),
+                })
+            subjects_list.append({
+                'code': subj_code,
+                'name': subj['name'],
+                'chapters': chapters_list,
+                'lecture_count': subject_totals.get((paper_key, subj_code), 0),
+            })
+        tree.append({
+            'paper_key': paper_key,
+            'display_name': paper['display_name'],
+            'folder_name': paper['folder_name'],
+            'subjects': subjects_list,
+            'lecture_count': paper_totals.get(paper_key, 0),
+        })
+
+    return tree
+
 def get_all_youtube_records():
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -144,6 +255,11 @@ def index():
                            papers=papers,
                            playback_config=PLAYBACK_SOURCE)
 
+@app.route('/syllabus')
+def syllabus_browser():
+    tree = _build_syllabus_tree()
+    return render_template('syllabus_browser.html', tree=tree)
+
 @app.route('/lectures')
 def lectures():
     papers = SC.get_papers()
@@ -174,7 +290,7 @@ def lectures():
     if subject:
         records = [r for r in records if subject.lower() in (r.get('subject') or '').lower()]
     if syllabus:
-        records = [r for r in records if syllabus.lower() in (r.get('syllabus_id') or '').lower()]
+        records = [r for r in records if _syllabus_matches(r.get('syllabus_id'), syllabus)]
     if chapter:
         records = [r for r in records if chapter.lower() in (r.get('chapter') or '').lower()]
     if notes:
@@ -280,13 +396,125 @@ def lecture_detail(id):
 
     embed_url = f"https://www.youtube.com/embed/{embed_vid}" if embed_vid else None
 
+    # Cross-linked questions
+    from .file_manager import parse_syllabus_id
+    from .question_bank import find_questions_for_chapter
+    questions = []
+    paper_key = record.get('paper')
+    subj_code, chap_code, _ = parse_syllabus_id(record.get('syllabus_id'))
+    if paper_key and subj_code and chap_code:
+        questions = find_questions_for_chapter(paper_key, subj_code, chap_code)
+
     return render_template('detail.html',
                            record=record,
                            embed_url=embed_url,
                            embed_vid=embed_vid,
                            using_mirror=using_mirror,
                            config_status=config_status,
-                           playback_config=PLAYBACK_SOURCE)
+                           playback_config=PLAYBACK_SOURCE,
+                           questions=questions)
+
+@app.route('/lecture/add-guided', methods=['GET', 'POST'])
+def add_lecture_guided():
+    from . import syllabus_config as SC
+
+    if request.method == 'POST':
+        video_id = request.form.get('video_id', '').strip()
+        if not video_id:
+            flash('Video ID is required.', 'danger')
+            return redirect(url_for('add_lecture_guided'))
+
+        # --- Build syllabus_id from dropdowns ---
+        subj_code = (request.form.get('subject_code') or '').strip()
+        chap_code = (request.form.get('chapter_code') or '').strip()
+        lecture_no = (request.form.get('lecture_no') or '').strip()
+        suffix = (request.form.get('suffix') or '').strip().lstrip('-')
+
+        if not (subj_code and chap_code):
+            flash('Please pick a subject and a chapter.', 'danger')
+            return redirect(url_for('add_lecture_guided'))
+
+        # zero-pad numeric parts
+        def _pad(x):
+            return str(x).zfill(2) if str(x).strip().isdigit() else str(x).strip()
+
+        parts = [_pad(subj_code), _pad(chap_code)]
+        if lecture_no:
+            parts.append(_pad(lecture_no))
+        syllabus_id = ".".join(parts)
+        if suffix:
+            syllabus_id += f"-{suffix}"
+
+        paper_key = (request.form.get('paper_key') or '').strip()
+
+        # --- Resolve subject name from syllabus_config ---
+        subj_row = SC.get_subject_by_paper_and_code(paper_key, subj_code)
+        subject_name = subj_row['name'] if subj_row else ''
+
+        # --- Fetch YouTube title ---
+        title = fetch_youtube_title(video_id) or ''
+
+        # --- Build record + insert ---
+        conn = get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(f"""
+                INSERT INTO {TABLE_NAME}
+                (video_id, mirror_video_id, video_title, syllabus_id, subject,
+                 chapter, lecturer, nepali_date, time, notes, paper, original_filename)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                video_id,
+                request.form.get('mirror_id') or None,
+                title,
+                syllabus_id,
+                subject_name,
+                request.form.get('chapter_title') or '',
+                request.form.get('lecturer') or '',
+                request.form.get('nepali_date') or '',
+                request.form.get('time') or '',
+                request.form.get('notes') or None,
+                paper_key,
+                None,
+            ))
+            conn.commit()
+            new_id = cursor.lastrowid
+            flash(f'Lecture added! Syllabus ID: {syllabus_id}', 'success')
+        except Exception as e:
+            flash(f'Error: {e}', 'danger')
+            new_id = None
+        finally:
+            cursor.close()
+            conn.close()
+
+        if new_id:
+            return redirect(url_for('lecture_detail', id=new_id))
+        return redirect(url_for('add_lecture_guided'))
+
+    # ---- GET: build tree for cascading dropdowns ----
+    tree = _build_syllabus_tree()
+    # Flatten to JSON for the JS cascade
+    import json as _json
+    payload = []
+    for p in tree:
+        payload.append({
+            'paper_key': p['paper_key'],
+            'display_name': p['display_name'],
+            'subjects': [
+                {
+                    'code': s['code'],
+                    'name': s['name'],
+                    'chapters': [
+                        {'code': c['code'], 'name': c['name'],
+                         'lecture_count': c['lecture_count']}
+                        for c in s['chapters']
+                    ],
+                }
+                for s in p['subjects']
+            ],
+        })
+    tree_json = _json.dumps(payload, ensure_ascii=False)
+    return render_template('add_lecture_guided.html', tree_json=tree_json)
 
 @app.route('/lecture/add', methods=['GET', 'POST'])
 def add_lecture_web():
@@ -635,7 +863,20 @@ def question_detail(id):
     if not q:
         flash('Question not found', 'danger')
         return redirect(url_for('question_list'))
-    return render_template('question_detail.html', question=q)
+
+    # Cross-linked lectures
+    from .question_bank import resolve_question_syllabus, find_lectures_for_chapter
+    info = resolve_question_syllabus(q)
+    lectures = []
+    if info['paper_key'] and info['subject_code'] and info['chapter_code']:
+        lectures = find_lectures_for_chapter(
+            info['paper_key'], info['subject_code'], info['chapter_code']
+        )
+
+    return render_template('question_detail.html',
+                           question=q,
+                           syllabus_info=info,
+                           lectures=lectures)
 
 @app.route('/question/paper')
 def question_paper():

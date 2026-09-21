@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-9">
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h2 class="mb-0">➕ Add Lecture (Guided)</h2>
+      <a href="{{ url_for('add_lecture_web') }}" class="btn btn-outline-secondary btn-sm">
+        Classic form
+      </a>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <form method="post" id="guided-form" autocomplete="off">
+
+          <!-- ============ Syllabus picker ============ -->
+          <h5 class="text-primary border-bottom pb-2 mb-3">
+            <i class="bi bi-bookmark-fill"></i> Syllabus
+          </h5>
+
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label small text-muted">Paper</label>
+              <select id="paper-select" name="paper_key" class="form-select" required>
+                <option value="">— choose paper —</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-muted">Subject</label>
+              <select id="subject-select" class="form-select" required disabled>
+                <option value="">— choose subject —</option>
+              </select>
+              <input type="hidden" id="subject-code" name="subject_code">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-muted">Chapter</label>
+              <select id="chapter-select" class="form-select" required disabled>
+                <option value="">— choose chapter —</option>
+              </select>
+              <input type="hidden" id="chapter-code" name="chapter_code">
+              <input type="hidden" id="chapter-title" name="chapter_title">
+            </div>
+          </div>
+
+          <div class="row g-3 mt-2">
+            <div class="col-md-3">
+              <label class="form-label small text-muted">Lecture No.</label>
+              <input type="text" id="lecture-no" name="lecture_no"
+                     class="form-control" placeholder="e.g. 01" required>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-muted">Suffix (optional)</label>
+              <input type="text" id="suffix" name="suffix"
+                     class="form-control" placeholder="1">
+              <small class="text-muted">For part 2 of same lecture</small>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-muted">Preview</label>
+              <div class="form-control bg-light" id="syllabus-preview"
+                   style="font-family: monospace; font-size: 0.9rem;">
+                —
+              </div>
+            </div>
+          </div>
+
+          <!-- ============ Video ============ -->
+          <h5 class="text-primary border-bottom pb-2 mb-3 mt-4">
+            <i class="bi bi-camera-video-fill"></i> Video
+          </h5>
+
+          <div class="row g-3">
+            <div class="col-md-8">
+              <label class="form-label small text-muted">YouTube URL or Video ID *</label>
+              <input type="text" name="video_id" class="form-control" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-muted">Mirror Video ID (optional)</label>
+              <input type="text" name="mirror_id" class="form-control">
+            </div>
+          </div>
+
+          <!-- ============ Metadata ============ -->
+          <h5 class="text-primary border-bottom pb-2 mb-3 mt-4">
+            <i class="bi bi-tags-fill"></i> Metadata
+          </h5>
+
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label small text-muted">Lecturer</label>
+              <input type="text" name="lecturer" class="form-control">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-muted">Nepali Date (B.S.)</label>
+              <input type="text" name="nepali_date" class="form-control" placeholder="2081-01-15">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-muted">Time</label>
+              <input type="text" name="time" class="form-control" placeholder="10:00 AM">
+            </div>
+          </div>
+
+          <div class="row g-3 mt-2">
+            <div class="col-12">
+              <label class="form-label small text-muted">Notes (optional)</label>
+              <textarea name="notes" class="form-control" rows="2"></textarea>
+            </div>
+          </div>
+
+          <!-- ============ Actions ============ -->
+          <div class="mt-4 d-flex gap-2">
+            <button type="submit" class="btn btn-success">
+              <i class="bi bi-check2-circle"></i> Add lecture
+            </button>
+            <a href="{{ url_for('lectures') }}" class="btn btn-secondary">Cancel</a>
+          </div>
+
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const TREE = {{ tree_json|safe }};
+
+  const paperSel = document.getElementById('paper-select');
+  const subjSel  = document.getElementById('subject-select');
+  const chapSel  = document.getElementById('chapter-select');
+  const subjCode = document.getElementById('subject-code');
+  const chapCode = document.getElementById('chapter-code');
+  const chapTitle = document.getElementById('chapter-title');
+  const lecNo    = document.getElementById('lecture-no');
+  const suffixEl = document.getElementById('suffix');
+  const preview  = document.getElementById('syllabus-preview');
+
+  // Populate papers
+  TREE.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.paper_key;
+    opt.textContent = p.display_name;
+    paperSel.appendChild(opt);
+  });
+
+  function resetSelect(sel, placeholder) {
+    sel.innerHTML = '';
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = placeholder;
+    sel.appendChild(o);
+    sel.disabled = true;
+  }
+
+  function updatePreview() {
+    const s = subjCode.value, c = chapCode.value, l = lecNo.value.trim();
+    const sfx = suffixEl.value.trim().replace(/^-/, '');
+    if (!s || !c) { preview.textContent = '—'; return; }
+    let sid = `${s}.${c}`;
+    if (l) sid += `.${l.padStart(2, '0')}`;
+    if (sfx) sid += `-${sfx}`;
+    preview.textContent = sid;
+  }
+
+  paperSel.addEventListener('change', () => {
+    resetSelect(subjSel, '— choose subject —');
+    resetSelect(chapSel, '— choose chapter —');
+    subjCode.value = ''; chapCode.value = ''; chapTitle.value = '';
+    lecNo.value = ''; suffixEl.value = '';
+    updatePreview();
+
+    const p = TREE.find(x => x.paper_key === paperSel.value);
+    if (!p) return;
+    p.subjects.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.code;
+      opt.textContent = `${s.code} — ${s.name}`;
+      subjSel.appendChild(opt);
+    });
+    subjSel.disabled = false;
+  });
+
+  subjSel.addEventListener('change', () => {
+    resetSelect(chapSel, '— choose chapter —');
+    chapCode.value = ''; chapTitle.value = '';
+    lecNo.value = ''; suffixEl.value = '';
+    updatePreview();
+
+    subjCode.value = subjSel.value;
+    const p = TREE.find(x => x.paper_key === paperSel.value);
+    if (!p) return;
+    const s = p.subjects.find(x => x.code === subjSel.value);
+    if (!s) return;
+    s.chapters.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.code;
+      opt.textContent = `${c.code} — ${c.name}   (${c.lecture_count} existing)`;
+      chapSel.appendChild(opt);
+    });
+    chapSel.disabled = false;
+  });
+
+  chapSel.addEventListener('change', () => {
+    chapCode.value = chapSel.value;
+    const p = TREE.find(x => x.paper_key === paperSel.value);
+    if (!p) return;
+    const s = p.subjects.find(x => x.code === subjSel.value);
+    if (!s) return;
+    const c = s.chapters.find(x => x.code === chapSel.value);
+    if (c) {
+      chapTitle.value = c.name;
+      // Suggest next lecture number
+      const next = String((c.lecture_count || 0) + 1).padStart(2, '0');
+      if (!lecNo.value) lecNo.value = next;
+    }
+    updatePreview();
+  });
+
+  lecNo.addEventListener('input', updatePreview);
+  suffixEl.addEventListener('input', updatePreview);
+</script>
+
+{% endblock %}

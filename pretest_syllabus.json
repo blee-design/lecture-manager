@@ -1,0 +1,115 @@
+{
+  "version": 2,
+  "papers": [
+    {
+      "paper_key": "pretest",
+      "display_name": "Pretest Officer",
+      "folder_name": "Pretest Officer",
+      "keywords": "gk,pretest,english,nepali,geography,history,constitution",
+      "display_order": 10,
+      "subjects": [
+        {
+          "name": "1. Geography, Population, and Environment (GK)",
+          "chapter": "01",
+          "chapters": [
+            {"chapter_code": "01", "name": "World geography", "description": "Physical, social and economic geography; relevance to trade routes and geopolitics", "display_order": 10},
+            {"chapter_code": "02", "name": "Geography of Nepal", "description": "Location, physiographic divisions, topography, climate patterns, natural resources", "display_order": 20},
+            {"chapter_code": "03", "name": "Population, urbanization and settlement", "description": "Distribution, migration trends, urbanization, settlement patterns, demographic transition and governance issues", "display_order": 30},
+            {"chapter_code": "04", "name": "Environment, climate change and sustainable development", "description": "Ecosystems, biodiversity, forests, wetlands; climate change impacts, adaptation, mitigation; SDGs; hazards, disaster management; pollution", "display_order": 40}
+          ]
+        },
+        {
+          "name": "2. History and Socio-Cultural Aspects",
+          "chapter": "02",
+          "chapters": [
+            {"chapter_code": "01", "name": "World history", "description": "Major global developments influencing modern political, economic and governance systems", "display_order": 10},
+            {"chapter_code": "02", "name": "History of Nepal", "description": "Ancient, medieval and modern socio-economic and political evolution; unification; Rana regime; democratic movements; republican transition", "display_order": 20},
+            {"chapter_code": "03", "name": "Socio-cultural structure of Nepal", "description": "Ethnic, linguistic and religious diversity; social harmony; culture, traditions, festivals, arts and literature; heritage and national identity", "display_order": 30},
+            {"chapter_code": "04", "name": "Social development indicators", "description": "Health, education, literacy, gender, inclusion, well-being, emerging social issues", "display_order": 40}
+          ]
+        },
+        {
+          "name": "3. Economic, Banking and Public Finance",
+          "chapter": "03",
+          "chapters": [
+            {"chapter_code": "01", "name": "National economic indicators", "description": "GDP, national income, per capita income, inflation, balance of payments, remittance", "display_order": 10},
+            {"chapter_code": "02", "name": "Planned development", "description": "Evolution of planned development; current periodic plan; long-term visions, goals, strategies, resource mobilization", "display_order": 20},
+            {"chapter_code": "03", "name": "Sectoral development of Nepal", "description": "Agriculture, industry, trade, tourism, education, health, infrastructure (energy, transport, ICT); government, private and cooperative sectors", "display_order": 30},
+            {"chapter_code": "04", "name": "Nepal and the global economy", "description": "Trade relations, foreign investment, foreign aid, globalization, regional integration", "display_order": 40},
+            {"chapter_code": "05", "name": "Banking and financial institutions", "description": "Fiscal and monetary policies; money and capital markets; role of central bank", "display_order": 50},
+            {"chapter_code": "06", "name": "Public finance", "description": "Government budgeting, accounting, auditing and financial management systems", "display_order": 60}
+          ]
+        },
+        {
+          "name": "4. Constitution, Law and Governance",
+          "chapter": "04",
+          "chapters": [
+            {"chapter_code": "01", "name": "Constitutional development", "description": "Evolution and Constitution of Nepal", "display_order": 10},
+            {"chapter_code": "02", "name": "Federal governance system", "description": "Roles and responsibilities of federal, provincial and local governments", "display_order": 20},
+            {"chapter_code": "03", "name": "Democratic system and rule of law", "description": "Human rights, inclusion, representation, periodic elections, adult franchise", "display_order": 30},
+            {"chapter_code": "04", "name": "Public service delivery values", "description": "Transparency, responsiveness, accountability, integrity, conflict of interest, citizen participation, whistle-blower", "display_order": 40}
+          ]
+        },
+        {
+          "name": "5. International Relations and Current Affairs",
+          "chapter": "05",
+          "chapters": [
+            {"chapter_code": "01", "name": "Nepal's foreign policy", "description": "Principles, objectives and emerging priorities", "display_order": 10},
+            {"chapter_code": "02", "name": "Bilateral relations", "description": "India, China, USA, UK, EU, Russia, Japan, SAARC countries; major treaties and agreements", "display_order": 20},
+            {"chapter_code": "03", "name": "Regional and international organizations", "description": "UN, SAARC, BIMSTEC, ASEAN, EU, World Bank, IMF, ADB, AIIB, WTO, SAFTA", "display_order": 30},
+            {"chapter_code": "04", "name": "Current affairs", "description": "National and international events; sports, awards, arts, literature; national achievements", "display_order": 40}
+          ]
+        },
+        {
+          "name": "6. Science, Technology and ICT",
+          "chapter": "06",
+          "chapters": [
+            {"chapter_code": "01", "name": "Measurement systems and scientific principles", "description": "Administrative applications of measurement and scientific principles", "display_order": 10},
+            {"chapter_code": "02", "name": "Major scientific inventions and technological advancements", "description": "Impact on society", "display_order": 20},
+            {"chapter_code": "03", "name": "ICT and emerging technologies", "description": "Computers, internet, e-governance, AI, cybersecurity, digital service delivery, digital transformation, privacy", "display_order": 30},
+            {"chapter_code": "04", "name": "Public health, sanitation and disaster monitoring", "description": "Nutrition, vaccines, disaster risk reduction technologies", "display_order": 40},
+            {"chapter_code": "05", "name": "Environmental technologies and renewable energy", "description": "Smart agriculture and green technologies", "display_order": 50}
+          ]
+        },
+        {
+          "name": "7. Public Enterprises and Public Management",
+          "chapter": "07",
+          "chapters": [
+            {"chapter_code": "01", "name": "Public enterprises", "description": "Concepts, objectives, sectoral roles, corporate governance, CSR, office management", "display_order": 10},
+            {"chapter_code": "02", "name": "Globalization and economic liberalization", "description": "Impact on public enterprise management", "display_order": 20},
+            {"chapter_code": "03", "name": "Public enterprise reforms", "description": "Role in service delivery; economic and financial condition; management reform; privatization", "display_order": 30},
+            {"chapter_code": "04", "name": "Management concepts and principles", "description": "Planning, organizing, staffing, directing, controlling, coordinating; decision-making; leadership theories; motivation", "display_order": 40},
+            {"chapter_code": "05", "name": "Service delivery mechanisms", "description": "Citizen charter, grievance management, quality assurance, emotional intelligence", "display_order": 50},
+            {"chapter_code": "06", "name": "Corporate budgeting and auditing", "description": "Regulatory compliance and oversight institutions", "display_order": 60}
+          ]
+        },
+        {
+          "name": "8. Basic Mathematical Aptitude and Analytical Ability",
+          "chapter": "08",
+          "chapters": [
+            {"chapter_code": "01", "name": "Basic arithmetic and algebra", "description": "Fractions, decimals, ratios, percentages, equations, indices", "display_order": 10},
+            {"chapter_code": "02", "name": "Applied mathematics and statistics", "description": "Unitary method, interest, profit-loss, tax/commission; mean, median, mode, SD, correlation; probability", "display_order": 20},
+            {"chapter_code": "03", "name": "Data interpretation and analytical reasoning", "description": "Graphical and tabular data interpretation; logical reasoning", "display_order": 30}
+          ]
+        },
+        {
+          "name": "9. English Language Competence Test",
+          "chapter": "09",
+          "chapters": [
+            {"chapter_code": "01", "name": "Vocabulary", "description": "Meanings, single-word expressions, synonyms/antonyms, derivatives, homonyms/homophones", "display_order": 10},
+            {"chapter_code": "02", "name": "Syntax", "description": "Agreement, tense, parallel structures, clauses, modifiers, conditionals, phrasal expressions, transformations, prepositions, conjunctions", "display_order": 20},
+            {"chapter_code": "03", "name": "Comprehension", "description": "Passage-based (~300 words) — fact finding, inference, theme, true/false, language analysis", "display_order": 30}
+          ]
+        },
+        {
+          "name": "10. Nepali Language Competence Test",
+          "chapter": "10",
+          "chapters": [
+            {"chapter_code": "01", "name": "नेपाली व्याकरण र शब्दभण्डार", "description": "शुद्ध लेखन, पदसङ्गति, पदवर्ग, धातु, क्रिया, काल र पक्ष, कारक, विभक्ति, वाच्य, वाक्य संरचना, शब्दनिर्माण, समास/विग्रह", "display_order": 10},
+            {"chapter_code": "02", "name": "बोध (Comprehension)", "description": "दिइएको गद्यांशका आधारमा तथ्य खोज, अनुमान, विषयवस्तु पहिचान, सत्य/असत्य पहिचान र भाषासम्बन्धी विश्लेषण", "display_order": 20}
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,13 +1,45 @@
 # lecture_manager/dashboard.py
 
 import os
+import re
 import subprocess
-import glob
 from datetime import datetime
 from collections import Counter
 from .db import get_connection, TABLE_NAME
-from .file_manager import ROOT_DIR, collect_tally_data, PAPER_CONFIG, show_paper_breakdown
+from .file_manager import ROOT_DIR, collect_tally_data, show_paper_breakdown, collect_facebook_tally_data, _papers
 from .utils import print_colored, color_text, COLORS
+
+# Box drawing helpers
+BOX_WIDTH = 72
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
+
+
+def _visible_len(s):
+    return len(_ANSI_RE.sub('', s))
+
+
+def _box_header(title):
+    prefix = f"╭─ {title} "
+    remaining = BOX_WIDTH - _visible_len(prefix) - 1
+    if remaining < 2:
+        remaining = 2
+    return prefix + "─" * remaining + "╮"
+
+
+def _box_footer():
+    return "╰" + "─" * (BOX_WIDTH - 2) + "╯"
+
+
+def _box_line(content=""):
+    padding = BOX_WIDTH - 4 - _visible_len(content)
+    if padding < 0:
+        padding = 0
+    return f"│ {content}{' ' * padding} │"
+
+
+def _box_blank():
+    return "│" + " " * (BOX_WIDTH - 2) + "│"
+
 
 def get_storage_usage(path):
     """Get total size of a directory in human-readable format."""
@@ -17,38 +49,36 @@ def get_storage_usage(path):
     except Exception:
         return "N/A"
 
+
 def get_paper_sizes():
-    """
-    Return a dict mapping paper folder name to its size (human-readable).
-    """
+    """Return {display_name: human-readable size} using dynamic papers."""
     sizes = {}
-    for paper_key, config in PAPER_CONFIG.items():
-        folder = config['folder']
+    for key, cfg in _papers().items():
+        folder = cfg.get('folder_name', '')
+        display = cfg.get('display_name', folder or key)
+        if not folder:
+            continue
         full_path = os.path.join(ROOT_DIR, folder)
-        if os.path.exists(full_path):
-            sizes[folder] = get_storage_usage(full_path)
-        else:
-            sizes[folder] = "0B"
+        sizes[display] = get_storage_usage(full_path) if os.path.exists(full_path) else "0B"
     return sizes
 
+
 def get_file_type_counts():
-    """
-    Count video files by extension in the library.
-    """
+    """Count video files by extension in the library."""
     exts = ('.mp4', '.mkv', '.webm', '.avi', '.mov')
     counts = Counter()
     for root, _, files in os.walk(ROOT_DIR):
         for f in files:
             if f.lower().endswith(exts):
-                ext = os.path.splitext(f)[1].lower()
-                counts[ext] += 1
+                counts[os.path.splitext(f)[1].lower()] += 1
     return counts
+
 
 def get_recent_records(limit=5):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute(f"""
-        SELECT id, video_id, syllabus_id, subject, lecturer, nepali_date, time
+        SELECT id, video_id, syllabus_id, subject, chapter, lecturer, nepali_date, time
         FROM {TABLE_NAME}
         ORDER BY id DESC
         LIMIT %s
@@ -58,11 +88,12 @@ def get_recent_records(limit=5):
     conn.close()
     return rows
 
+
 def get_top_lecturers(limit=5):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(f"""
-        SELECT lecturer, COUNT(*) as count
+        SELECT lecturer, COUNT(*) AS count
         FROM {TABLE_NAME}
         WHERE lecturer IS NOT NULL AND lecturer != ''
         GROUP BY lecturer
@@ -74,11 +105,12 @@ def get_top_lecturers(limit=5):
     conn.close()
     return rows
 
+
 def get_subject_counts(limit=5):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(f"""
-        SELECT subject, COUNT(*) as count
+        SELECT subject, COUNT(*) AS count
         FROM {TABLE_NAME}
         WHERE subject IS NOT NULL AND subject != ''
         GROUP BY subject
@@ -90,13 +122,18 @@ def get_subject_counts(limit=5):
     conn.close()
     return rows
 
-def show_dashboard():
-    """Display a beautiful terminal dashboard with library statistics and paper breakdown."""
-    print("\n" + "═" * 60)
-    print_colored("  📊 LECTURE LIBRARY DASHBOARD", COLORS.CYAN, bold=True)
-    print("═" * 60)
 
-    # ----- Collect data -----
+def _bar(pct, width=24, fill='█', empty='░'):
+    """Render a proportional bar, pct in 0..100."""
+    filled = int(round((pct / 100.0) * width))
+    filled = max(0, min(width, filled))
+    return fill * filled + empty * (width - filled)
+
+
+def show_dashboard():
+    """Display a beautiful terminal dashboard with library statistics."""
+
+    # ---------- Collect data once ----------
     tally = collect_tally_data()
 
     total_records = len(tally['records'])
@@ -107,117 +144,163 @@ def show_dashboard():
     mismatched = len(tally['mismatched'])
     unresolved = tally['unresolved']
 
-    # Storage usage (overall and per paper)
     storage = get_storage_usage(ROOT_DIR)
     paper_sizes = get_paper_sizes()
     file_counts = get_file_type_counts()
-
-    # Recent lectures
     recent = get_recent_records(5)
-
-    # Top lecturers
     top_lecturers = get_top_lecturers(5)
-
-    # Top subjects
     top_subjects = get_subject_counts(5)
 
-    # ----- Summary cards -----
-    print("\n" + "─" * 60)
-    print_colored("  📈 SUMMARY", COLORS.YELLOW, bold=True)
-    print("─" * 60)
+    # ---------- Title banner ----------
+    now = datetime.now().strftime('%Y-%m-%d %H:%M')
+    title = "📊  LECTURE LIBRARY DASHBOARD"
+    left_pad = (BOX_WIDTH - len(title) - len(now) - 4)
+    if left_pad < 4:
+        left_pad = 4
 
-    # Row of stats
-    print(f"  {color_text('Total Records:', COLORS.WHITE)} {color_text(str(total_records), COLORS.CYAN)}")
-    print(f"  {color_text('Total Files:', COLORS.WHITE)} {color_text(str(total_files), COLORS.CYAN)}")
-    print(f"  {color_text('✅ Correctly Placed:', COLORS.WHITE)} {color_text(str(correctly_placed), COLORS.GREEN)}")
-    print(f"  {color_text('❌ Missing:', COLORS.WHITE)} {color_text(str(missing), COLORS.RED)}")
-    print(f"  {color_text('🗑️ Orphan Files:', COLORS.WHITE)} {color_text(str(orphan), COLORS.YELLOW)}")
-    if mismatched:
-        print(f"  {color_text('⚠️ Mismatched:', COLORS.WHITE)} {color_text(str(mismatched), COLORS.YELLOW)}")
-    if unresolved:
-        print(f"  {color_text('❓ Unresolved Records:', COLORS.WHITE)} {color_text(str(unresolved), COLORS.MAGENTA)}")
-    print(f"  {color_text('💾 Library Size:', COLORS.WHITE)} {color_text(storage, COLORS.BLUE)}")
+    print()
+    print("╔" + "═" * (BOX_WIDTH - 2) + "╗")
+    title_line = f"  {title}{' ' * left_pad}{now}  "
+    print("║" + title_line[:BOX_WIDTH - 2].ljust(BOX_WIDTH - 2) + "║")
+    print("╚" + "═" * (BOX_WIDTH - 2) + "╝")
+    print()
 
-    # Health indicator
-    if missing == 0 and mismatched == 0 and unresolved == 0:
-        print_colored("\n  ✅ Library is perfectly synced! All records have files in the right place.", COLORS.GREEN)
+    # ---------- Quick stats (2 rows of 3) ----------
+    print(_box_header("📈  QUICK STATS"))
+    print(_box_blank())
+
+    def stat_cell(label, value, color=COLORS.CYAN, ok=False):
+        mark = "  ✓" if ok else ""
+        return f"{label:<20}{color_text(str(value) + mark, color)}"
+
+    print(_box_line(
+        stat_cell("Total Records", total_records) + "     " +
+        stat_cell("Total Files", total_files)
+    ))
+    print(_box_line(
+        stat_cell("Correctly Placed", correctly_placed, COLORS.GREEN, ok=True) + "     " +
+        stat_cell("Library Size", storage, COLORS.BLUE)
+    ))
+    print(_box_blank())
+
+    missing_cell = stat_cell("Missing", missing, COLORS.RED if missing else COLORS.GREEN)
+    orphan_cell = stat_cell("Orphan", orphan, COLORS.YELLOW if orphan else COLORS.GREEN)
+    print(_box_line(missing_cell + "     " + orphan_cell))
+
+    mismatched_cell = stat_cell("Mismatched", mismatched,
+                                COLORS.YELLOW if mismatched else COLORS.GREEN)
+    unresolved_cell = stat_cell("Unresolved", unresolved,
+                                COLORS.MAGENTA if unresolved else COLORS.GREEN)
+    print(_box_line(mismatched_cell + "     " + unresolved_cell))
+    print(_box_blank())
+
+    # Health summary
+    if missing == 0 and mismatched == 0 and unresolved == 0 and orphan == 0:
+        health = color_text("✅  Library is perfectly synced.", COLORS.GREEN)
     else:
-        print_colored("\n  ⚠️ Some issues detected – run option 1 (Tally) to investigate and fix.", COLORS.YELLOW)
+        health = color_text("⚠️  Run Tally (menu 3 → 5) to investigate issues.", COLORS.YELLOW)
+    print(_box_line(health))
+    print(_box_blank())
+    print(_box_footer())
+    print()
 
-    # ----- Paper storage breakdown -----
+    # ---------- Storage per paper ----------
     if paper_sizes:
-        print("\n" + "─" * 60)
-        print_colored("  📁 STORAGE PER PAPER", COLORS.YELLOW, bold=True)
-        print("─" * 60)
+        print(_box_header("📁  STORAGE PER PAPER"))
+        print(_box_blank())
         for folder, size in paper_sizes.items():
-            print(f"  {folder[:35]:<35} {size}")
+            name = folder if len(folder) <= 52 else folder[:49] + "..."
+            content = f"{name:<54}{color_text(size, COLORS.BLUE)}"
+            print(_box_line(content))
+        print(_box_blank())
+        print(_box_footer())
+        print()
 
-    # ----- File type breakdown -----
+    # ---------- File types ----------
     if file_counts:
-        print("\n" + "─" * 60)
-        print_colored("  🎬 FILE TYPES", COLORS.YELLOW, bold=True)
-        print("─" * 60)
         total_ext = sum(file_counts.values())
+        print(_box_header("🎬  FILE TYPES"))
+        print(_box_blank())
         for ext, count in sorted(file_counts.items(), key=lambda x: -x[1]):
             pct = (count / total_ext * 100) if total_ext else 0
-            bar = "█" * int(pct / 2)  # scale 50% -> 1 char
-            print(f"  {ext:<6} {count:>4} files  {bar} {pct:.1f}%")
+            bar = _bar(pct, width=24)
+            line = f"{ext:<6} {count:>5} files  {color_text(bar, COLORS.CYAN)}  {pct:5.1f}%"
+            print(_box_line(line))
+        print(_box_blank())
+        print(_box_footer())
+        print()
 
-    # ----- Recent lectures -----
+    # ---------- Recent lectures ----------
     if recent:
-        print("\n" + "─" * 60)
-        print_colored("  🕒 RECENTLY ADDED LECTURES", COLORS.YELLOW, bold=True)
-        print("─" * 60)
+        print(_box_header("🕒  RECENTLY ADDED LECTURES"))
+        print(_box_blank())
         for rec in recent:
-            date_str = rec.get('nepali_date', '') or ''
-            time_str = rec.get('time', '') or ''
-            lecturer = rec.get('lecturer', '') or ''
-            subject = rec.get('subject', '') or ''
-            print(f"  {rec['syllabus_id']} | {subject[:30]:<30} | {lecturer:<15} | {date_str} {time_str}")
+            syllabus = (rec.get('syllabus_id') or '')[:12]
+            subject = (rec.get('subject') or '')[:28]
+            lecturer = (rec.get('lecturer') or '')[:16]
+            date_str = rec.get('nepali_date') or ''
+            time_str = rec.get('time') or ''
+            line = f"{syllabus:<12}  {subject:<28}  {lecturer:<16}  {date_str} {time_str}"
+            if _visible_len(line) > BOX_WIDTH - 4:
+                line = line[:BOX_WIDTH - 5]
+            print(_box_line(line))
+        print(_box_blank())
+        print(_box_footer())
+        print()
 
-    # ----- Top lecturers (with scaled bar) -----
+    # ---------- Top lecturers ----------
     if top_lecturers:
-        print("\n" + "─" * 60)
-        print_colored("  👨‍🏫 TOP LECTURERS", COLORS.YELLOW, bold=True)
-        print("─" * 60)
-        max_count = max(c for _, c in top_lecturers) if top_lecturers else 1
+        print(_box_header("👨‍🏫  TOP LECTURERS"))
+        print(_box_blank())
+        max_count = max(c for _, c in top_lecturers) or 1
         for lecturer, count in top_lecturers:
-            bar_len = int((count / max_count) * 20)
-            bar = "█" * bar_len
-            print(f"  {lecturer[:20]:<20} {bar} {count}")
+            name = (lecturer or '')[:22]
+            pct = count / max_count * 100
+            bar = _bar(pct, width=20)
+            line = f"{name:<22}  {color_text(bar, COLORS.MAGENTA)}  {count}"
+            print(_box_line(line))
+        print(_box_blank())
+        print(_box_footer())
+        print()
 
-    # ----- Top subjects (with scaled bar) -----
+    # ---------- Top subjects ----------
     if top_subjects:
-        print("\n" + "─" * 60)
-        print_colored("  📚 TOP SUBJECTS", COLORS.YELLOW, bold=True)
-        print("─" * 60)
-        max_count = max(c for _, c in top_subjects) if top_subjects else 1
+        print(_box_header("📚  TOP SUBJECTS"))
+        print(_box_blank())
+        max_count = max(c for _, c in top_subjects) or 1
         for subject, count in top_subjects:
-            bar_len = int((count / max_count) * 20)
-            bar = "█" * bar_len
-            print(f"  {subject[:25]:<25} {bar} {count}")
+            name = (subject or '')[:34]
+            pct = count / max_count * 100
+            bar = _bar(pct, width=16)
+            line = f"{name:<34}  {color_text(bar, COLORS.GREEN)}  {count}"
+            print(_box_line(line))
+        print(_box_blank())
+        print(_box_footer())
+        print()
 
-    # ----- Facebook stats -----
-    from .file_manager import collect_facebook_tally_data
+    # ---------- Facebook ----------
     fb_tally = collect_facebook_tally_data()
     if fb_tally['total_entries'] > 0 or fb_tally['orphan'] or fb_tally['missing']:
-        print("\n" + "─" * 60)
-        print_colored("  📘 FACEBOOK", COLORS.MAGENTA, bold=True)
-        print("─" * 60)
-        print(f"  Total entries  : {fb_tally['total_entries']} (videos: {fb_tally['by_type']['video']}, photos: {fb_tally['by_type']['photo']})")
-        print(f"  Files on disk  : {len(fb_tally['files_found'])}")
+        print(_box_header("📘  FACEBOOK"))
+        print(_box_blank())
+        print(_box_line(f"  Entries : {fb_tally['total_entries']}  "
+                        f"(videos: {fb_tally['by_type']['video']}, "
+                        f"photos: {fb_tally['by_type']['photo']})"))
+        print(_box_line(f"  Files   : {len(fb_tally['files_found'])} on disk"))
         if fb_tally['missing']:
-            print_colored(f"  ❌ Missing      : {len(fb_tally['missing'])} entries", COLORS.RED)
+            print(_box_line(color_text(f"  ❌ Missing: {len(fb_tally['missing'])} entries", COLORS.RED)))
         if fb_tally['orphan']:
-            print_colored(f"  🗑️ Orphan       : {len(fb_tally['orphan'])} files", COLORS.YELLOW)
+            print(_box_line(color_text(f"  🗑️  Orphan: {len(fb_tally['orphan'])} files", COLORS.YELLOW)))
         if not fb_tally['missing'] and not fb_tally['orphan']:
-            print_colored("  ✅ All Facebook entries are synced!", COLORS.GREEN)
+            print(_box_line(color_text("  ✅ All synced.", COLORS.GREEN)))
+        print(_box_blank())
+        print(_box_footer())
+        print()
 
-    # ===== PAPER BREAKDOWN =====
-    # Pass the tally we already computed to avoid a second full scan
+    # ---------- Paper breakdown (existing, shared tally) ----------
     show_paper_breakdown(tally_data=tally)
 
-    # ----- Final footer -----
-    print("\n" + "═" * 60)
-    print_colored("  Dashboard generated at " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"), COLORS.BLUE)
-    print("═" * 60 + "\n")
+    # ---------- Footer ----------
+    print()
+    print_colored(f"  Dashboard generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", COLORS.BLUE)
+    print()

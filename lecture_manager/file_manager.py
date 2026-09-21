@@ -24,6 +24,7 @@ _PAPER_CACHE = {"papers": None, "keywords": None}
 # Subject lookups (avoid N+1 DB connections per record)
 _SUBJECT_KEY_TO_NAME = None      # {(paper_key, chapter_code): subject_name}
 _SUBJECT_NAME_TO_PAPER = None    # {subject_name: paper_key}
+_CHAPTER_KEY_TO_NAME = None      # {(paper_key, subject_code, chapter_code): chapter_name}
 
 # Pretest subjects (01-10)
 PRETEST_SUBJECTS = {
@@ -105,12 +106,76 @@ PAPER_KEYWORDS = {
     }
 
 def reload_paper_cache():
-    """Call after any change to papers/subjects."""
-    global _SUBJECT_KEY_TO_NAME, _SUBJECT_NAME_TO_PAPER
+    """Call after any change to papers/subjects/chapters."""
+    global _SUBJECT_KEY_TO_NAME, _SUBJECT_NAME_TO_PAPER, _CHAPTER_KEY_TO_NAME
     _PAPER_CACHE["papers"] = None
     _PAPER_CACHE["keywords"] = None
     _SUBJECT_KEY_TO_NAME = None
     _SUBJECT_NAME_TO_PAPER = None
+    _CHAPTER_KEY_TO_NAME = None
+
+
+def _chapter_lookup():
+    """
+    {(paper_key, subject_code, chapter_code): chapter_name}
+    One DB query, cached for the session.
+    """
+    global _CHAPTER_KEY_TO_NAME
+    if _CHAPTER_KEY_TO_NAME is None:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT s.paper AS paper_key,
+                   s.chapter AS subject_code,
+                   c.chapter_code,
+                   c.name
+            FROM chapters c
+            JOIN subjects s ON s.id = c.subject_id
+            WHERE c.active = 1 AND s.active = 1
+        """)
+        cache = {}
+        for row in cursor.fetchall():
+            paper = row['paper_key']
+            subj_code = str(row['subject_code'] or '').zfill(2)
+            chap_code = str(row['chapter_code'] or '').zfill(2)
+            if paper and subj_code and chap_code:
+                cache[(paper, subj_code, chap_code)] = row['name']
+        cursor.close()
+        conn.close()
+        _CHAPTER_KEY_TO_NAME = cache
+    return _CHAPTER_KEY_TO_NAME
+
+
+def describe_syllabus_id(syllabus_id, paper_key):
+    """
+    Given a syllabus_id like '04.02.03-1' and a paper_key, return a dict:
+      { 'subject_name', 'chapter_name',
+        'subject_code', 'chapter_code', 'lecture', 'suffix' }
+    Any missing piece is None.
+    """
+    import re
+    out = {'subject_name': None, 'chapter_name': None,
+           'subject_code': None, 'chapter_code': None,
+           'lecture': None, 'suffix': None}
+    if not syllabus_id or not paper_key:
+        return out
+
+    m = re.match(r'^(\d{1,2})(?:\.(\d{1,2}))?(?:\.(\d{1,2}))?(?:-(\S+))?$',
+                 str(syllabus_id).strip())
+    if not m:
+        return out
+
+    subj_code = m.group(1).zfill(2)
+    chap_code = m.group(2).zfill(2) if m.group(2) else None
+    out['subject_code'] = subj_code
+    out['chapter_code'] = chap_code
+    out['lecture'] = m.group(3) or None
+    out['suffix'] = m.group(4) or None
+
+    out['subject_name'] = _subject_lookup().get((paper_key, subj_code))
+    if chap_code:
+        out['chapter_name'] = _chapter_lookup().get((paper_key, subj_code, chap_code))
+    return out
 
 
 def _subject_lookup():
