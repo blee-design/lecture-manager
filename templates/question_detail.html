@@ -49,6 +49,20 @@
 
           <dt class="col-sm-4">Type</dt>
           <dd class="col-sm-8"><span class="badge bg-info">{{ question.type or 'essay' }}</span></dd>
+
+          <dt class="col-sm-4">Exam type</dt>
+          <dd class="col-sm-8">
+            {% set et = (question.exam_type or 'open') %}
+            {% if et == 'open' %}
+              <span class="badge bg-success">Open Competition</span>
+            {% elif et == 'internal' %}
+              <span class="badge bg-warning text-dark">Internal Competition</span>
+            {% elif et == 'promotional' %}
+              <span class="badge bg-primary">Promotional</span>
+            {% else %}
+              <span class="badge bg-secondary">{{ et }}</span>
+            {% endif %}
+          </dd>
         </dl>
 
         <!-- Question text combined -->

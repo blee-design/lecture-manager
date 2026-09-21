@@ -33,6 +33,18 @@ from .question_converter.exceptions import (
 
 _last_filtered_questions = None
 
+TABLE_NAME = 'questions'
+
+# Exam-type vocabulary. Store the short key; show the friendly label.
+EXAM_TYPES = [
+    ('open',        'Open Competition'),
+    ('internal',    'Internal Competition'),
+    ('promotional', 'Promotional'),
+    ('other',       'Other'),
+]
+
+EXAM_TYPE_LABELS = {k: v for k, v in EXAM_TYPES}
+
 # ============================================================
 # Display helpers (ANSI-aware) + syllabus linking
 # ============================================================
@@ -141,8 +153,6 @@ def resolve_question_syllabus(q):
     if out['code_display']:
         out['reason'] = 'raw code'
     return out
-
-TABLE_NAME = 'questions'
 
 # ---------- Database ----------
 def create_question_table():
@@ -440,7 +450,7 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                  maxbytes=2097152, grader_info=None,
                  syllabus_code=None, q_type='essay',
                  feedback_true=None, feedback_false=None,
-                 penalty=0):
+                 penalty=0, exam_type='open'):
     # Convert empty strings to None for nullable fields
     if paper == '':
         paper = None
@@ -510,17 +520,17 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
          show_num_correct, correct_feedback, partially_correct_feedback,
          incorrect_feedback, response_lines, attachments, filetypes, maxbytes,
          grader_info, type, syllabus_code,
-         penalty, feedback_true, feedback_false)
+         penalty, feedback_true, feedback_false, exam_type)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s)
+                %s, %s, %s, %s)
     """, (date, institution, subject, paper, group, marks, chapter,
           question_number, nepali, english, level, notes,
           general_feedback, fraction_correct, fraction_wrong,
           shuffle_answers, show_num_correct,
           correct_feedback, partially_correct_feedback, incorrect_feedback,
           response_lines, attachments, filetypes, maxbytes, grader_info, q_type, syllabus_code,
-          penalty, feedback_true, feedback_false))
+          penalty, feedback_true, feedback_false, exam_type or 'open'))
     conn.commit()
     qid = cursor.lastrowid
 
@@ -879,6 +889,10 @@ def _display_single_question(q):
         print(f"  {'Group':<14}: {group}")
     if subject:
         print(f"  {'Subject':<14}: {subject}")
+
+    exam_type = q.get('exam_type') or 'open'
+    exam_label = EXAM_TYPE_LABELS.get(exam_type, exam_type)
+    print(f"  {'Exam type':<14}: {color_text(exam_label, COLORS.YELLOW)}")
 
     # ---------- Syllabus context ----------
     info = resolve_question_syllabus(q)
@@ -1856,6 +1870,17 @@ def add_question_interactive():
     if not date:
         date = datetime.today().strftime('%Y-%m-%d')
     institution = _prompt_field("Institution: ")
+
+    # --- Exam type ---
+    print("\n  Exam type:")
+    for i, (key, label) in enumerate(EXAM_TYPES, 1):
+        default_marker = " (default)" if key == 'open' else ""
+        print(f"    {i}. {label}{default_marker}")
+    et_choice = input(color_text("  Choose (1-4, Enter for Open): ", COLORS.MAGENTA)).strip()
+    if et_choice.isdigit() and 1 <= int(et_choice) <= len(EXAM_TYPES):
+        exam_type = EXAM_TYPES[int(et_choice) - 1][0]
+    else:
+        exam_type = 'open'
     subject     = _prompt_field("Subject: ")
     paper       = _prompt_field("Paper: ")
     group       = _prompt_field("Group: ")
@@ -1919,6 +1944,7 @@ def add_question_interactive():
         feedback_true=feedback_true, feedback_false=feedback_false,
         grader_info=grader_info,
         q_type=q_type,
+        exam_type=exam_type,
     )
     if qid:
         print_colored(f"[✓] Question processed with ID: {qid}", COLORS.GREEN)
@@ -2082,7 +2108,7 @@ def advanced_search_interactive():
     print("Leave value blank to clear that criterion.")
     print("After setting criteria, choose '9. Search' to run the search.\n")
 
-    fields = ['date', 'institution', 'level', 'paper', 'group', 'subject', 'question_number', 'chapter', 'syllabus_code', 'type']
+    fields = ['date', 'institution', 'level', 'paper', 'group', 'subject', 'question_number', 'chapter', 'syllabus_code', 'type', 'exam_type']
     display_names = {
         'date': 'question_date',
         'institution': 'institution',
@@ -2093,7 +2119,8 @@ def advanced_search_interactive():
         'question_number': 'question_number',
         'chapter': 'chapter',
         'syllabus_code': 'syllabus_code',
-        'type': 'type'
+        'type': 'type',
+        'exam_type': 'exam_type',
     }
     criteria = {f: '' for f in fields}
 
@@ -2128,7 +2155,8 @@ def advanced_search_interactive():
 
             # Don't pass question_number to SQL — we filter it in Python below
             # so that '1' can match '1a', '1b', etc. when in family mode.
-            sql_kwargs = {k: v for k, v in kwargs.items() if k not in ('type', 'question_number')}
+            sql_kwargs = {k: v for k, v in kwargs.items()
+                          if k not in ('type', 'question_number', 'exam_type')}
             results = get_questions_by_criteria(**sql_kwargs)
 
             # ─── BLOCK 2: apply the question_number filter in Python ───
@@ -2152,9 +2180,15 @@ def advanced_search_interactive():
                         results = [q for q in results
                                    if canonical_qno(q.get('question_number')) == want]
 
-            # Type filter (unchanged)
+            # Type filter
             if 'type' in kwargs:
                 results = [q for q in results if q.get('type', '').lower() == kwargs['type'].lower()]
+
+            # Exam-type filter
+            if 'exam_type' in kwargs:
+                wanted = kwargs['exam_type'].strip().lower()
+                results = [q for q in results
+                           if (q.get('exam_type') or 'open').lower() == wanted]
 
             if not results:
                 print_colored("[i] No matches found.", COLORS.YELLOW)
@@ -2220,6 +2254,7 @@ def update_question_interactive():
         'question_date', 'institution', 'subject', 'paper', 'group',
         'marks', 'chapter', 'question_number',
         'nepali_transcription', 'english_transcription', 'level', 'notes', 'type',
+        'exam_type',
         'options',   # special: opens the interactive editor for MCQ/TF/Matching
     ]
     updates = {}
@@ -2273,6 +2308,21 @@ def update_question_interactive():
 
         field = fields[idx - 1]
         current = row.get(field, '')
+
+        # ---- Special: exam_type ----
+        if field == 'exam_type':
+            print("\n  Exam type:")
+            for i, (key, label) in enumerate(EXAM_TYPES, 1):
+                cur = " ← current" if key == (row.get('exam_type') or 'open') else ""
+                print(f"    {i}. {label}{cur}")
+            et = input(color_text(f"  Choose (1-{len(EXAM_TYPES)}, Enter to keep): ", COLORS.MAGENTA)).strip()
+            if et.isdigit() and 1 <= int(et) <= len(EXAM_TYPES):
+                updates['exam_type'] = EXAM_TYPES[int(et) - 1][0]
+                row['exam_type'] = updates['exam_type']
+                print_colored(f"[✓] Exam type set to {EXAM_TYPE_LABELS[updates['exam_type']]}.", COLORS.GREEN)
+            else:
+                print_colored("[i] No change.", COLORS.YELLOW)
+            continue
 
         # ---- Special: options / pairs / hints ----
         if field == 'options':

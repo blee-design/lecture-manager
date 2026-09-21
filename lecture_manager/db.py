@@ -483,6 +483,8 @@ def migrate_table():
         'feedback_true':  'TEXT NULL',
         'feedback_false': 'TEXT NULL',
         'penalty':        'DECIMAL(10,2) DEFAULT 0.00',
+        # Exam type: open / internal / promotional / other
+        'exam_type':      "VARCHAR(50) DEFAULT 'open'",
     }
     for col, definition in newer_columns.items():
         cursor.execute(f"SHOW COLUMNS FROM questions LIKE '{col}'")
