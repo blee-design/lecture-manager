@@ -2120,7 +2120,7 @@ def advanced_search_interactive():
         'chapter': 'chapter',
         'syllabus_code': 'syllabus_code',
         'type': 'type',
-        'exam_type': 'exam_type',
+        'exam_type': 'exam type',
     }
     criteria = {f: '' for f in fields}
 
@@ -2141,7 +2141,7 @@ def advanced_search_interactive():
         print("─" * 50)
         print("  90. " + color_text("Search with current criteria", COLORS.CYAN, bold=True))
         print("  0. " + color_text("Return to Question Bank menu", COLORS.YELLOW))
-        choice = input(color_text("\nChoose a field to edit (1-10), 90 to search, or 0 to return: ", COLORS.MAGENTA)).strip()
+        choice = input(color_text(f"\nChoose a field to edit (1-{len(fields)}), 90 to search, or 0 to return: ", COLORS.MAGENTA)).strip()
 
         if choice == '90':
             kwargs = {}
@@ -2449,7 +2449,7 @@ def export_questions_csv():
         'question_date', 'institution', 'level', 'paper', 'group',
         'subject', 'chapter', 'question_number', 'marks',
         'nepali_transcription', 'english_transcription', 'notes',
-        'source', 'type',
+        'source', 'type', 'exam_type',
         'general_feedback', 'fraction_correct', 'fraction_wrong',
         'syllabus_code',
         'shuffle_answers', 'show_num_correct',
@@ -2627,6 +2627,7 @@ def import_questions_csv():
             'penalty': row.get('penalty', 0),
             'feedback_true': row.get('feedback_true'),
             'feedback_false': row.get('feedback_false'),
+            'exam_type': row.get('exam_type') or 'open',
             'options': row.get('options_json'),
             'pairs': row.get('pairs_json'),
             'hints': row.get('hints_json'),
@@ -2752,6 +2753,15 @@ def export_questions_txt():
                         f.write(f"{labels.get(key, key)}: {val}\n")
                 if q.get('syllabus_code'):
                     f.write(f"Syllabus Code: {q['syllabus_code']}\n")
+                # Only write Exam Type when it differs from the default
+                et = (q.get('exam_type') or 'open').lower()
+                if et != 'open':
+                    nice = {
+                        'internal': 'Internal',
+                        'promotional': 'Promotional',
+                        'other': 'Other',
+                    }.get(et, et.capitalize())
+                    f.write(f"Exam Type: {nice}\n")
 
                 nep = q.get('nepali_transcription', '').strip()
                 eng = q.get('english_transcription', '').strip()
@@ -3123,9 +3133,9 @@ def import_questions_json():
     skipped = 0
 
     fields = ['question_date', 'institution', 'subject', 'paper', 'group',
-              'marks', 'chapter', 'question_number', 'nepali_transcription',
-              'english_transcription', 'level', 'notes',
-              'feedback_true', 'feedback_false']
+            'marks', 'chapter', 'question_number', 'nepali_transcription',
+            'english_transcription', 'level', 'notes',
+            'feedback_true', 'feedback_false', 'exam_type']
     escaped_fields = [f"`{f}`" if f == 'group' else f for f in fields]
 
     total = len(rows)

@@ -2,15 +2,15 @@
 
 from .utils import log
 
+
 # -------------------- TEXT OUTPUT --------------------
 def create_text_output(questions, output_file, verbose=False):
     """
-    Convert questions list to text format with full metadata (context-aware).
-    Each block is separated by '---' and includes all relevant fields.
+    Convert questions list to text format with full metadata.
+    Each block is separated by '---'.
     """
     log(f"Creating text output with {len(questions)} questions", "INFO", verbose)
 
-    # All possible fields (metadata first, then question content)
     metadata_fields = [
         ('question_date', 'Date'),
         ('institution', 'Institution'),
@@ -25,7 +25,6 @@ def create_text_output(questions, output_file, verbose=False):
     ]
 
     with open(output_file, 'w', encoding='utf-8') as f:
-        # Write header
         f.write("# Exported Question Bank (Full Metadata)\n")
         f.write(f"# Total: {len(questions)} questions\n")
         f.write("# Each block is separated by '---'\n\n")
@@ -36,27 +35,36 @@ def create_text_output(questions, output_file, verbose=False):
 
             f.write("---\n")
 
-            # Write metadata fields (only if present and non‑empty)
+            # ---- Metadata fields ----
             for field, label in metadata_fields:
                 val = q.get(field)
                 if val is not None and str(val).strip():
                     f.write(f"{label}: {val}\n")
 
-            # Question number and text
+            # ---- Question number + text ----
             qno = q.get("question_no")
             text = q.get("text", "")
             f.write(f"Question No. {qno}: {text}\n" if qno else f"Question: {text}\n")
 
-            # Type
+            # ---- Type ----
             q_type = q.get("type", "multichoice")
             f.write(f"Type: {q_type}\n")
 
-            # Handle specific types
+            # ---- Exam type (common to all question types) ----
+            et = (q.get('exam_type') or 'open').lower()
+            if et != 'open':
+                nice = {
+                    'internal':    'Internal',
+                    'promotional': 'Promotional',
+                    'other':       'Other',
+                }.get(et, et.capitalize())
+                f.write(f"Exam Type: {nice}\n")
+
+            # ---- Type-specific fields ----
             if q_type == "multichoice":
                 for opt in q.get("options", []):
                     correct_marker = " *" if opt.get("correct", False) else ""
                     f.write(f"Option: {opt.get('text', '')}{correct_marker}\n")
-
                 if q.get("grade", 1) != 1:
                     f.write(f"Grade: {q.get('grade', 1)}\n")
                 if q.get("penalty", 0) != 0:
@@ -67,11 +75,9 @@ def create_text_output(questions, output_file, verbose=False):
                     f.write(f"Fraction: {q.get('fraction_correct', 100)} {q.get('fraction_wrong', -20)}\n")
 
             elif q_type == "truefalse":
-                # Determine correct answer
                 correct_opt = next((opt for opt in q.get("options", []) if opt.get("correct", False)), None)
                 if correct_opt:
                     f.write(f"Correct: {correct_opt.get('text', '').lower()}\n")
-
                 if q.get("grade", 1) != 1:
                     f.write(f"Grade: {q.get('grade', 1)}\n")
                 if q.get("penalty", 0) != 0:
@@ -89,7 +95,6 @@ def create_text_output(questions, output_file, verbose=False):
                 for pair in q.get("pairs", []):
                     f.write(f"Subquestion: {pair.get('subquestion', '')}\n")
                     f.write(f"Answer: {pair.get('answer', '')}\n")
-
                 if q.get("grade", 1) != 1:
                     f.write(f"Grade: {q.get('grade', 1)}\n")
                 if q.get("penalty", 0) != 0:
@@ -100,7 +105,6 @@ def create_text_output(questions, output_file, verbose=False):
                     f.write("Show Number Correct: true\n")
                 if q.get("general_feedback"):
                     f.write(f"General Feedback: {q.get('general_feedback')}\n")
-                # Feedback for correct/partial/incorrect (if custom)
                 default_correct = "Your answer is correct."
                 default_partial = "Your answer is partially correct."
                 default_incorrect = "Your answer is incorrect."
@@ -132,8 +136,8 @@ def create_text_output(questions, output_file, verbose=False):
                 if q.get("grader_info"):
                     f.write(f"Grader Information: {q.get('grader_info')}\n")
 
-            f.write("\n")  # blank line between questions
+            f.write("\n")
 
-        f.write("---\n")  # final separator
+        f.write("---\n")
 
     log(f"Text file created: {output_file}", "SUCCESS", verbose)

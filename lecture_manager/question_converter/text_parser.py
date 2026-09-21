@@ -30,7 +30,7 @@ VALID_FIELD_NAMES = {
     'hint', 'hint clear incorrect', 'hint show number correct',
     # Bank TXT fields
     'nepali', 'english', 'marks', 'chapter', 'source',
-    'id',
+    'id', 'exam type',
     # Metadata fields (for inline context)
     'date', 'institution', 'level', 'paper', 'group', 'subject', 'notes',
     'question_number', 'question number',    'syllabus code',
@@ -479,6 +479,18 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
     elif field_name == 'source':
         question['source'] = field_content
         log(f"  Question {question.get('question_no', '?')}: Set source to {field_content}", "INFO", True)
+    elif field_name == 'exam type':
+        # Normalise to lowercase, keep known values
+        v = field_content.strip().lower()
+        if v in ('open', 'open competition'):
+            question['exam_type'] = 'open'
+        elif v in ('internal', 'internal competition'):
+            question['exam_type'] = 'internal'
+        elif v in ('promotional', 'promotion'):
+            question['exam_type'] = 'promotional'
+        elif v:
+            question['exam_type'] = 'other'
+        log(f"  Question {question.get('question_no', '?')}: Set exam type to {question.get('exam_type', 'open')}", "INFO", True)
     elif field_name == 'syllabus code':
         question['syllabus_code'] = field_content
         log(f"  Question {question.get('question_no', '?')}: Set syllabus code to {field_content}", "INFO", True)
@@ -680,6 +692,8 @@ def parse_text_file(file_path, args):
             'source': 'source',
             'marks': 'marks',
             'chapter': 'chapter',
+            'exam type': 'exam_type',
+            'exam_type': 'exam_type',
         }
         mapped_context = {}
         for key, val in global_context.items():

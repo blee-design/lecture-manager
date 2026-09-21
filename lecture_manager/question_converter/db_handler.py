@@ -227,6 +227,7 @@ def insert_question(q_dict, source=None, force=False):
                 'type': q_dict.get('type', 'essay'),
                 'feedback_true': q_dict.get('feedback_true'),
                 'feedback_false': q_dict.get('feedback_false'),
+                'exam_type': q_dict.get('exam_type', 'open'),
             }
             # Remove None values so defaults are used
             update_kwargs = {k: v for k, v in update_kwargs.items() if v is not None}
@@ -246,6 +247,7 @@ def insert_question(q_dict, source=None, force=False):
     # No duplicate – insert new
     nep_val, eng_val = _split_text_into_transcriptions(q_dict)
     qid = add_question(
+        exam_type=q_dict.get('exam_type', 'open'),
         date=date,
         institution=institution,
         subject=q_dict.get('subject', ''),
@@ -415,6 +417,7 @@ def get_questions(filters=None):
             'marks': row.get('marks'),
             'notes': row.get('notes') or '',
             'source': row.get('source') or '',
+            'exam_type': row.get('exam_type') or 'open',
         }
 
         # Fetch options
