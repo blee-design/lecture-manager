@@ -3380,39 +3380,191 @@ def question_statistics_interactive():
 
 
 def bulk_rename_interactive():
-    print("\n" + "═" * 50)
+    """Bulk-rename a field across matching questions."""
+
+    # (display label, db column, kind)
+    # kind: 'text' | 'number' | 'exam_type' | 'q_type'
+    FIELDS = [
+        ('institution',    'institution',   'text'),
+        ('subject',        'subject',       'text'),
+        ('paper',          'paper',         'text'),
+        ('level',          'level',         'text'),
+        ('group',          'group',         'text'),
+        ('source',         'source',        'text'),
+        ('exam_type',      'exam_type',     'exam_type'),
+        ('marks',          'marks',         'number'),
+        ('chapter',        'chapter',       'text'),
+        ('syllabus_code',  'syllabus_code', 'text'),
+        ('type',           'type',          'q_type'),
+        ('question_date',  'question_date', 'text'),
+    ]
+
+    print()
     print_colored("  BULK RENAME FIELD", COLORS.CYAN, bold=True)
-    print("═" * 50)
-    fields = ['institution', 'subject', 'paper', 'level', 'group']
-    for i, f in enumerate(fields, 1):
-        print(f"  {i}. {f}")
-    print("  0. Cancel")
+    print_colored("  " + "─" * 56, COLORS.CYAN)
+    for i, (label, _col, kind) in enumerate(FIELDS, 1):
+        hint = {
+            'exam_type': ' (menu)',
+            'q_type':    ' (menu)',
+            'number':    ' (numeric)',
+        }.get(kind, '')
+        print(f"   {i:>2}. {label}{hint}")
+    print("     0. Cancel")
+
+    raw = input(color_text(f"\nChoose field (0-{len(FIELDS)}): ", COLORS.MAGENTA)).strip()
+    if not raw.isdigit():
+        return
+    idx = int(raw)
+    if idx == 0:
+        return
+    if not (1 <= idx <= len(FIELDS)):
+        print_colored("[!] Invalid choice.", COLORS.RED)
+        return
+
+    label, column, kind = FIELDS[idx - 1]
+
+    # Backtick reserved words
+    col_expr = f"`{column}`" if column in ('group', 'type') else column
+
+    # ---------- Show top existing values ----------
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
     try:
-        idx = int(input(color_text("Choose field (0-5): ", COLORS.MAGENTA)).strip())
-    except ValueError:
-        return
-    if not (1 <= idx <= len(fields)):
+        cursor.execute(f"""
+            SELECT {col_expr} AS v, COUNT(*) AS n
+            FROM questions
+            GROUP BY {col_expr}
+            ORDER BY n DESC
+            LIMIT 20
+        """)
+        distinct_rows = cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+    if distinct_rows:
+        print()
+        print_colored(f"  Existing values of '{label}' (top 20):", COLORS.YELLOW)
+        for i, r in enumerate(distinct_rows, 1):
+            v = r['v'] if r['v'] is not None else '(null)'
+            v_str = str(v)
+            if len(v_str) > 48:
+                v_str = v_str[:45] + '...'
+            print(f"   {i:>2}. {v_str:<50}  {r['n']:>5} rows")
+        print_colored("       (or type any value manually)", COLORS.WHITE)
+
+    # ---------- Old value ----------
+    print()
+    print_colored("  Old value:", COLORS.WHITE)
+    print("    • Type a number from the list above to pick that value")
+    print("    • Type 'clear' to match NULL rows")
+    print("    • Or type any value manually (exact match)")
+    old_raw = input(color_text(f"  Old {label}: ", COLORS.MAGENTA)).strip()
+
+    if old_raw == '':
+        print_colored("Cancelled.", COLORS.YELLOW)
         return
 
-    field = fields[idx - 1]
-    old = input(color_text(f"Old {field} (exact match): ", COLORS.MAGENTA)).strip()
-    if not old:
-        print_colored("Cancelled.", COLORS.YELLOW); return
-    new = input(color_text(f"New {field}: ", COLORS.MAGENTA)).strip()
-    if not new:
-        print_colored("Cancelled.", COLORS.YELLOW); return
+    if old_raw.isdigit() and distinct_rows and 1 <= int(old_raw) <= len(distinct_rows):
+        old = distinct_rows[int(old_raw) - 1]['v']
+    elif old_raw.lower() == 'clear':
+        old = None
+    else:
+        old = old_raw
 
-    col_expr = f"`{field}`" if field == 'group' else field
-    conn = get_connection(); cursor = conn.cursor()
-    cursor.execute(f"SELECT COUNT(*) FROM questions WHERE {col_expr} = %s", (old,))
-    count = cursor.fetchone()[0]
-    if count == 0:
-        print_colored(f"[i] No rows match {field} = '{old}'.", COLORS.YELLOW)
-        cursor.close(); conn.close(); return
-    print_colored(f"[i] {count} question(s) match.", COLORS.BLUE)
-    if input(color_text(f"Rename all to '{new}'? (y/n): ", COLORS.MAGENTA)).strip().lower() != 'y':
-        print_colored("Cancelled.", COLORS.YELLOW); cursor.close(); conn.close(); return
-    cursor.execute(f"UPDATE questions SET {col_expr} = %s WHERE {col_expr} = %s", (new, old))
-    conn.commit(); updated = cursor.rowcount
-    cursor.close(); conn.close()
-    print_colored(f"[✓] Updated {updated} row(s).", COLORS.GREEN)
+    # ---------- New value ----------
+    print()
+    if kind == 'exam_type':
+        print_colored("  New exam type:", COLORS.WHITE)
+        for i, (k, lbl) in enumerate(EXAM_TYPES, 1):
+            print(f"   {i:>2}. {lbl}")
+        et = input(color_text("  Choose (1-4): ", COLORS.MAGENTA)).strip()
+        if not et.isdigit() or not (1 <= int(et) <= len(EXAM_TYPES)):
+            print_colored("[!] Invalid.", COLORS.RED)
+            return
+        new = EXAM_TYPES[int(et) - 1][0]
+
+    elif kind == 'q_type':
+        opts = ['essay', 'multichoice', 'truefalse', 'matching']
+        print_colored("  New type:", COLORS.WHITE)
+        for i, t in enumerate(opts, 1):
+            print(f"   {i:>2}. {t}")
+        t = input(color_text("  Choose (1-4): ", COLORS.MAGENTA)).strip()
+        if not t.isdigit() or not (1 <= int(t) <= 4):
+            print_colored("[!] Invalid.", COLORS.RED)
+            return
+        new = opts[int(t) - 1]
+
+    elif kind == 'number':
+        n = input(color_text(f"  New {label} (number, or 'clear' for NULL): ", COLORS.MAGENTA)).strip()
+        if n == '':
+            print_colored("Cancelled.", COLORS.YELLOW)
+            return
+        if n.lower() == 'clear':
+            new = None
+        elif n.isdigit():
+            new = int(n)
+        else:
+            print_colored("[!] Must be a number.", COLORS.RED)
+            return
+
+    else:  # text
+        n = input(color_text(f"  New {label} (or 'clear' for NULL): ", COLORS.MAGENTA)).strip()
+        if n == '':
+            print_colored("Cancelled.", COLORS.YELLOW)
+            return
+        new = None if n.lower() == 'clear' else n
+
+    # ---------- Confirm ----------
+    # Count matching rows BEFORE update
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        if old is None:
+            cursor.execute(f"SELECT COUNT(*) FROM questions WHERE {col_expr} IS NULL")
+        else:
+            cursor.execute(f"SELECT COUNT(*) FROM questions WHERE {col_expr} = %s", (old,))
+        match_count = cursor.fetchone()[0]
+    finally:
+        cursor.close()
+        conn.close()
+
+    print()
+    print_colored("  Summary", COLORS.YELLOW, bold=True)
+    print_colored("  " + "─" * 56, COLORS.YELLOW)
+    print(f"   Field        : {label}")
+    print(f"   Old value    : {old if old is not None else '(NULL)'}")
+    print(f"   New value    : {new if new is not None else '(NULL)'}")
+    print(f"   Rows matched : {match_count}")
+
+    if match_count == 0:
+        print_colored("\n  [i] No rows match. Nothing to do.", COLORS.YELLOW)
+        return
+
+    confirm = input(color_text("\n  Apply rename? (y/n): ", COLORS.MAGENTA)).strip().lower()
+    if confirm != 'y':
+        print_colored("Cancelled.", COLORS.YELLOW)
+        return
+
+    # ---------- Execute ----------
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        if old is None and new is None:
+            print_colored("[i] Old and new are both NULL — nothing to do.", COLORS.YELLOW)
+            return
+        elif old is None:
+            cursor.execute(f"UPDATE questions SET {col_expr} = %s WHERE {col_expr} IS NULL", (new,))
+        elif new is None:
+            cursor.execute(f"UPDATE questions SET {col_expr} = NULL WHERE {col_expr} = %s", (old,))
+        else:
+            cursor.execute(f"UPDATE questions SET {col_expr} = %s WHERE {col_expr} = %s", (new, old))
+        conn.commit()
+        updated = cursor.rowcount
+        print_colored(f"\n[✓] Updated {updated} row(s).", COLORS.GREEN)
+    except Exception as e:
+        conn.rollback()
+        print_colored(f"\n[!] Failed: {e}", COLORS.RED)
+    finally:
+        cursor.close()
+        conn.close()
