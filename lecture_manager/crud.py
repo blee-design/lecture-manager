@@ -716,7 +716,6 @@ def update_lecture():
                         if updated_record:
                             move_choice = input(color_text("Paper updated. Move the video file to the new location now? (y/n): ", COLORS.MAGENTA)).strip().lower()
                             if move_choice == 'y':
-                                from .file_manager import organize_video
                                 result = organize_video(updated_record, overwrite=False, interactive=False)
                                 if result:
                                     print_colored("[✓] File moved to correct location.", COLORS.GREEN)
@@ -897,8 +896,13 @@ def update_lecture():
                 continue
 
         # ---- Auto-update YouTube title after edits ----
+        # Only fires when a field that actually feeds the YouTube title has changed.
+        # The title is built with build_youtube_title() — same builder used at
+        # upload time — so the shape stays consistent, and update_youtube_title()
+        # itself short-circuits if the new title already matches YouTube's.
+        TITLE_FIELDS = ('subject', 'lecturer', 'nepali_date', 'time')
+
         try:
-            # Fetch the updated record
             conn2 = get_connection()
             cur2 = conn2.cursor(dictionary=True)
             cur2.execute(f"SELECT * FROM {TABLE_NAME} WHERE id = %s", (row['id'],))
@@ -906,28 +910,48 @@ def update_lecture():
             cur2.close()
             conn2.close()
 
-            if updated_rec and updated_rec.get('youtube_upload_id'):
-                from .upload import update_youtube_title
-                from .utils import build_original_filename
-                new_title = build_original_filename(updated_rec)
-                if new_title:
-                    # Truncate to 100 chars for YouTube
-                    if len(new_title) > 100:
+            if (updated_rec
+                    and updated_rec.get('youtube_upload_id')):
+
+                # Has anything title-relevant changed since we fetched the record?
+                title_changed = any(
+                    (old_record.get(f) or '') != (updated_rec.get(f) or '')
+                    for f in TITLE_FIELDS
+                )
+
+                if title_changed:
+                    from .upload import update_youtube_title
+                    from .utils import build_youtube_title
+
+                    new_title = build_youtube_title(updated_rec)
+                    if new_title and len(new_title) > 100:
                         new_title = new_title[:100]
-                    ok, msg = update_youtube_title(updated_rec['youtube_upload_id'], new_title)
-                    if ok:
-                        print_colored(f"[✓] YouTube title updated: {new_title[:60]}...", COLORS.GREEN)
-                        # Mark as updated
-                        conn3 = get_connection()
-                        cur3 = conn3.cursor()
-                        cur3.execute("UPDATE youtube_lectures SET youtube_title_updated = 1 WHERE id = %s", (updated_rec['id'],))
-                        conn3.commit()
-                        cur3.close()
-                        conn3.close()
-                    else:
-                        print_colored(f"[!] YouTube title update failed: {msg}", COLORS.YELLOW)
-                else:
-                    pass
+
+                    if new_title:
+                        ok, msg = update_youtube_title(
+                            updated_rec['youtube_upload_id'], new_title
+                        )
+                        if ok:
+                            print_colored(
+                                f"[✓] YouTube title updated: {new_title[:60]}...",
+                                COLORS.GREEN
+                            )
+                            conn3 = get_connection()
+                            cur3 = conn3.cursor()
+                            cur3.execute(
+                                "UPDATE youtube_lectures SET youtube_title_updated = 1 "
+                                "WHERE id = %s",
+                                (updated_rec['id'],)
+                            )
+                            conn3.commit()
+                            cur3.close()
+                            conn3.close()
+                        else:
+                            print_colored(
+                                f"[!] YouTube title update failed: {msg}",
+                                COLORS.YELLOW
+                            )
+                # else: title-relevant fields unchanged → silently skip
         except Exception as e:
             print_colored(f"[!] Auto-update YouTube title error: {e}", COLORS.RED)
 
