@@ -468,29 +468,27 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
             question['marks'] = None
             log(f"  Question {question.get('question_no', '?')}: Invalid marks value, set to NULL", "WARN", True)
     elif field_name == 'chapter':
+        # Always preserve the full text as the human description
         question['chapter'] = field_content
-        # Extract all syllabus codes inside parentheses, e.g., (P1-A2.2 & P3-C1.5)
-        import re
-        codes = re.findall(r'\(([^)]+)\)', field_content)
-        if codes:
-            # Join all codes with comma and space
-            question['syllabus_code'] = ', '.join(codes)
-            log(f"  Question {question.get('question_no', '?')}: Extracted syllabus codes: {question['syllabus_code']}", "INFO", True)
-    elif field_name == 'source':
-        question['source'] = field_content
-        log(f"  Question {question.get('question_no', '?')}: Set source to {field_content}", "INFO", True)
-    elif field_name == 'exam type':
-        # Normalise to lowercase, keep known values
-        v = field_content.strip().lower()
-        if v in ('open', 'open competition'):
-            question['exam_type'] = 'open'
-        elif v in ('internal', 'internal competition'):
-            question['exam_type'] = 'internal'
-        elif v in ('promotional', 'promotion'):
-            question['exam_type'] = 'promotional'
-        elif v:
-            question['exam_type'] = 'other'
-        log(f"  Question {question.get('question_no', '?')}: Set exam type to {question.get('exam_type', 'open')}", "INFO", True)
+
+        # Extract all codes inside parentheses. A single parenthesis group may
+        # contain multiple codes separated by &, /, or , — split them out.
+        paren_groups = re.findall(r'\(([^)]+)\)', field_content)
+        all_codes = []
+        for group in paren_groups:
+            all_codes.extend(re.split(r'\s*[&/,]\s*', group.strip()))
+        all_codes = [c.strip() for c in all_codes if c.strip()]
+
+        if all_codes:
+            from ..utils import normalize_syllabus_code
+            primary = normalize_syllabus_code(all_codes[0])
+            question['syllabus_code'] = primary
+            log(f"  Question {question.get('question_no', '?')}: "
+                f"Extracted '{all_codes[0]}' → '{primary}'", "INFO", True)
+            if len(all_codes) > 1:
+                extras = ', '.join(normalize_syllabus_code(c) for c in all_codes[1:])
+                log(f"     Additional codes (kept in chapter only): {extras}",
+                    "INFO", True)
     elif field_name == 'syllabus code':
         question['syllabus_code'] = field_content
         log(f"  Question {question.get('question_no', '?')}: Set syllabus code to {field_content}", "INFO", True)
@@ -700,6 +698,19 @@ def parse_text_file(file_path, args):
             mapped_key = KEY_MAP.get(key, key)
             mapped_context[mapped_key] = val
         question_dict.update(mapped_context)
+
+        # Context-supplied chapter bypasses save_field_to_question(), so the
+        # syllabus_code extraction doesn't run. Re-do it here if needed.
+        if question_dict.get('chapter') and not question_dict.get('syllabus_code'):
+            ctx_chapter = question_dict['chapter']
+            ctx_groups = re.findall(r'\(([^)]+)\)', ctx_chapter)
+            ctx_codes = []
+            for g in ctx_groups:
+                ctx_codes.extend(re.split(r'\s*[&/,]\s*', g.strip()))
+            ctx_codes = [c.strip() for c in ctx_codes if c.strip()]
+            if ctx_codes:
+                from ..utils import normalize_syllabus_code
+                question_dict['syllabus_code'] = normalize_syllabus_code(ctx_codes[0])
 
         # Process field lines using save_field_to_question
         current_field = None

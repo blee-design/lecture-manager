@@ -120,8 +120,21 @@ def resolve_question_syllabus(q):
             break
 
     if not paper_key:
-        out['code_display'] = candidate or (q.get('syllabus_code') or '').strip() or None
-        return out
+        chapter_text = q.get('chapter') or ''
+        m = re.search(r'\(P(\d)-', chapter_text)
+        if m:
+            inferred = {'1': 'paper_i', '2': 'paper_ii', '3': 'paper_iii'}.get(m.group(1))
+            if inferred and inferred in _papers():
+                paper_key = inferred
+                out['paper_key'] = inferred
+                out['reason'] = 'inferred from chapter'
+                # fall through to code resolution below
+            else:
+                out['code_display'] = candidate or (q.get('syllabus_code') or '').strip() or None
+                return out
+        else:
+            out['code_display'] = candidate or (q.get('syllabus_code') or '').strip() or None
+            return out
 
     if candidate:
         out['code_display'] = candidate
@@ -2304,6 +2317,7 @@ def update_question_interactive():
     fields = [
         'question_date', 'institution', 'subject', 'paper', 'group',
         'marks', 'chapter', 'question_number',
+        'syllabus_code',
         'nepali_transcription', 'english_transcription', 'level', 'notes', 'type',
         'exam_type',
         'options',   # special: opens the interactive editor for MCQ/TF/Matching
@@ -2421,6 +2435,34 @@ def update_question_interactive():
                         print_colored("[i] Not enough pairs — keeping existing.", COLORS.YELLOW)
             else:
                 print_colored("[i] Essay questions have no options/pairs.", COLORS.YELLOW)
+            continue
+        # ---- Special: syllabus_code ----
+        if field == 'syllabus_code':
+            raw = input(color_text("New syllabus code (e.g. 06.03, or 'clear' to blank it): ",
+                                COLORS.MAGENTA)).strip()
+
+            if raw.lower() == 'clear':
+                updates['syllabus_code'] = None
+                row['syllabus_code'] = None
+                print_colored("[✓] syllabus_code will be cleared.", COLORS.GREEN)
+                continue
+
+            if not re.match(r'^\d{2}\.\d{2}$', raw):
+                print_colored("[!] Must be two-digit.two-digit, e.g. '06.03'.", COLORS.RED)
+                continue
+
+            updates['syllabus_code'] = raw
+            row['syllabus_code'] = raw
+            print_colored(f"[✓] syllabus_code will be updated to {raw}", COLORS.GREEN)
+
+            # ---- keep the chapter description in sync ----
+            old_chapter = row.get('chapter') or ''
+            new_chapter = re.sub(r'\([^)]*\)\s*$', f'({raw})', old_chapter)
+            if new_chapter != old_chapter:
+                updates['chapter'] = new_chapter
+                row['chapter'] = new_chapter
+                print_colored(f"[✓] chapter description updated to match.", COLORS.GREEN)
+
             continue
 
         print(f"\nCurrent value: {color_text(current if current != '' else '(empty)', COLORS.BLUE)}")

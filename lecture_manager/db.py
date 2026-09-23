@@ -7,6 +7,121 @@ from .utils import print_colored, COLORS
 
 TABLE_NAME = 'youtube_lectures'
 
+# ---------- Collation unification ----------
+# MariaDB 11.4+ defaults utf8mb4 to utf8mb4_uca1400_ai_ci. Our app's tables
+# were written assuming utf8mb4_unicode_ci (Moodle, question bank, etc.), so
+# any table created without an explicit COLLATE clause ends up on the wrong
+# family and joins between it and the app's tables raise error 1267.
+# The fix below runs at every startup and converts any mismatched table.
+_UNIFIED_CHARSET    = 'utf8mb4'
+_UNIFIED_COLLATION  = 'utf8mb4_unicode_ci'
+
+# Every table this application owns. If you add a new table, add it here.
+_APP_TABLES = [
+    'youtube_lectures', 'trash_entries', 'hash_cache', 'cookies',
+    'facebook_entries',
+    'pomodoro_settings', 'pomodoro_tasks', 'pomodoro_log',
+    'pomodoro_state', 'pomodoro_badges', 'user_badges', 'pomodoro_pauses',
+    'subjects', 'chapters', 'papers',
+    'questions', 'question_options', 'question_matching_pairs', 'question_hints',
+    'oauth_credentials',
+    'instapaper_credentials', 'instapaper_articles', 'instapaper_oauth',
+]
+
+def _ensure_unified_collation(cursor):
+    """
+    Convert any app table whose collation isn't utf8mb4_unicode_ci.
+
+    Handles foreign keys that reference character columns by temporarily
+    dropping them, converting every mismatched table, then recreating them.
+    Foreign keys on integer columns are left alone — INT has no collation.
+    """
+    placeholders = ','.join(['%s'] * len(_APP_TABLES))
+
+    # ---- 1. Which of our tables are on the wrong collation? ----
+    cursor.execute(f"""
+        SELECT TABLE_NAME, TABLE_COLLATION
+        FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN ({placeholders})
+          AND TABLE_COLLATION IS NOT NULL
+          AND TABLE_COLLATION <> %s
+    """, (*_APP_TABLES, _UNIFIED_COLLATION))
+    bad = cursor.fetchall()
+    if not bad:
+        return
+
+    # ---- 2. Find string-column FKs involving any of those tables ----
+    cursor.execute(f"""
+        SELECT DISTINCT
+            rc.CONSTRAINT_NAME,
+            rc.TABLE_NAME             AS child_table,
+            rc.REFERENCED_TABLE_NAME  AS parent_table,
+            rc.UPDATE_RULE,
+            rc.DELETE_RULE
+        FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+        JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+          ON  kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
+          AND kcu.CONSTRAINT_NAME   = rc.CONSTRAINT_NAME
+        JOIN INFORMATION_SCHEMA.COLUMNS c
+          ON  c.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+          AND c.TABLE_NAME   = kcu.TABLE_NAME
+          AND c.COLUMN_NAME  = kcu.COLUMN_NAME
+        WHERE rc.CONSTRAINT_SCHEMA = DATABASE()
+          AND (rc.TABLE_NAME IN ({placeholders})
+               OR rc.REFERENCED_TABLE_NAME IN ({placeholders}))
+          AND c.DATA_TYPE IN ('char','varchar','tinytext','text','mediumtext','longtext')
+    """, (*_APP_TABLES, *_APP_TABLES))
+
+    fk_defs = []
+    for fk_name, child, parent, on_update, on_delete in cursor.fetchall():
+        cursor.execute("""
+            SELECT COLUMN_NAME, REFERENCED_COLUMN_NAME
+            FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+            WHERE CONSTRAINT_SCHEMA = DATABASE()
+              AND CONSTRAINT_NAME   = %s
+            ORDER BY ORDINAL_POSITION
+        """, (fk_name,))
+        cols = cursor.fetchall()
+        fk_defs.append((fk_name, child, parent, cols, on_update, on_delete))
+
+    # ---- 3. Drop those FKs ----
+    for fk_name, child, _parent, _cols, _u, _d in fk_defs:
+        print_colored(
+            f"[i] Temporarily dropping FK `{fk_name}` on `{child}`...",
+            COLORS.BLUE,
+        )
+        cursor.execute(f"ALTER TABLE `{child}` DROP FOREIGN KEY `{fk_name}`")
+
+    # ---- 4. Convert every mismatched table ----
+    for tbl, current in bad:
+        print_colored(
+            f"[i] Collation mismatch on '{tbl}' ({current}) – converting to "
+            f"{_UNIFIED_COLLATION}...",
+            COLORS.YELLOW,
+        )
+        cursor.execute(
+            f"ALTER TABLE `{tbl}` "
+            f"CONVERT TO CHARACTER SET {_UNIFIED_CHARSET} "
+            f"COLLATE {_UNIFIED_COLLATION}"
+        )
+        print_colored(f"[✓] '{tbl}' converted.", COLORS.GREEN)
+
+    # ---- 5. Recreate the FKs ----
+    for fk_name, child, parent, cols, on_update, on_delete in fk_defs:
+        col_list     = ', '.join(f"`{c[0]}`" for c in cols)
+        ref_col_list = ', '.join(f"`{c[1]}`" for c in cols)
+        print_colored(
+            f"[i] Recreating FK `{fk_name}` on `{child}` → `{parent}`...",
+            COLORS.BLUE,
+        )
+        cursor.execute(
+            f"ALTER TABLE `{child}` "
+            f"ADD CONSTRAINT `{fk_name}` FOREIGN KEY ({col_list}) "
+            f"REFERENCES `{parent}` ({ref_col_list}) "
+            f"ON UPDATE {on_update} ON DELETE {on_delete}"
+        )
+
 def get_connection():
     if config.db_config is None:
         config.load_or_create_config()
@@ -211,6 +326,10 @@ def migrate_table():
     conn = get_connection()
     cursor = conn.cursor(buffered=True)
 
+    # ---- Fix collation drift before anything else touches the schema ----
+    _ensure_unified_collation(cursor)
+    conn.commit()
+
     # Add paper column if missing
     cursor.execute("SHOW COLUMNS FROM youtube_lectures LIKE 'paper'")
     if not cursor.fetchone():
@@ -409,37 +528,49 @@ def migrate_table():
     # ---- Backfill syllabus_code from chapter field (enhanced) ----
     import re
 
-    # First pass: extract parenthesised codes
+    # ---- Backfill syllabus_code from chapter field ----
+    # Extract the FIRST code from any parentheses, normalise to numeric form,
+    # store as the primary syllabus_code. Does not modify `chapter`.
+    from .utils import normalize_syllabus_code
+
     cursor.execute("""
         SELECT id, chapter FROM questions
-        WHERE syllabus_code IS NULL AND chapter IS NOT NULL AND chapter != ''
+        WHERE (syllabus_code IS NULL)
+        AND chapter IS NOT NULL AND chapter != ''
     """)
     rows = cursor.fetchall()
     updated = 0
 
-    for qid, chapter in rows:
-        codes = re.findall(r'\(([^)]+)\)', chapter)  # extracts (P1-B4.1)
-        if codes:
-            code_str = ', '.join(codes)
-            cursor.execute("UPDATE questions SET syllabus_code = %s WHERE id = %s", (code_str, qid))
-            updated += 1
-        else:
-            # No parentheses → try to match the direct pattern
-            match = re.search(r'[A-Za-z0-9]+[-.][A-Za-z0-9]+[-.][A-Za-z0-9]+', chapter)
-            if match:
-                cursor.execute("UPDATE questions SET syllabus_code = %s WHERE id = %s", (match.group(0), qid))
-                updated += 1
+    def _extract_primary_code(chapter_text):
+        """Return the first syllabus code found in a chapter description,
+        normalised to numeric XX.YY form. Returns None if nothing matches."""
+        if not chapter_text:
+            return None
+        # 1) Codes inside parentheses (any separator: &, /, comma)
+        paren_groups = re.findall(r'\(([^)]+)\)', chapter_text)
+        for group in paren_groups:
+            for candidate in re.split(r'\s*[&/,]\s*', group.strip()):
+                c = candidate.strip()
+                if c:
+                    return normalize_syllabus_code(c)
+        # 2) Bare legacy code in the text (e.g. "P1-B6.3" without parens)
+        m = re.search(r'P\d-[A-C]\d+\.\d+', chapter_text)
+        if m:
+            return normalize_syllabus_code(m.group(0))
+        # 3) Bare numeric code (already in XX.YY form)
+        m = re.search(r'\b(\d{1,2}\.\d{1,2})\b', chapter_text)
+        if m:
+            parts = m.group(1).split('.')
+            return '.'.join(p.zfill(2) for p in parts)
+        return None
 
-    # Second pass: for any rows still NULL, try the plain pattern again
-    cursor.execute("""
-        SELECT id, chapter FROM questions
-        WHERE syllabus_code IS NULL AND chapter IS NOT NULL AND chapter != ''
-    """)
-    rows2 = cursor.fetchall()
-    for qid, chapter in rows2:
-        match = re.search(r'[A-Za-z0-9]+[-.][A-Za-z0-9]+[-.][A-Za-z0-9]+', chapter)
-        if match:
-            cursor.execute("UPDATE questions SET syllabus_code = %s WHERE id = %s", (match.group(0), qid))
+    for qid, chapter in rows:
+        code = _extract_primary_code(chapter)
+        if code:
+            cursor.execute(
+                "UPDATE questions SET syllabus_code = %s WHERE id = %s",
+                (code, qid)
+            )
             updated += 1
 
     conn.commit()
@@ -834,7 +965,7 @@ def migrate_table():
         active BOOLEAN DEFAULT TRUE,
         display_order INT DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     """)
 
     # ---------- Relax ENUMs to VARCHAR (only if still ENUM) ----------

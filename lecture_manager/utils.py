@@ -196,6 +196,44 @@ def sanitize_for_json(obj):
         return [sanitize_for_json(v) for v in obj]
     return obj
 
+def normalize_syllabus_code(raw):
+    """
+    Convert a legacy syllabus code to the numeric XX.YY form the resolver
+    expects. Leaves already-numeric codes untouched. Returns the input
+    unchanged if nothing matches.
+
+    Examples:
+        'P1-B6.3'   → '06.03'
+        'P2-A1.5'   → '01.05'
+        'P3-C3.10'  → '03.10'
+        '06.03'     → '06.03'   (already numeric, passes through)
+        '4.2'       → '04.02'   (numeric but not padded)
+        'garbage'   → 'garbage' (unknown, untouched)
+    """
+    if not raw:
+        return raw
+    s = str(raw).strip()
+
+    # Legacy format: P{n}-{L}{S}.{C}  e.g. P1-B6.3
+    m = re.match(r'^P\d+-([A-C])(\d+)\.(\d+)$', s, re.IGNORECASE)
+    if m:
+        subj = int(m.group(2))
+        chap = int(m.group(3))
+        return f"{subj:02d}.{chap:02d}"
+
+    # Already numeric: XX.YY, X.Y, or X.YY — pad to 2+2
+    m = re.match(r'^(\d{1,2})\.(\d{1,2})$', s)
+    if m:
+        return f"{int(m.group(1)):02d}.{int(m.group(2)):02d}"
+
+    # Three-part numeric (subject.chapter.part) — keep first two, pad
+    m = re.match(r'^(\d{1,2})\.(\d{1,2})\.(\d{1,2})', s)
+    if m:
+        return f"{int(m.group(1)):02d}.{int(m.group(2)):02d}"
+
+    # Unknown format — return as-is
+    return s
+
 def sanitize_filename(text):
     text = re.sub(r'[\\/*?"<>]', '', text)
     text = re.sub(r'[\x00-\x1f\x7f]', '', text)

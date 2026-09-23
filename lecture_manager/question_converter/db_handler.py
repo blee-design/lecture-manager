@@ -16,35 +16,27 @@ from .json_handler import json_to_questions
 def map_paper_value(paper_str):
     if not paper_str:
         return None
-    paper_str = paper_str.strip()
-    lower = paper_str.lower()
+    raw = paper_str.strip().lower()
 
-    # Direct exact mapping
-    exact_map = {
-        'pretest': 'pretest',
+    from ..syllabus_config import get_papers
+    for p in get_papers(active_only=False):
+        key    = (p.get('paper_key') or '').lower()
+        name   = (p.get('display_name') or '').lower()
+        folder = (p.get('folder_name') or '').lower()
+        if raw in (key, name, folder):
+            return p['paper_key']
+
+    # Legacy aliases for very old files
+    legacy = {
         'pretest officer': 'pretest',
-        'paper_i': 'paper_i',
-        'paper i': 'paper_i',
-        'paper 1': 'paper_i',
         'first paper': 'paper_i',
         'first paper: economics': 'paper_i',
-        'paper_ii': 'paper_ii',
-        'paper ii': 'paper_ii',
-        'paper 2': 'paper_ii',
         'second paper': 'paper_ii',
         'second paper: management': 'paper_ii',
-        'paper_iii': 'paper_iii',
-        'paper iii': 'paper_iii',
-        'paper 3': 'paper_iii',
         'third paper': 'paper_iii',
         'third paper: research methodologies, ict and banking laws & regulation': 'paper_iii',
     }
-
-    if lower in exact_map:
-        return exact_map[lower]
-
-    # If no match, return None to avoid invalid ENUM values
-    return None
+    return legacy.get(raw)
 
 def _compute_marks(q_dict):
     """
@@ -181,6 +173,13 @@ def insert_question(q_dict, source=None, force=False):
     institution = clean_value(q_dict.get('institution'))
     level = clean_value(q_dict.get('level'))
     paper = map_paper_value(clean_value(q_dict.get('paper')))
+    from ..syllabus_config import get_papers
+    if q_dict.get('paper') and not paper:
+        valid = [p['paper_key'] for p in get_papers(active_only=False)]
+        raise ValidationError(
+            f"Unknown paper value: {q_dict['paper']!r}. "
+            f"Valid keys: {valid}. Fix the source file or add the paper via Syllabus Setup."
+        )
     group = clean_value(q_dict.get('group'))
 
     qno = q_dict.get('question_no')
