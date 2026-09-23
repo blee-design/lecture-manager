@@ -1191,6 +1191,7 @@ def quick_lookup_interactive():
     print("Examples:")
     print("  2081-01-25 NRB Officer         -> shows whole paper")
     print("  2081-01-25 NRB Officer 12      -> shows question 12 only")
+    print("  827                            -> shows question with ID 827")
     print("(You can also just type a keyword for a full-text search.)")
     print("Type '0' or 'exit' to return to the Question Bank menu.")
     print("═" * 50)
@@ -1228,6 +1229,19 @@ def quick_lookup_interactive():
             else:
                 print_colored("[!] ID not found in current results.", COLORS.YELLOW)
                 continue
+
+        # ---- Bare numeric input → lookup by ID directly ----
+        if raw.isdigit():
+            qid = int(raw)
+            full_q = get_question_by_id(qid)
+            if full_q:
+                _display_single_question(full_q)
+                print()
+                continue
+            else:
+                print_colored(f"[!] No question with ID {qid}.", COLORS.YELLOW)
+                continue
+
 
         # Parse and search
         date, inst, level, q_no = parse_quick_input(raw)
@@ -1624,24 +1638,25 @@ def unified_question_menu():
         print("      3. Whole paper view       grouped by section")
         print("      4. " + color_text("Browse by syllabus", COLORS.GREEN) + "     paper → subject → chapter")
         print("      5. Advanced search        multi-field filters")
+        print("      6. " + color_text("View by ID", COLORS.GREEN) + "             direct lookup by question ID")
         print()
 
         print(_section_header("✏️   EDIT"))
-        print("      6. Add a question")
-        print("      7. Update a question")
-        print("      8. Delete a question")
+        print("      7. Add a question")
+        print("      8. Update a question")
+        print("      9. Delete a question")
         print()
 
         print(_section_header("🛠️   TOOLS"))
-        print("      9. Statistics")
-        print("     10. Find duplicates")
-        print("     11. Bulk rename a field")
+        print("      10. Statistics")
+        print("      11. Find duplicates")
+        print("      12. Bulk rename a field")
         print()
 
         print(_section_header("📥  IMPORT  /  📤  EXPORT"))
-        print("     12. Import questions   (TXT / CSV / JSON / XML)")
-        print("     13. Export questions   (TXT / CSV / JSON / XML / HTML / Exam)")
-        print("     14. Convert file to file  (no DB)")
+        print("      13. Import questions   (TXT / CSV / JSON / XML)")
+        print("      14. Export questions   (TXT / CSV / JSON / XML / HTML / Exam)")
+        print("      15. Convert file to file  (no DB)")
         print()
 
         print_colored("      0. Back to main menu", COLORS.WHITE)
