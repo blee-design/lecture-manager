@@ -2172,19 +2172,21 @@ def advanced_search_interactive():
     print("Leave value blank to clear that criterion.")
     print("After setting criteria, choose '9. Search' to run the search.\n")
 
-    fields = ['date', 'institution', 'level', 'paper', 'group', 'subject', 'question_number', 'chapter', 'syllabus_code', 'type', 'exam_type']
+    fields = ['id', 'date', 'institution', 'level', 'paper', 'group', 'subject',
+            'question_number', 'chapter', 'syllabus_code', 'type', 'exam_type']
     display_names = {
-        'date': 'question_date',
-        'institution': 'institution',
-        'level': 'level',
-        'paper': 'paper',
-        'group': 'group',
-        'subject': 'subject',
+        'id':              'question ID',
+        'date':            'question_date',
+        'institution':     'institution',
+        'level':           'level',
+        'paper':           'paper',
+        'group':           'group',
+        'subject':         'subject',
         'question_number': 'question_number',
-        'chapter': 'chapter',
-        'syllabus_code': 'syllabus_code',
-        'type': 'type',
-        'exam_type': 'exam type',
+        'chapter':         'chapter',
+        'syllabus_code':   'syllabus_code',
+        'type':            'type',
+        'exam_type':       'exam type',
     }
     criteria = {f: '' for f in fields}
 
@@ -2213,6 +2215,20 @@ def advanced_search_interactive():
                 val = criteria[field].strip()
                 if val:
                     kwargs[field] = val
+
+            # ---- Direct ID lookup takes precedence ----
+            # If the user typed a question ID, jump straight to that question
+            # and skip the rest of the filtering pipeline.
+            if 'id' in kwargs:
+                id_val = kwargs.pop('id')
+                if id_val.isdigit():
+                    q = get_question_by_id(int(id_val))
+                    if q:
+                        _display_single_question(q)
+                    else:
+                        print_colored(f"[!] Question ID {id_val} not found.", COLORS.RED)
+                    continue
+                # Non-numeric → silently ignore, fall through to normal filters
 
             # Family mode is always on — '1' matches 1, 01, 1a, 1b, 1(a), 1.5
             family_mode = True
