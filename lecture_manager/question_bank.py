@@ -2037,13 +2037,112 @@ def _prompt_number(prompt, default=None, kind='int'):
         except ValueError:
             print_colored(f"[!] Must be a {'whole ' if kind == 'int' else ''}number.", COLORS.YELLOW)
 
-
 def _prompt_yes_no(prompt, default=True):
     """Prompt for yes/no. Blank input → default (bool)."""
     raw = input(color_text(prompt, COLORS.MAGENTA)).strip().lower()
     if raw == '':
         return default
     return raw in ('y', 'yes', '1', 'true')
+
+
+def _prompt_multiline(field_label, current_value):
+    """
+    Multi-line editor for long-form fields, honouring the app's existing
+    conventions:
+
+      Inline mode:
+        - Type a value             → update
+        - Type 'clear'             → clear the field (set to '')
+        - Press Enter (empty)      → skip (no change)
+
+      Editor mode ($EDITOR):
+        - Save file with content   → update
+        - Save file empty          → clear the field
+        - Quit without saving      → skip (no change)
+
+    Returns:
+      - the new string
+      - '' (empty string)  to signal "clear the field"
+      - '__SKIP__'         to signal "no change"
+    """
+    import tempfile, os, subprocess
+
+    print()
+    print_colored(f"  Field: {field_label}", COLORS.CYAN, bold=True)
+    if current_value:
+        preview = current_value if len(current_value) <= 80 else current_value[:77] + "..."
+        print(f"  Current: {preview}")
+    else:
+        print(f"  Current: {color_text('None', COLORS.YELLOW)}")
+
+    print("  How do you want to edit?")
+    print("    e   Open in $EDITOR (multi-line)  ← default")
+    print("    i   Inline single-line input")
+    mode = input(color_text("  Choose [e/i, Enter=e]: ", COLORS.MAGENTA)).strip().lower() or 'e'
+
+    # ---------------- Inline ----------------
+    if mode == 'i':
+        new_val = input(color_text("  New value (or 'clear' to empty, Enter to skip): ",
+                                   COLORS.MAGENTA)).strip()
+        if new_val == '':
+            return '__SKIP__'
+        if new_val.lower() in ('clear', 'null', 'none'):
+            return ''
+        return new_val
+
+    # ---------------- Editor ----------------
+    editor = os.environ.get('EDITOR') or os.environ.get('VISUAL')
+    if not editor:
+        for candidate in ('nano', 'vim', 'vi', 'emacs'):
+            if subprocess.run(['which', candidate],
+                              capture_output=True).returncode == 0:
+                editor = candidate
+                break
+    if not editor:
+        print_colored("[!] No $EDITOR found. Falling back to inline.", COLORS.YELLOW)
+        new_val = input(color_text("  New value (or 'clear', Enter to skip): ",
+                                   COLORS.MAGENTA)).strip()
+        if new_val == '':
+            return '__SKIP__'
+        if new_val.lower() in ('clear', 'null', 'none'):
+            return ''
+        return new_val
+
+    with tempfile.NamedTemporaryFile(
+            mode='w+', suffix='.txt', delete=False, encoding='utf-8') as tmp:
+        tmp.write(current_value or '')
+        tmp_path = tmp.name
+
+    # Capture mtime before opening, to detect "save vs quit without saving"
+    mtime_before = os.path.getmtime(tmp_path)
+
+    try:
+        print_colored(f"  Opening {editor} … (save & quit to continue; quit without saving to skip)",
+                      COLORS.BLUE)
+        subprocess.run([editor, tmp_path], check=False)
+
+        # Did the user actually save anything? If mtime is unchanged, they
+        # probably quit without writing (e.g. ':q!' in vim, or Ctrl-X in nano).
+        mtime_after = os.path.getmtime(tmp_path)
+        if mtime_after == mtime_before:
+            return '__SKIP__'
+
+        with open(tmp_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    # Trailing newline is stripped (editors always add one)
+    content = content.rstrip()
+
+    if content == '':
+        return ''   # empty save → clear the field
+    if content.strip().lower() in ('clear', 'null', 'none'):
+        return ''   # typing 'clear' alone in the editor also clears
+    return content
 
 def add_question_interactive():
     print("\n" + "═" * 50)
@@ -2085,16 +2184,21 @@ def add_question_interactive():
     chapter = _prompt_field("Chapter: ")
     q_num   = _prompt_field("Question Number: ")
 
-    nepali  = _prompt_field("Nepali transcription: ")
-    english = _prompt_field("English transcription: ")
+    nep_raw = _prompt_multiline("nepali_transcription", "")
+    nepali  = None if nep_raw in ('__SKIP__', '') else nep_raw
+
+    eng_raw = _prompt_multiline("english_transcription", "")
+    english = None if eng_raw in ('__SKIP__', '') else eng_raw
 
     raw_level = _prompt_field("Level (e.g. '6' or 'Level 6 (Business Officer)'): ")
     level, level_alias = split_level_and_alias(raw_level)
 
-    notes = input(color_text("Notes (optional): ", COLORS.MAGENTA)).strip() or None
+    notes_raw = _prompt_multiline("notes", "")
+    notes = None if notes_raw in ('__SKIP__', '') else notes_raw
 
     print_colored("\n  ── Answer & Explanation ──", COLORS.CYAN)
-    gf = input(color_text("General feedback / Model answer (optional): ", COLORS.MAGENTA)).strip() or None
+    gf_raw = _prompt_multiline("general_feedback", "")
+    gf = None if gf_raw in ('__SKIP__', '') else gf_raw
     penalty = _prompt_number("Penalty (default 0): ", default=0.0, kind='float')
 
     # Auto-extract syllabus_code from chapter (in parens)
@@ -2131,7 +2235,8 @@ def add_question_interactive():
                 or '.doc,.docx,.pdf,.png,.jpg,.jpeg')
             mb = _prompt_number("Max file size MB (default 2): ", default=2)
             maxbytes = mb * 1024 * 1024
-        grader_info = input(color_text("Grader information (optional): ", COLORS.MAGENTA)).strip() or None
+        gi_raw = _prompt_multiline("grader_info", "")
+        grader_info = None if gi_raw in ('__SKIP__', '') else gi_raw
 
     elif q_type == 'multichoice':
         print_colored("\n  ── MCQ options ──", COLORS.CYAN)
@@ -2835,6 +2940,37 @@ def update_question_interactive():
             continue
 
         # ---------- Generic: numeric and text ----------
+        # Long-form text fields get the editor path
+        _MULTILINE_FIELDS = {
+            'general_feedback',
+            'grader_info',
+            'notes',
+            'correct_feedback',
+            'partially_correct_feedback',
+            'incorrect_feedback',
+            'feedback_true',
+            'feedback_false',
+            'nepali_transcription',
+            'english_transcription',
+        }
+
+        if field in _MULTILINE_FIELDS:
+            result = _prompt_multiline(field, current or '')
+            if result == '__SKIP__':
+                print_colored("[i] Skipped (no change).", COLORS.YELLOW)
+                continue
+            if result == '':
+                updates[field] = ''
+                row[field] = ''
+                print_colored("[✓] Field will be cleared.", COLORS.GREEN)
+            else:
+                updates[field] = result
+                row[field] = result
+                print_colored(
+                    f"[✓] {field} will be updated ({len(result)} chars).",
+                    COLORS.GREEN)
+            continue
+
         print(f"\nCurrent value: {color_text(current if current != '' else '(empty)', COLORS.BLUE)}")
         raw = input(color_text("New value (Enter to skip, or 'clear' to empty): ",
                                COLORS.MAGENTA)).strip()
