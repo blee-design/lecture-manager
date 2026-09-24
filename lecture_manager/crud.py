@@ -794,7 +794,7 @@ def update_lecture():
                             conn3.commit()
                             cur3.close()
                             conn3.close()
-                                                        print_colored(f"[✓] Original filename auto-regenerated to: {new_original}", COLORS.GREEN)
+                            print_colored(f"[✓] Original filename auto-regenerated to: {new_original}", COLORS.GREEN)
                 except mysql.connector.Error as e:
                     conn.rollback()
                     cursor.close()
