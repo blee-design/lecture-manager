@@ -44,57 +44,73 @@ COLOR_MAP = {
 }
 
 def html_to_terminal(html_content):
+    """
+    Convert HTML (as stored from Moodle / LibreOffice / Word) into plain
+    text suitable for terminal display, preserving line structure.
+
+    Rules:
+      - <br>            → newline
+      - </p>, </div>    → newline (double between blocks)
+      - </li>           → newline
+      - <table>         → ASCII table (best effort)
+      - Plain text      → returned as-is
+    """
     if not html_content:
         return ""
 
+    # Fast path: no tags → return as-is, preserving real newlines
+    if not re.search(r'<\s*\w', html_content):
+        return html_content
+
     soup = BeautifulSoup(html_content, 'html.parser')
 
-    # Process tables and replace with unique markers
-    table_markers = []
-    tables = soup.find_all('table')
+    # ---- 1. Normalise tags that mean "newline" ----
+    for br in soup.find_all('br'):
+        br.replace_with('\n')
 
-    for idx, table in enumerate(tables):
+    # ---- 2. Handle tables before anything else (they need structure) ----
+    table_markers = []
+    for idx, table in enumerate(soup.find_all('table')):
         rows = []
         for tr in table.find_all('tr'):
             row = [cell.get_text(strip=True) for cell in tr.find_all(['td', 'th'])]
             if row:
                 rows.append(row)
         if not rows:
+            table.replace_with('')
             continue
 
-        # Drop the first row if it's just column letters (A, B, C...)
-        if len(rows) >= 2 and all(len(cell) == 1 and cell.isalpha() for cell in rows[0] if cell):
+        # Drop "A B C D" header row if present
+        if len(rows) >= 2 and all(len(c) == 1 and c.isalpha() for c in rows[0] if c):
             rows = rows[1:]
+        # Drop first (row-number) column
+        rows = [[c for j, c in enumerate(r) if j != 0] for r in rows]
         if not rows:
-            continue
-
-        # Drop the first column (row numbers)
-        rows = [[cell for j, cell in enumerate(row) if j != 0] for row in rows]
-        if not rows:
+            table.replace_with('')
             continue
 
         ascii_table = tabulate(rows[1:], headers=rows[0], tablefmt='simple')
-        # Use a marker that is unlikely to be modified
-        marker = f"____TABLE_{idx}____"
+        marker = f"\n____TABLE_{idx}____\n"
         table_markers.append((marker, ascii_table))
         table.replace_with(marker)
 
-    # Convert the rest of the HTML (non‑table) to plain text
-    h = html2text.HTML2Text()
-    h.body_width = 0
-    h.ignore_links = True
-    h.ignore_emphasis = False
-    h.ignore_images = True
-    h.ignore_tables = True   # we already removed table tags
-    plain_text = h.handle(str(soup))
+    # ---- 3. Block-level tags get a newline appended ----
+    for block in soup.find_all(['p', 'div', 'li',
+                                'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                                'blockquote', 'pre']):
+        block.append('\n')
 
-    # Replace markers with ASCII tables
+    # ---- 4. Now extract text with real newlines preserved ----
+    plain_text = soup.get_text()
+
+    # ---- 5. Reinstate tables ----
     for marker, ascii_table in table_markers:
-        # The marker may have newlines around it; we'll replace exactly
         plain_text = plain_text.replace(marker, f"\n{ascii_table}\n")
 
-    # Clean up excessive blank lines
-    plain_text = re.sub(r'\n{3,}', '\n\n', plain_text)
+    # ---- 6. Tidy up ----
+    plain_text = plain_text.replace('\r\n', '\n').replace('\r', '\n')
+    plain_text = re.sub(r'[ \t]+\n', '\n', plain_text)   # trailing spaces
+    plain_text = re.sub(r'\n{3,}', '\n\n', plain_text)   # collapse 3+ blank lines
     return plain_text.strip()
 
 # This function should be placed after ROOT_DIR is defined

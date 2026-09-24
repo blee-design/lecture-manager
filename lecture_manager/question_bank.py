@@ -2100,7 +2100,8 @@ def _prompt_multiline(field_label, current_value):
     print("  How do you want to edit?")
     print("    e   Open in $EDITOR (multi-line)  ← default")
     print("    i   Inline single-line input")
-    mode = input(color_text("  Choose [e/i, Enter=e]: ", COLORS.MAGENTA)).strip().lower() or 'e'
+    print("    p   Paste from clipboard")
+    mode = input(color_text("  Choose [e/i/p, Enter=e]: ", COLORS.MAGENTA)).strip().lower() or 'e'
 
     # ---------------- Inline ----------------
     if mode == 'i':
@@ -2117,6 +2118,15 @@ def _prompt_multiline(field_label, current_value):
         if new_val.lower() in ('clear', 'null', 'none'):
             return ''
         return new_val
+
+    if mode == 'p':
+        pasted = _paste_from_clipboard()
+        if not pasted.strip():
+            print_colored("[i] Clipboard empty.", COLORS.YELLOW)
+            return '__SKIP__'
+        # normalise line endings
+        pasted = pasted.replace('\r\n', '\n').replace('\r', '\n').replace('\v', '\n').rstrip()
+        return pasted
 
     # ---------------- Editor ----------------
     editor = os.environ.get('EDITOR') or os.environ.get('VISUAL')
@@ -2167,14 +2177,35 @@ def _prompt_multiline(field_label, current_value):
         except OSError:
             pass
 
-    # Trailing newline is stripped (editors always add one)
+    # Normalise line endings: LibreOffice / Word / WPS use \r\n or \v
+    # for paragraph marks, which terminal display and HTML both mishandle.
+    content = content.replace('\r\n', '\n')
+    content = content.replace('\r',   '\n')
+    content = content.replace('\v',   '\n')   # soft line breaks
+    content = content.replace('\x00', '')     # strip NUL bytes
     content = content.rstrip()
 
     if content == '':
-        return ''   # empty save → clear the field
+        return ''
     if content.strip().lower() in ('clear', 'null', 'none'):
-        return ''   # typing 'clear' alone in the editor also clears
+        return ''
     return content
+
+def _paste_from_clipboard():
+    """Read clipboard as plain text. Returns '' if no clipboard tool available."""
+    import subprocess, shutil
+    for tool, args in [
+        ('wl-paste', ['wl-paste', '--no-newline']),
+        ('xclip',    ['xclip', '-selection', 'clipboard', '-o']),
+        ('xsel',     ['xsel', '-b', '-o']),
+    ]:
+        if shutil.which(tool):
+            try:
+                r = subprocess.run(args, capture_output=True, text=True, timeout=2)
+                return r.stdout
+            except Exception:
+                pass
+    return ''
 
 def add_question_interactive():
     print("\n" + "═" * 50)
