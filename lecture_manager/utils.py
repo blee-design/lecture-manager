@@ -4,7 +4,7 @@ import re
 import sys
 import os
 import hashlib
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 from tabulate import tabulate
 import html2text
 from decimal import Decimal
@@ -43,75 +43,372 @@ COLOR_MAP = {
     'white': COLORS.WHITE
 }
 
-def html_to_terminal(html_content):
+# ---------- HTML → terminal rendering ----------
+
+def _wrap_inline(node, ctx, open_code, close_code):
+    """Wrap the rendered children of an inline tag with ANSI codes."""
+    inner = ''.join(_walk_html(c, ctx) for c in node.children)
+    if not inner.strip():
+        return inner
+    return f"{open_code}{inner}{close_code}"
+
+
+def _walk_html(node, ctx):
+    """Recursively render an HTML node to terminal text."""
+    S = ctx['S']
+
+    if isinstance(node, NavigableString):
+        raw = str(node).replace('\xa0', ' ')
+        if ctx.get('in_pre'):
+            return raw
+        return re.sub(r'[ \t\r\n]+', ' ', raw)
+
+    if not isinstance(node, Tag):
+        return ""
+
+    name = node.name.lower()
+
+    # Tags with no display value
+    if name in ('script', 'style', 'noscript', 'head', 'meta', 'link', 'title'):
+        return ""
+
+    # -------- Inline --------
+    if name in ('b', 'strong'):
+        return _wrap_inline(node, ctx, S['bold'], S['reset'])
+    if name in ('i', 'em'):
+        return _wrap_inline(node, ctx, S['italic'], S['reset'])
+    if name == 'u':
+        return _wrap_inline(node, ctx, S['underline'], S['reset'])
+    if name in ('s', 'strike', 'del'):
+        return _wrap_inline(node, ctx, S['strike'], S['reset'])
+    if name == 'code':
+        return _wrap_inline(node, ctx, S['code'], S['reset'])
+
+    if name == 'br':
+        return "\n"
+    if name == 'hr':
+        return "\n" + S['hr'] + "\n"
+    if name == 'img':
+        alt = (node.get('alt') or '').strip()
+        return f"[Image: {alt}]" if alt else "[Image]"
+    if name == 'a':
+        inner = ''.join(_walk_html(c, ctx) for c in node.children).strip()
+        href = (node.get('href') or '').strip()
+        if href and inner and href != inner and not href.startswith('#'):
+            return f"{inner} ({S['link']}{href}{S['reset']})"
+        if not inner and href:
+            return f"{S['link']}{href}{S['reset']}"
+        return inner
+
+    # -------- Headings --------
+    if name in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
+        inner = ''.join(_walk_html(c, ctx) for c in node.children).strip()
+        if not inner:
+            return ""
+        style = S.get(name, S['bold'])
+        return f"\n{style}{inner}{S['reset']}\n"
+
+    # -------- Paragraph --------
+    if name == 'p':
+        inner = ''.join(_walk_html(c, ctx) for c in node.children).strip()
+        return inner + "\n\n" if inner else ""
+
+    # -------- Blockquote --------
+    if name == 'blockquote':
+        inner = ''.join(_walk_html(c, ctx) for c in node.children).strip()
+        if not inner:
+            return ""
+        bar = S['quote_bar']
+        lines = inner.split('\n')
+        body = "\n".join((bar + ln) if ln.strip() else bar.rstrip() for ln in lines)
+        return "\n" + body + "\n\n"
+
+    # -------- Lists --------
+    if name in ('ul', 'ol'):
+        ctx['list_stack'].append(name)
+        ctx['ol_counters'].append(0)
+        try:
+            pieces = []
+            for child in node.children:
+                if isinstance(child, Tag) and child.name == 'li':
+                    pieces.append(_walk_html(child, ctx))
+        finally:
+            ctx['list_stack'].pop()
+            ctx['ol_counters'].pop()
+        joined = "".join(pieces)
+        if not ctx['list_stack']:
+            joined += "\n"
+        return joined
+
+    if name == 'li':
+        direct_chunks, nested_chunks = [], []
+        for c in node.children:
+            if isinstance(c, Tag) and c.name in ('ul', 'ol'):
+                nested_chunks.append(c)
+            else:
+                direct_chunks.append(_walk_html(c, ctx))
+        direct = "".join(direct_chunks).strip()
+
+        depth = max(0, len(ctx['list_stack']) - 1)
+        indent = "   " * depth
+        if ctx['list_stack'] and ctx['list_stack'][-1] == 'ol':
+            ctx['ol_counters'][-1] += 1
+            bullet = f"{ctx['ol_counters'][-1]}."
+        else:
+            bullet = "•"
+        marker = f"{S['bold']}{bullet}{S['reset']}" if S['bold'] else bullet
+        result = f"{indent}{marker} {direct}\n"
+        for n in nested_chunks:
+            result += _walk_html(n, ctx)
+        return result
+
+    # -------- Definition lists --------
+    if name == 'dt':
+        inner = ''.join(_walk_html(c, ctx) for c in node.children).strip()
+        if not inner:
+            return ""
+        return f"\n{S['bold']}{inner}{S['reset']}\n"
+
+    if name == 'dd':
+        inner = ''.join(_walk_html(c, ctx) for c in node.children).strip()
+        if not inner:
+            return ""
+        lines = inner.split('\n')
+        return "\n".join(("    " + ln) if ln else ln for ln in lines) + "\n"
+
+    # -------- Pre --------
+    if name == 'pre':
+        ctx['in_pre'] = True
+        try:
+            inner = ''.join(_walk_html(c, ctx) for c in node.children)
+        finally:
+            ctx['in_pre'] = False
+        return "\n" + inner.rstrip() + "\n"
+
+    # -------- Table --------
+    if name == 'table':
+        return "\n" + _render_html_table(node, use_color=ctx.get('use_color', False)) + "\n"
+
+    # -------- Inline / block containers --------
+    INLINE_CONTAINERS = {
+        'span', 'font', 'small', 'sup', 'sub', 'abbr', 'cite', 'q',
+        'mark', 'time', 'label', 'bdi', 'bdo', 'var', 'samp', 'kbd',
+        'ruby', 'rt', 'rp',
+    }
+    BLOCK_CONTAINERS = {
+        'div', 'section', 'article', 'main', 'aside', 'header',
+        'footer', 'nav', 'figure', 'figcaption', 'details', 'summary',
+        'fieldset', 'form', 'address',
+    }
+    TABLE_PARTS = {'thead', 'tbody', 'tfoot', 'tr'}
+
+    if name in INLINE_CONTAINERS:
+        return ''.join(_walk_html(c, ctx) for c in node.children)
+
+    if name in BLOCK_CONTAINERS:
+        inner = ''.join(_walk_html(c, ctx) for c in node.children).strip()
+        return (inner + "\n") if inner else ""
+
+    if name in TABLE_PARTS:
+        return ''.join(_walk_html(c, ctx) for c in node.children)
+
+    # Fallback: recurse into children
+    return ''.join(_walk_html(c, ctx) for c in node.children)
+
+
+def _render_html_table(table, use_color=False):
+    """
+    Render an HTML <table> to terminal-friendly text using tabulate.
+
+    Unlike the old version, this:
+      • prefers <thead> / <th> for the header
+      • only falls back to a heuristic when there's a strong signal
+      • never blindly drops the first column — only an obvious row-number column
+      • handles ragged rows
+    """
+    # ---- Header from <thead> ----
+    header = []
+    thead = table.find('thead')
+    if thead:
+        head_tr = thead.find('tr')
+        if head_tr:
+            header = [c.get_text(strip=True) for c in head_tr.find_all(['th', 'td'])]
+
+    # ---- Body rows ----
+    body_rows = []
+    for tr in table.find_all('tr'):
+        if thead and tr.find_parent('thead'):
+            continue
+        cells = tr.find_all(['td', 'th'])
+        if not cells:
+            continue
+        body_rows.append([c.get_text(strip=True) for c in cells])
+
+    # ---- Header from <th> in the first body row ----
+    if not header and body_rows:
+        first_tr = table.find('tr')
+        if first_tr:
+            first_cells = first_tr.find_all(['td', 'th'])
+            if first_cells and all(c.name == 'th' for c in first_cells):
+                header = body_rows.pop(0)
+
+    # ---- Heuristic header (only when strong signal) ----
+    if not header and len(body_rows) > 1:
+        first = body_rows[0]
+        looks_like_header = (
+            all(c.strip() and len(c) < 40 and not re.search(r'\d', c) for c in first)
+            if first else False
+        )
+        if looks_like_header:
+            header = body_rows.pop(0)
+
+    # ---- Drop a leading row-number column only when obvious ----
+    if body_rows:
+        first_col = [(r[0] if r else '') for r in body_rows]
+        n_cols = max(len(r) for r in body_rows)
+        is_row_num_col = (
+            len(first_col) >= 2
+            and n_cols > 1
+            and all(re.fullmatch(r'\d{1,3}', (c or '').strip()) for c in first_col)
+        )
+        if is_row_num_col:
+            body_rows = [r[1:] for r in body_rows]
+            if header:
+                h0 = (header[0] or '').strip()
+                if not h0 or (len(h0) == 1 and h0.isalpha()):
+                    header = header[1:]
+
+    # ---- Drop an "A B C D" style header ----
+    if header and len(header) > 1:
+        if all((c or '').strip() and len(c.strip()) == 1 and c.strip().isalpha()
+               for c in header):
+            header = [c for c in header if c.strip() not in ('A', 'B', 'C', 'D')]
+
+    if not body_rows and not header:
+        return ""
+
+    # ---- Normalize ragged rows ----
+    n_cols = max([len(header)] + [len(r) for r in body_rows] + [0])
+    if n_cols == 0:
+        return ""
+    header = list(header) + [''] * (n_cols - len(header))
+    body_rows = [r + [''] * (n_cols - len(r)) for r in body_rows]
+
+    # ---- Render ----
+    try:
+        if header and any(h.strip() for h in header):
+            return tabulate(body_rows, headers=header, tablefmt='simple')
+        return tabulate(body_rows, tablefmt='simple')
+    except Exception:
+        lines = []
+        if header and any(h.strip() for h in header):
+            lines.append(" | ".join(header))
+            lines.append("-" * 40)
+        for r in body_rows:
+            lines.append(" | ".join(r))
+        return "\n".join(lines)
+
+
+def html_to_terminal(html_content, use_color=None):
     """
     Convert HTML (as stored from Moodle / LibreOffice / Word) into plain
-    text suitable for terminal display, preserving line structure.
+    text suitable for terminal display, preserving structure.
 
-    Rules:
-      - <br>            → newline
-      - </p>, </div>    → newline (double between blocks)
-      - </li>           → newline
-      - <table>         → ASCII table (best effort)
-      - Plain text      → returned as-is
+    Preserves:
+      • Headings       — proportionally weighted (bold + colour)
+      • Paragraphs     — blank-line separation
+      • Lists          — bullets / numbers, nested with indent
+      • Tables         — header detection, box-drawing
+      • Blockquotes    — indented with a vertical bar prefix
+      • Horizontal rules
+      • Pre / code     — whitespace kept verbatim
+      • Inline styling — bold, italic, underline (ANSI)
+      • Links          — "text (url)" when they differ
+
+    ANSI colour is enabled automatically when stdout is a TTY, and can be
+    forced with `use_color=True/False`. When disabled, the function returns
+    clean plain text.
     """
     if not html_content:
         return ""
 
-    # Fast path: no tags → return as-is, preserving real newlines
+    # Fast path: no tags at all → return as-is
     if not re.search(r'<\s*\w', html_content):
         return html_content
 
-    soup = BeautifulSoup(html_content, 'html.parser')
+    # Decide whether to emit ANSI codes
+    if use_color is None:
+        try:
+            use_color = sys.stdout.isatty()
+        except Exception:
+            use_color = False
 
-    # ---- 1. Normalise tags that mean "newline" ----
-    for br in soup.find_all('br'):
-        br.replace_with('\n')
+    # ANSI palette (empty strings when colour is off)
+    if use_color:
+        try:
+            _cols = os.get_terminal_size().columns
+        except Exception:
+            _cols = 80
+        hr_len = max(20, min(60, _cols - 8))
+        S = {
+            'bold':      "\033[1m",
+            'italic':    "\033[3m",
+            'underline': "\033[4m",
+            'strike':    "\033[9m",
+            'reset':     "\033[0m",
+            'blue':      "\033[94m",
+            'cyan':      "\033[96m",
+            'green':     "\033[92m",
+            'yellow':    "\033[93m",
+            'magenta':   "\033[95m",
+            'grey':      "\033[90m",
+            'white':     "\033[97m",
+            'h1':        "\033[1;96m",
+            'h2':        "\033[1;94m",
+            'h3':        "\033[1;92m",
+            'h4':        "\033[1;93m",
+            'h5':        "\033[1;95m",
+            'h6':        "\033[1m",
+            'code':      "\033[38;5;215m",
+            'hr':        "\033[90m" + "─" * hr_len + "\033[0m",
+            'quote_bar': "\033[96m│\033[0m ",
+            'link':      "\033[4;94m",
+        }
+    else:
+        S = {k: "" for k in (
+            'bold', 'italic', 'underline', 'strike', 'reset',
+            'blue', 'cyan', 'green', 'yellow', 'magenta', 'grey', 'white',
+            'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'link',
+        )}
+        S['hr'] = "─" * 50
+        S['quote_bar'] = "│ "
 
-    # ---- 2. Handle tables before anything else (they need structure) ----
-    table_markers = []
-    for idx, table in enumerate(soup.find_all('table')):
-        rows = []
-        for tr in table.find_all('tr'):
-            row = [cell.get_text(strip=True) for cell in tr.find_all(['td', 'th'])]
-            if row:
-                rows.append(row)
-        if not rows:
-            table.replace_with('')
-            continue
+    ctx = {
+        'S': S,
+        'use_color': use_color,
+        'list_stack': [],
+        'ol_counters': [],
+        'in_pre': False,
+    }
 
-        # Drop "A B C D" header row if present
-        if len(rows) >= 2 and all(len(c) == 1 and c.isalpha() for c in rows[0] if c):
-            rows = rows[1:]
-        # Drop first (row-number) column
-        rows = [[c for j, c in enumerate(r) if j != 0] for r in rows]
-        if not rows:
-            table.replace_with('')
-            continue
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        text = _walk_html(soup, ctx)
+    except Exception:
+        # Fallback: original-ish behaviour
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            for br in soup.find_all('br'):
+                br.replace_with('\n')
+            text = soup.get_text()
+        except Exception:
+            return html_content
 
-        ascii_table = tabulate(rows[1:], headers=rows[0], tablefmt='simple')
-        marker = f"\n____TABLE_{idx}____\n"
-        table_markers.append((marker, ascii_table))
-        table.replace_with(marker)
-
-    # ---- 3. Block-level tags get a newline appended ----
-    for block in soup.find_all(['p', 'div', 'li',
-                                'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-                                'blockquote', 'pre']):
-        block.append('\n')
-
-    # ---- 4. Now extract text with real newlines preserved ----
-    plain_text = soup.get_text()
-
-    # ---- 5. Reinstate tables ----
-    for marker, ascii_table in table_markers:
-        plain_text = plain_text.replace(marker, f"\n{ascii_table}\n")
-
-    # ---- 6. Tidy up ----
-    plain_text = plain_text.replace('\r\n', '\n').replace('\r', '\n')
-    plain_text = re.sub(r'[ \t]+\n', '\n', plain_text)   # trailing spaces
-    plain_text = re.sub(r'\n{3,}', '\n\n', plain_text)   # collapse 3+ blank lines
-    return plain_text.strip()
+    # ---- Tidy up ----
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    text = re.sub(r'[ \t]+\n', '\n', text)    # trailing spaces on lines
+    text = re.sub(r'\n{3,}', '\n\n', text)    # collapse 3+ blank lines
+    return text.strip()
 
 # This function should be placed after ROOT_DIR is defined
 def get_file_path_for_record(record):

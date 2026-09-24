@@ -413,6 +413,50 @@ def _short_preview(text, max_len=50):
         cut = cut[:sp]
     return cut.rstrip(' ,;:') + '…'
 
+def _render_block(html_content, indent="     "):
+    """
+    Render HTML content to terminal text with a uniform left margin.
+
+    Every non-empty line of the rendered output gets `indent` prepended,
+    so multi-line output from html_to_terminal (headings, lists, tables,
+    blockquotes) stays visually aligned with the surrounding CLI prompt.
+    """
+    if not html_content:
+        return ""
+    text = html_to_terminal(html_content)
+    if not text:
+        return ""
+    return "\n".join(
+        (indent + line) if line.strip() else ""
+        for line in text.split("\n")
+    )
+
+
+def _print_labeled(label, html_content, indent="     ", cont_indent=None):
+    """
+    Print `label` followed by rendered HTML content.
+
+    • Single-line content → printed inline: "<indent><label> <text>"
+    • Multi-line content  → label on its own line, then the block is
+                            printed with every line indented to
+                            `cont_indent` (defaults to `indent`).
+
+    Skips printing entirely if the rendered content is empty.
+    """
+    if not html_content:
+        return
+    text = html_to_terminal(html_content)
+    if not text:
+        return
+    if "\n" not in text:
+        print(f"{indent}{label} {text}")
+    else:
+        if cont_indent is None:
+            cont_indent = indent
+        print(f"{indent}{label}")
+        for line in text.split("\n"):
+            print(f"{cont_indent}{line}" if line.strip() else "")
+
 def _get_filtered_questions_interactive():
     """
     Show the filter menu, let the user set filters, and return the filtered questions.
@@ -1073,16 +1117,30 @@ def _display_single_question(q):
 
     if nepali and english and nepali.strip().lower() == english.strip().lower():
         # Identical → show once
-        print(f"\n     {nepali}")
+        print()
+        print(_render_block(nepali, "     "))
     else:
         if nepali:
-            print(f"\n     {nepali}")
+            print()
+            print(_render_block(nepali, "     "))
         if english:
-            prefix = "     " if not nepali else "     "
-            print(f"{prefix}{color_text('(' + english + ')', COLORS.WHITE) if nepali else english}")
+            if nepali:
+                # Preserve the historical "(translation)" style. For multi-line
+                # English, wrap the outermost lines instead of colouring the
+                # whole block — that keeps internal ANSI codes from the
+                # renderer intact.
+                if "\n" in english:
+                    eng_lines = english.split("\n")
+                    eng_lines[0] = f"({eng_lines[0]}"
+                    eng_lines[-1] = f"{eng_lines[-1]})"
+                    english = "\n".join(eng_lines)
+                else:
+                    english = color_text(f"({english})", COLORS.WHITE)
+            print(_render_block(english, "     "))
 
     if notes:
-        print(f"\n     {color_text('📝 Note:', COLORS.YELLOW)} {notes}")
+        print()
+        print(f"     {color_text('📝 Note:', COLORS.YELLOW)} {notes}")
 
     # ---------- Type-specific details ----------
     if qtype == 'multichoice':
@@ -1110,10 +1168,8 @@ def _display_single_question(q):
             if opt.get('correct'):
                 print(f"     {color_text('✓', COLORS.GREEN, bold=True)}  {opt.get('text', '')}")
                 break
-        if q.get('feedback_true'):
-            print(f"     • If True : {html_to_terminal(q['feedback_true'])}")
-        if q.get('feedback_false'):
-            print(f"     • If False: {html_to_terminal(q['feedback_false'])}")
+        _print_labeled("• If True :", q.get('feedback_true'), indent="     ")
+        _print_labeled("• If False:", q.get('feedback_false'), indent="     ")
 
     elif qtype == 'matching':
         pairs = q.get('pairs', [])
@@ -1145,29 +1201,34 @@ def _display_single_question(q):
         print(f"     Attachments    : {q.get('attachments', 0)}")
         if q.get('filetypes'):
             print(f"     File types     : {q['filetypes']}")
-        if q.get('grader_info'):
-            print(f"     Grader notes   : {html_to_terminal(q['grader_info'])}")
+        _print_labeled("Grader notes   :", q.get('grader_info'), indent="     ")
 
     # ---------- Answer / explanation ----------
-    answer_lines = []
+    # Each entry is (label, content, is_html). Plain-text answers print inline;
+    # HTML answers (currently just general_feedback) get the multi-line renderer.
+    answer_items = []
+
     if qtype == 'multichoice':
         correct = next((o.get('text', '') for o in q.get('options', []) if o.get('correct')), None)
         if correct:
-            answer_lines.append(f"✅ Correct option: {correct}")
+            answer_items.append(("✅ Correct option:", correct, False))
     elif qtype == 'truefalse':
         correct = next((o.get('text', '') for o in q.get('options', []) if o.get('correct')), None)
         if correct:
-            answer_lines.append(f"✅ Correct answer: {correct}")
+            answer_items.append(("✅ Correct answer:", correct, False))
 
     if q.get('general_feedback'):
-        answer_lines.append(f"💡 Explanation: {html_to_terminal(q['general_feedback'])}")
+        answer_items.append(("💡 Explanation:", q['general_feedback'], True))
 
-    if answer_lines:
+    if answer_items:
         print()
         print_colored("  📖  Answer & Explanation", COLORS.GREEN, bold=True)
         print("  " + "─" * (_QB_WIDTH - 4))
-        for a in answer_lines:
-            print(f"     {a}")
+        for label, content, is_html in answer_items:
+            if is_html:
+                _print_labeled(label, content, indent="     ")
+            else:
+                print(f"     {label} {content}")
 
     print()
     print_colored("  " + _rule(), COLORS.CYAN)
