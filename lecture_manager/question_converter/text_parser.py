@@ -30,6 +30,7 @@ VALID_FIELD_NAMES = {
     'hint', 'hint clear incorrect', 'hint show number correct',
     # Bank TXT fields
     'nepali', 'english', 'marks', 'chapter', 'source',
+    'alias',
     'id', 'exam type',
     # Metadata fields (for inline context)
     'date', 'institution', 'level', 'paper', 'group', 'subject', 'notes',
@@ -504,6 +505,8 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
         question['institution'] = field_content
     elif field_name == 'level':
         question['level'] = field_content
+    elif field_name == 'alias':
+        question['alias'] = field_content
     elif field_name == 'paper':
         question['paper'] = field_content
     elif field_name == 'group':

@@ -33,6 +33,7 @@ def json_to_questions(input_file, verbose=False):
             "question_date": item.get("question_date", ""),
             "institution": item.get("institution", ""),
             "level": item.get("level", ""),
+            "alias": item.get("alias"),
             "paper": item.get("paper", ""),
             "group": item.get("group", ""),
             "subject": item.get("subject", ""),
@@ -147,6 +148,7 @@ def create_json_output(questions, output_file, verbose=False):
             "group": q.get("group", ""),
             "institution": q.get("institution", ""),
             "level": q.get("level", ""),
+            "alias": q.get("alias"),
             "paper": q.get("paper", ""),   # already mapped to internal key
             "subject": q.get("subject", ""),
             "chapter": q.get("chapter", ""),

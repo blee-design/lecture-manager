@@ -15,6 +15,7 @@ def create_text_output(questions, output_file, verbose=False):
         ('question_date', 'Date'),
         ('institution', 'Institution'),
         ('level', 'Level'),
+        ('alias', 'Alias'),
         ('paper', 'Paper'),
         ('group', 'Group'),
         ('subject', 'Subject'),

@@ -2753,6 +2753,14 @@ def delete_question_interactive():
     else:
         print_colored("Cancelled.", COLORS.YELLOW)
 
+def _json_safe_default(o):
+    """Fallback encoder for json.dumps: handles Decimal and date/datetime."""
+    if isinstance(o, Decimal):
+        return int(o) if o % 1 == 0 else float(o)
+    if isinstance(o, (date, datetime)):
+        return o.isoformat()
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
 # ---------- Export / Import (CSV) ----------
 def export_questions_csv():
     print("\n" + "═" * 50)
@@ -2794,14 +2802,11 @@ def export_questions_csv():
     data = []
     conn = get_connection()
     total = len(rows)
-    print_colored(f"[i] Processing {total} questions...", COLORS.BLUE)
+    print_colored(f"[i] Exporting {total} questions to {filename}…", COLORS.BLUE)
+    import time
+    _start = time.time()
 
     for idx, row in enumerate(rows, 1):
-        if idx % 10 == 0 or idx == 1 or idx == total:
-            qid = row.get('id', '?')
-            qno = row.get('question_number', '?')
-            print(f"{COLORS.CYAN}  [{idx}/{total}] Processing ID {qid} (Q{qno})...{COLORS.RESET}")
-
         qid = row['id']
         cursor = conn.cursor(dictionary=True)
 
@@ -2822,9 +2827,12 @@ def export_questions_csv():
                 val = int(val) if val % 1 == 0 else float(val)
             out_row[f] = val
 
-        out_row['options_json'] = json.dumps(options, ensure_ascii=False) if options else None
-        out_row['pairs_json'] = json.dumps(pairs, ensure_ascii=False) if pairs else None
-        out_row['hints_json'] = json.dumps(hints, ensure_ascii=False) if hints else None
+        out_row['options_json'] = json.dumps(options, ensure_ascii=False,
+                                             default=_json_safe_default) if options else None
+        out_row['pairs_json']   = json.dumps(pairs, ensure_ascii=False,
+                                             default=_json_safe_default) if pairs else None
+        out_row['hints_json']   = json.dumps(hints, ensure_ascii=False,
+                                             default=_json_safe_default) if hints else None
 
         data.append(out_row)
 
@@ -2837,8 +2845,10 @@ def export_questions_csv():
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(data)
-        print_colored(f"[✓] Exported {len(data)} questions to {filename}", COLORS.GREEN)
-        print_colored(f"[i] File size: {os.path.getsize(filename) / 1024:.2f} KB", COLORS.BLUE)
+        elapsed = time.time() - _start
+        size_kb = os.path.getsize(filename) / 1024
+        print_colored(f"[✓] Exported {len(data)} questions to {filename} "
+                      f"({size_kb:.1f} KB, {elapsed:.2f}s)", COLORS.GREEN)
         print_colored("[i] Options, pairs, hints are saved as JSON strings in separate columns.", COLORS.YELLOW)
         print_colored("[i] To re-import this CSV, use the enhanced import function (option b).", COLORS.YELLOW)
     except Exception as e:
@@ -3179,9 +3189,6 @@ def export_questions_txt():
                 f.write("\n")
                 exported += 1
 
-                if idx % 5 == 0 or idx == total:
-                    print(f"  [{idx}/{total}] Processed {idx} questions...")
-
             f.write("---\n")
 
     except Exception as e:
@@ -3379,15 +3386,12 @@ def export_questions_json():
         filename += '.json'
 
     total = len(rows)
-    print_colored(f"[i] Processing {total} questions...", COLORS.BLUE)
+    print_colored(f"[i] Exporting {total} questions to {filename}…", COLORS.BLUE)
+    import time
+    _start = time.time()
 
     export_data = []
     for idx, row in enumerate(rows, 1):
-        if idx % 10 == 0 or idx == 1 or idx == total:
-            qid = row.get('id', '?')
-            qno = row.get('question_number', '?')
-            print(f"{COLORS.CYAN}  [{idx}/{total}] Processing ID {qid} (Q{qno})...{COLORS.RESET}")
-
         clean_row = row.copy()
         clean_row.pop('created_at', None)
         clean_row.pop('updated_at', None)
@@ -3405,8 +3409,9 @@ def export_questions_json():
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(export_data, f, indent=2, ensure_ascii=False)
         file_size = os.path.getsize(filename) / 1024
-        print_colored(f"[✓] Exported {len(export_data)} questions to {filename}", COLORS.GREEN)
-        print_colored(f"[i] File size: {file_size:.2f} KB", COLORS.BLUE)
+        elapsed = time.time() - _start
+        print_colored(f"[✓] Exported {len(export_data)} questions to {filename} "
+                      f"({file_size:.1f} KB, {elapsed:.2f}s)", COLORS.GREEN)
     except Exception as e:
         print_colored(f"[!] Export failed: {e}", COLORS.RED)
 

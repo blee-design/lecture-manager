@@ -42,7 +42,8 @@ questions_export*.xml
 facebook_export*.json
 facebook_export*.csv
 questions_export_*.html
-*.json 
+*.json
+*_export_*.txt 
 
 downloads/
 .lecture_trash/
