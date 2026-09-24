@@ -2021,17 +2021,36 @@ def question_convert_menu():
         print_colored(f"[!] {e}", COLORS.RED)
 
 # ---------- Interactive functions ----------
-
 def _prompt_field(prompt, default=None):
     val = input(color_text(prompt, COLORS.MAGENTA)).strip()
     return val if val else default
+
+
+def _prompt_number(prompt, default=None, kind='int'):
+    """Prompt for a number. Blank input → default. kind='int' or 'float'."""
+    while True:
+        raw = input(color_text(prompt, COLORS.MAGENTA)).strip()
+        if raw == '':
+            return default
+        try:
+            return int(raw) if kind == 'int' else float(raw)
+        except ValueError:
+            print_colored(f"[!] Must be a {'whole ' if kind == 'int' else ''}number.", COLORS.YELLOW)
+
+
+def _prompt_yes_no(prompt, default=True):
+    """Prompt for yes/no. Blank input → default (bool)."""
+    raw = input(color_text(prompt, COLORS.MAGENTA)).strip().lower()
+    if raw == '':
+        return default
+    return raw in ('y', 'yes', '1', 'true')
 
 def add_question_interactive():
     print("\n" + "═" * 50)
     print_colored("  ADD NEW QUESTION", COLORS.CYAN, bold=True)
     print("═" * 50)
 
-    # ---- Question type first ----
+    # ========== 1. Question type ==========
     print("\nQuestion type:")
     print("  1. Essay (long answer) — default")
     print("  2. Multichoice (MCQ)")
@@ -2040,50 +2059,82 @@ def add_question_interactive():
     t = input(color_text("Choose type (1-4, default 1): ", COLORS.MAGENTA)).strip() or '1'
     q_type = {'1':'essay', '2':'multichoice', '3':'truefalse', '4':'matching'}.get(t, 'essay')
 
-    # ---- Common metadata ----
+    # ========== 2. Common metadata ==========
+    print_colored("\n  ── Common metadata ──", COLORS.CYAN)
     date = _prompt_field("Date (YYYY-MM-DD, Enter for today): ")
     if not date:
         date = datetime.today().strftime('%Y-%m-%d')
     institution = _prompt_field("Institution: ")
 
-    # --- Exam type ---
     print("\n  Exam type:")
     for i, (key, label) in enumerate(EXAM_TYPES, 1):
-        default_marker = " (default)" if key == 'open' else ""
-        print(f"    {i}. {label}{default_marker}")
+        marker = " (default)" if key == 'open' else ""
+        print(f"    {i}. {label}{marker}")
     et_choice = input(color_text("  Choose (1-4, Enter for Open): ", COLORS.MAGENTA)).strip()
     if et_choice.isdigit() and 1 <= int(et_choice) <= len(EXAM_TYPES):
         exam_type = EXAM_TYPES[int(et_choice) - 1][0]
     else:
         exam_type = 'open'
-    subject     = _prompt_field("Subject: ")
-    paper       = _prompt_field("Paper: ")
-    group       = _prompt_field("Group: ")
 
-    marks = None
-    while True:
-        raw = input(color_text("Marks (numeric, Enter to skip): ", COLORS.MAGENTA)).strip()
-        if not raw:
-            break
-        if raw.isdigit():
-            marks = int(raw); break
-        print_colored("[!] Marks must be a number.", COLORS.YELLOW)
+    subject = _prompt_field("Subject: ")
+    paper   = _prompt_field("Paper: ")
+    group   = _prompt_field("Group: ")
 
-    chapter    = _prompt_field("Chapter: ")
-    q_num      = _prompt_field("Question Number: ")
-    nepali     = _prompt_field("Nepali Transcription: ")
-    english    = _prompt_field("English Transcription: ")
-    raw_level  = _prompt_field("Level (e.g. '6' or 'Level 6 (Business Officer)'): ")
+    marks = _prompt_number("Marks (numeric, Enter to skip): ", default=None)
+
+    chapter = _prompt_field("Chapter: ")
+    q_num   = _prompt_field("Question Number: ")
+
+    nepali  = _prompt_field("Nepali transcription: ")
+    english = _prompt_field("English transcription: ")
+
+    raw_level = _prompt_field("Level (e.g. '6' or 'Level 6 (Business Officer)'): ")
     level, level_alias = split_level_and_alias(raw_level)
-    notes      = input(color_text("Notes (optional): ", COLORS.MAGENTA)).strip() or None
-    gf         = input(color_text("General Feedback / Explanation (optional): ", COLORS.MAGENTA)).strip() or None
 
+    notes = input(color_text("Notes (optional): ", COLORS.MAGENTA)).strip() or None
+
+    print_colored("\n  ── Answer & Explanation ──", COLORS.CYAN)
+    gf = input(color_text("General feedback / Model answer (optional): ", COLORS.MAGENTA)).strip() or None
+    penalty = _prompt_number("Penalty (default 0): ", default=0.0, kind='float')
+
+    # Auto-extract syllabus_code from chapter (in parens)
+    syllabus_code = None
+    if chapter:
+        codes = re.findall(r'\(([^)]+)\)', chapter)
+        if codes:
+            from .utils import normalize_syllabus_code
+            first_code = codes[0].split('&')[0].split(',')[0].strip()
+            syllabus_code = normalize_syllabus_code(first_code)
+
+    # ========== 3. Type-specific fields ==========
     options = pairs = hints = None
     feedback_true = feedback_false = None
+    correct_feedback = partially_correct_feedback = incorrect_feedback = None
     grader_info = None
+    fraction_correct = 100.0
+    fraction_wrong   = -20.0
+    shuffle_answers  = True
+    show_num_correct = False
+    response_lines   = 15
+    attachments      = 0
+    filetypes        = '.doc,.docx,.pdf,.png,.jpg,.jpeg'
+    maxbytes         = 2097152
 
-    # ---- Type-specific input ----
-    if q_type == 'multichoice':
+    if q_type == 'essay':
+        print_colored("\n  ── Essay settings ──", COLORS.CYAN)
+        response_lines = _prompt_number("Response lines (default 15): ", default=15)
+        attachments    = _prompt_number("Attachments allowed (default 0): ", default=0)
+        if attachments and attachments > 0:
+            filetypes = (input(color_text(
+                "File types (default .doc,.docx,.pdf,.png,.jpg,.jpeg): ",
+                COLORS.MAGENTA)).strip()
+                or '.doc,.docx,.pdf,.png,.jpg,.jpeg')
+            mb = _prompt_number("Max file size MB (default 2): ", default=2)
+            maxbytes = mb * 1024 * 1024
+        grader_info = input(color_text("Grader information (optional): ", COLORS.MAGENTA)).strip() or None
+
+    elif q_type == 'multichoice':
+        print_colored("\n  ── MCQ options ──", COLORS.CYAN)
         options = _prompt_mcq_options()
         if not options or len(options) < 2:
             print_colored("[!] Need at least 2 options.", COLORS.RED); return
@@ -2091,25 +2142,55 @@ def add_question_interactive():
         if correct_count != 1:
             print_colored(f"[!] Exactly 1 correct option required (you marked {correct_count}).", COLORS.RED); return
 
+        print_colored("\n  ── MCQ scoring & feedback ──", COLORS.CYAN)
+        fraction_correct = _prompt_number("Correct fraction % (default 100): ", default=100.0, kind='float')
+        fraction_wrong   = _prompt_number("Wrong fraction % (default -20): ",  default=-20.0, kind='float')
+        correct_feedback            = input(color_text("Correct answer feedback (optional): ", COLORS.MAGENTA)).strip() or None
+        partially_correct_feedback  = input(color_text("Partially correct feedback (optional): ", COLORS.MAGENTA)).strip() or None
+        incorrect_feedback          = input(color_text("Incorrect answer feedback (optional): ", COLORS.MAGENTA)).strip() or None
+
     elif q_type == 'truefalse':
+        print_colored("\n  ── True / False ──", COLORS.CYAN)
         c = input(color_text("Correct answer (t/f, default t): ", COLORS.MAGENTA)).strip().lower()
         is_true = (c != 'f')
         options = [
             {'text': 'True',  'correct':  is_true, 'fraction': 100 if is_true else -20},
             {'text': 'False', 'correct': not is_true, 'fraction': -20 if is_true else 100},
         ]
+        fraction_correct = _prompt_number("Correct fraction % (default 100): ", default=100.0, kind='float')
+        fraction_wrong   = _prompt_number("Wrong fraction % (default -20): ",  default=-20.0, kind='float')
         feedback_true  = input(color_text("Feedback if True (optional): ",  COLORS.MAGENTA)).strip() or None
         feedback_false = input(color_text("Feedback if False (optional): ", COLORS.MAGENTA)).strip() or None
 
     elif q_type == 'matching':
+        print_colored("\n  ── Matching pairs ──", COLORS.CYAN)
         pairs = _prompt_matching_pairs()
         if not pairs or len(pairs) < 2:
             print_colored("[!] Need at least 2 matching pairs.", COLORS.RED); return
 
-    else:  # essay
-        grader_info = input(color_text("Grader Information (optional): ", COLORS.MAGENTA)).strip() or None
+        print_colored("\n  ── Matching behaviour ──", COLORS.CYAN)
+        shuffle_answers  = _prompt_yes_no("Shuffle answers? (y/n, default y): ", default=True)
+        show_num_correct = _prompt_yes_no("Show number correct? (y/n, default n): ", default=False)
 
-    force = input(color_text("Force add even if duplicate? (y/n, default n): ", COLORS.MAGENTA)).strip().lower() == 'y'
+        print_colored("\n  ── Matching feedback ──", COLORS.CYAN)
+        correct_feedback            = input(color_text("Correct feedback (optional): ", COLORS.MAGENTA)).strip() or None
+        partially_correct_feedback  = input(color_text("Partially correct feedback (optional): ", COLORS.MAGENTA)).strip() or None
+        incorrect_feedback          = input(color_text("Incorrect feedback (optional): ", COLORS.MAGENTA)).strip() or None
+
+        print_colored("\n  ── Hints (optional) ──", COLORS.CYAN)
+        print("  Add hints one at a time. Press Enter on empty line to finish.")
+        hints = []
+        while True:
+            h_text = input(color_text(f"  Hint {len(hints)+1} (or Enter to finish): ", COLORS.MAGENTA)).strip()
+            if not h_text:
+                break
+            clear = _prompt_yes_no("    Clear incorrect on this hint? (y/n, default n): ", default=False)
+            show  = _prompt_yes_no("    Show number correct? (y/n, default n): ", default=False)
+            hints.append({'text': h_text, 'clear_incorrect': clear, 'show_num_correct': show})
+        if not hints:
+            hints = None
+
+    force = _prompt_yes_no("Force add even if duplicate? (y/n, default n): ", default=False)
 
     qid = add_question(
         date, institution, subject, paper, group, marks,
@@ -2117,15 +2198,25 @@ def add_question_interactive():
         force=force,
         options=options, pairs=pairs, hints=hints,
         general_feedback=gf,
-        feedback_true=feedback_true, feedback_false=feedback_false,
+        fraction_correct=fraction_correct, fraction_wrong=fraction_wrong,
+        shuffle_answers=shuffle_answers, show_num_correct=show_num_correct,
+        correct_feedback=correct_feedback,
+        partially_correct_feedback=partially_correct_feedback,
+        incorrect_feedback=incorrect_feedback,
+        response_lines=response_lines,
+        attachments=attachments,
+        filetypes=filetypes,
+        maxbytes=maxbytes,
         grader_info=grader_info,
+        syllabus_code=syllabus_code,
+        feedback_true=feedback_true, feedback_false=feedback_false,
+        penalty=penalty,
         q_type=q_type,
         exam_type=exam_type,
         alias=level_alias,
     )
     if qid:
         print_colored(f"[✓] Question processed with ID: {qid}", COLORS.GREEN)
-
 
 def _prompt_mcq_options():
     print("\n  Enter options one per line. Mark the correct one with '*' at the end.")
@@ -2445,48 +2536,105 @@ def update_question_interactive():
         print_colored("[!] Question not found.", COLORS.RED)
         return
 
-    fields = [
-        'question_date', 'institution', 'subject', 'paper', 'group',
-        'marks', 'chapter', 'question_number',
-        'syllabus_code',
-        'nepali_transcription', 'english_transcription', 'level', 'alias', 'notes', 'type',
-        'exam_type',
-        'options',   # special: opens the interactive editor for MCQ/TF/Matching
-    ]
+    q_type = row.get('type', 'essay')
+
+    # ============================================================
+    # Field groups per question type
+    # ============================================================
+    def _build_field_groups(kind):
+        common = [
+            'question_date', 'institution', 'subject', 'paper', 'group',
+            'marks', 'chapter', 'question_number', 'syllabus_code', 'source',
+            'type', 'level', 'alias',
+            'nepali_transcription', 'english_transcription', 'notes', 'exam_type',
+        ]
+
+        answer_map = {
+            'essay':       ['general_feedback', 'grader_info'],
+            'multichoice': ['options', 'general_feedback',
+                            'correct_feedback',
+                            'partially_correct_feedback',
+                            'incorrect_feedback'],
+            'truefalse':   ['options', 'general_feedback',
+                            'feedback_true', 'feedback_false'],
+            'matching':    ['options', 'general_feedback',
+                            'correct_feedback',
+                            'partially_correct_feedback',
+                            'incorrect_feedback'],
+        }
+
+        scoring_map = {
+            'essay':       [],
+            'multichoice': ['shuffle_answers',
+                            'fraction_correct', 'fraction_wrong', 'penalty'],
+            'truefalse':   ['fraction_correct', 'fraction_wrong', 'penalty'],
+            'matching':    ['shuffle_answers', 'show_num_correct', 'penalty'],
+        }
+
+        presentation_map = {
+            'essay':       ['response_lines', 'attachments',
+                            'filetypes', 'maxbytes'],
+            'multichoice': [],
+            'truefalse':   [],
+            'matching':    [],
+        }
+
+        groups = [
+            ("📋  Metadata",             common),
+            ("📝  Answer & Explanation", answer_map.get(kind, [])),
+            ("⚙️   Behaviour & Scoring", scoring_map.get(kind, [])),
+            ("🎨  Presentation",         presentation_map.get(kind, [])),
+        ]
+        # Drop empty groups (e.g. essay has no scoring group)
+        return [(label, g) for label, g in groups if g]
+
+    def _flatten(groups):
+        return [f for _label, g in groups for f in g]
+
+    field_groups = _build_field_groups(q_type)
+    flat_fields  = _flatten(field_groups)
+
     updates = {}
 
     while True:
-        print("\n" + "═" * 50)
-        print_colored("  UPDATE QUESTION", COLORS.CYAN, bold=True)
-        print("═" * 50)
+        # ---------- Display ----------
+        print("\n" + "═" * 60)
+        print_colored(f"  UPDATE QUESTION   [{q_type.upper()}]   ID: {qid}",
+                      COLORS.CYAN, bold=True)
+        print("═" * 60)
 
-        for i, field in enumerate(fields, 1):
-            val = row.get(field)
-            if val is None or val == '':
-                display_val = "None"
-            else:
-                display_val = str(val)
-                if len(display_val) > 60:
-                    display_val = display_val[:57] + "..."
-            print(f"  {i:2}. {field:22}: {display_val}")
+        counter = 1
+        for label, group in field_groups:
+            print()
+            print_colored(f"  {label}", COLORS.CYAN, bold=True)
+            for f in group:
+                val = row.get(f)
+                if val is None or val == '':
+                    display_val = "None"
+                else:
+                    display_val = str(val)
+                    if len(display_val) > 55:
+                        display_val = display_val[:52] + "..."
+                print(f"   {counter:2}. {f:28}: {display_val}")
+                counter += 1
 
-        print("\n" + "─" * 50)
-        print("  Enter the number of the field to edit, or 0 to save and exit.")
-        print("  0. " + color_text("Save changes and exit", COLORS.GREEN))
-        print("─" * 50)
+        print("\n" + "─" * 60)
+        print("   0. " + color_text("Save changes and exit", COLORS.GREEN))
+        print("─" * 60)
 
-        choice = input(color_text("Choose field (0-13): ", COLORS.MAGENTA)).strip()
+        choice = input(color_text(f"Choose field (0-{len(flat_fields)}): ",
+                                  COLORS.MAGENTA)).strip()
 
+        # ---------- Save & exit ----------
         if choice == '0':
             if not updates:
                 print_colored("[i] No changes made.", COLORS.YELLOW)
                 return
-
             status = update_question(int(qid), **updates)
             if status == 'updated':
                 print_colored("[✓] Question updated successfully.", COLORS.GREEN)
             elif status == 'no_change':
-                print_colored("[i] No changes were made (values already the same).", COLORS.YELLOW)
+                print_colored("[i] No changes (values already the same).", COLORS.YELLOW)
             elif status.startswith('error'):
                 print_colored(f"[!] Update failed: {status}", COLORS.RED)
             else:
@@ -2494,170 +2642,232 @@ def update_question_interactive():
             return
 
         if not choice.isdigit():
-            print_colored("[!] Please enter a number.", COLORS.RED)
-            continue
+            print_colored("[!] Please enter a number.", COLORS.RED); continue
 
         idx = int(choice)
-        if idx < 1 or idx > len(fields):
-            print_colored(f"[!] Please enter a number between 1 and {len(fields)}.", COLORS.RED)
+        if idx < 1 or idx > len(flat_fields):
+            print_colored(f"[!] Enter a number between 1 and {len(flat_fields)}.", COLORS.RED)
             continue
 
-        field = fields[idx - 1]
+        field = flat_fields[idx - 1]
         current = row.get(field, '')
 
-        # ---- Special: exam_type ----
+        # ---------- Special: type (rebuild groups on change) ----------
+        if field == 'type':
+            valid_types = ['essay', 'multichoice', 'truefalse', 'matching']
+            print("\n  Question type:")
+            for i, t in enumerate(valid_types, 1):
+                cur = " ← current" if t == q_type else ""
+                print(f"    {i}. {t}{cur}")
+            tc = input(color_text(f"  Choose (1-4, Enter to keep): ",
+                                  COLORS.MAGENTA)).strip()
+            if tc.isdigit() and 1 <= int(tc) <= 4:
+                new_type = valid_types[int(tc) - 1]
+                if new_type != q_type:
+                    print_colored(
+                        f"[!] Changing type {q_type} → {new_type} may leave "
+                        f"incompatible data (options/pairs/feedback).",
+                        COLORS.YELLOW)
+                    if _prompt_yes_no("  Continue? (y/n, default n): ", default=False):
+                        updates['type'] = new_type
+                        row['type'] = new_type
+                        q_type = new_type
+                        field_groups = _build_field_groups(q_type)
+                        flat_fields  = _flatten(field_groups)
+                        print_colored("[✓] Type changed. Field list refreshed.",
+                                      COLORS.GREEN)
+                    else:
+                        print_colored("[i] Type change cancelled.", COLORS.YELLOW)
+                else:
+                    print_colored("[i] Same type.", COLORS.YELLOW)
+            else:
+                print_colored("[i] No change.", COLORS.YELLOW)
+            continue
+
+        # ---------- Special: exam_type ----------
         if field == 'exam_type':
             print("\n  Exam type:")
             for i, (key, label) in enumerate(EXAM_TYPES, 1):
                 cur = " ← current" if key == (row.get('exam_type') or 'open') else ""
                 print(f"    {i}. {label}{cur}")
-            et = input(color_text(f"  Choose (1-{len(EXAM_TYPES)}, Enter to keep): ", COLORS.MAGENTA)).strip()
+            et = input(color_text(f"  Choose (1-{len(EXAM_TYPES)}, Enter to keep): ",
+                                  COLORS.MAGENTA)).strip()
             if et.isdigit() and 1 <= int(et) <= len(EXAM_TYPES):
                 updates['exam_type'] = EXAM_TYPES[int(et) - 1][0]
                 row['exam_type'] = updates['exam_type']
-                print_colored(f"[✓] Exam type set to {EXAM_TYPE_LABELS[updates['exam_type']]}.", COLORS.GREEN)
+                print_colored(
+                    f"[✓] Exam type set to {EXAM_TYPE_LABELS[updates['exam_type']]}.",
+                    COLORS.GREEN)
             else:
                 print_colored("[i] No change.", COLORS.YELLOW)
             continue
 
-        # ---- Special: options / pairs / hints ----
+        # ---------- Special: options / pairs ----------
         if field == 'options':
             q_full = get_question_by_id(int(qid))
-            q_type = q_full.get('type', 'essay')
-            if q_type == 'multichoice':
+            q_kind = q_full.get('type', 'essay')
+            if q_kind == 'multichoice':
                 print("\n  Current options:")
                 for i, o in enumerate(q_full.get('options', []), 1):
                     marker = "✓" if o.get('correct') else " "
                     print(f"    {i}. [{marker}] {o['text']}")
-                print("\n  Enter new options (one per line, '*' = correct). Empty line when done.")
+                print("\n  Enter new options (one per line, '*' = correct). "
+                      "Empty line when done.")
                 print("  Or press Enter immediately to keep existing.")
                 new_options = _prompt_mcq_options()
                 if new_options:
                     correct_n = sum(1 for o in new_options if o['correct'])
                     if correct_n != 1:
-                        print_colored(f"[!] Need exactly 1 correct (got {correct_n}). Keeping existing.", COLORS.RED)
+                        print_colored(
+                            f"[!] Need exactly 1 correct (got {correct_n}). "
+                            f"Keeping existing.", COLORS.RED)
                     else:
                         updates['options'] = new_options
-                        print_colored(f"[✓] {len(new_options)} new option(s) staged.", COLORS.GREEN)
+                        print_colored(f"[✓] {len(new_options)} option(s) staged.",
+                                      COLORS.GREEN)
                 else:
                     print_colored("[i] No change to options.", COLORS.YELLOW)
-            elif q_type == 'truefalse':
+            elif q_kind == 'truefalse':
                 print("\n  Current:")
                 for o in q_full.get('options', []):
                     print(f"    [{'✓' if o.get('correct') else ' '}] {o['text']}")
-                c = input(color_text("Change correct answer to (t/f, Enter to keep): ", COLORS.MAGENTA)).strip().lower()
+                c = input(color_text("Change correct answer to (t/f, Enter to keep): ",
+                                     COLORS.MAGENTA)).strip().lower()
                 if c in ('t', 'f'):
                     is_true = (c == 't')
                     updates['options'] = [
-                        {'text': 'True',  'correct':  is_true, 'fraction': 100 if is_true else -20},
-                        {'text': 'False', 'correct': not is_true, 'fraction': -20 if is_true else 100},
+                        {'text': 'True',  'correct':  is_true,
+                         'fraction': 100 if is_true else -20},
+                        {'text': 'False', 'correct': not is_true,
+                         'fraction': -20 if is_true else 100},
                     ]
-                    print_colored(f"[✓] Correct answer set to {c.upper()}.", COLORS.GREEN)
-            elif q_type == 'matching':
+                    print_colored(f"[✓] Correct answer set to {c.upper()}.",
+                                  COLORS.GREEN)
+            elif q_kind == 'matching':
                 print("\n  Current pairs:")
                 for p in q_full.get('pairs', []):
                     print(f"    {p['subquestion']}  ↔  {p['answer']}")
-                if input(color_text("Replace all pairs? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y':
+                if _prompt_yes_no("  Replace all pairs? (y/n, default n): ",
+                                  default=False):
                     new_pairs = _prompt_matching_pairs()
                     if new_pairs and len(new_pairs) >= 2:
                         updates['pairs'] = new_pairs
-                        print_colored(f"[✓] {len(new_pairs)} pair(s) staged.", COLORS.GREEN)
+                        print_colored(f"[✓] {len(new_pairs)} pair(s) staged.",
+                                      COLORS.GREEN)
                     else:
-                        print_colored("[i] Not enough pairs — keeping existing.", COLORS.YELLOW)
+                        print_colored("[i] Not enough pairs — keeping existing.",
+                                      COLORS.YELLOW)
             else:
-                print_colored("[i] Essay questions have no options/pairs.", COLORS.YELLOW)
+                print_colored("[i] Essay questions have no options/pairs.",
+                              COLORS.YELLOW)
             continue
 
-        # ---- Special: alias (role/designation) ----
+        # ---------- Special: booleans ----------
+        if field in ('shuffle_answers', 'show_num_correct'):
+            cur_bool = bool(row.get(field))
+            print(f"\nCurrent: {'Yes' if cur_bool else 'No'}")
+            ans = input(color_text("New value (y/n, Enter to keep): ",
+                                   COLORS.MAGENTA)).strip().lower()
+            if ans == '':
+                print_colored("[i] No change.", COLORS.YELLOW); continue
+            new_bool = ans in ('y', 'yes', '1', 'true')
+            updates[field] = new_bool
+            row[field] = new_bool
+            print_colored(f"[✓] {field} → {'Yes' if new_bool else 'No'}",
+                          COLORS.GREEN)
+            continue
+
+        # ---------- Special: alias ----------
         if field == 'alias':
             current = row.get('alias') or ''
             print(f"\nCurrent alias: {color_text(current or '(empty)', COLORS.BLUE)}")
-            raw = input(color_text("New alias (or 'clear' to blank): ", COLORS.MAGENTA)).strip()
+            raw = input(color_text("New alias (or 'clear' to blank): ",
+                                   COLORS.MAGENTA)).strip()
             if raw == '':
-                print_colored("[i] Skipped.", COLORS.YELLOW)
-                continue
+                print_colored("[i] Skipped.", COLORS.YELLOW); continue
             if raw.lower() in ('clear', 'null', 'none'):
-                updates['alias'] = None
-                row['alias'] = None
+                updates['alias'] = None; row['alias'] = None
                 print_colored("[✓] Alias will be cleared.", COLORS.GREEN)
             else:
-                updates['alias'] = raw
-                row['alias'] = raw
+                updates['alias'] = raw; row['alias'] = raw
                 print_colored(f"[✓] Alias will be updated to: {raw}", COLORS.GREEN)
             continue
 
-
-        # ---- Special: syllabus_code ----
+        # ---------- Special: syllabus_code ----------
         if field == 'syllabus_code':
-            raw = input(color_text("New syllabus code (e.g. 06.03, or 'clear' to blank it): ",
-                                COLORS.MAGENTA)).strip()
-
+            raw = input(color_text(
+                "New syllabus code (e.g. 06.03, or 'clear' to blank it): ",
+                COLORS.MAGENTA)).strip()
             if raw.lower() == 'clear':
-                updates['syllabus_code'] = None
-                row['syllabus_code'] = None
+                updates['syllabus_code'] = None; row['syllabus_code'] = None
                 print_colored("[✓] syllabus_code will be cleared.", COLORS.GREEN)
                 continue
-
             if not re.match(r'^\d{2}\.\d{2}$', raw):
-                print_colored("[!] Must be two-digit.two-digit, e.g. '06.03'.", COLORS.RED)
+                print_colored("[!] Must be two-digit.two-digit, e.g. '06.03'.",
+                              COLORS.RED)
                 continue
-
-            updates['syllabus_code'] = raw
-            row['syllabus_code'] = raw
-            print_colored(f"[✓] syllabus_code will be updated to {raw}", COLORS.GREEN)
-
-            # ---- keep the chapter description in sync ----
+            updates['syllabus_code'] = raw; row['syllabus_code'] = raw
+            print_colored(f"[✓] syllabus_code will be updated to {raw}",
+                          COLORS.GREEN)
             old_chapter = row.get('chapter') or ''
             new_chapter = re.sub(r'\([^)]*\)\s*$', f'({raw})', old_chapter)
             if new_chapter != old_chapter:
-                updates['chapter'] = new_chapter
-                row['chapter'] = new_chapter
-                print_colored(f"[✓] chapter description updated to match.", COLORS.GREEN)
-
+                updates['chapter'] = new_chapter; row['chapter'] = new_chapter
+                print_colored("[✓] chapter description updated to match.",
+                              COLORS.GREEN)
             continue
 
-        print(f"\nCurrent value: {color_text(current if current != '' else '(empty)', COLORS.BLUE)}")
-        prompt = color_text(f"New value (press Enter to skip, or type 'clear' to empty): ", COLORS.MAGENTA)
-        raw = input(prompt).strip()
-
-        if raw == '':
-            print_colored("[i] Skipped (no change).", COLORS.YELLOW)
-            continue
-
-        if raw.lower() in ('clear', 'null', 'none'):
-            if field == 'marks':
-                updates[field] = None
-                row[field] = None
-                print_colored("[✓] Marks will be cleared (set to NULL).", COLORS.GREEN)
-            else:
-                updates[field] = ''   # empty string
-                row[field] = ''
-                print_colored("[✓] Field will be cleared (set to empty string).", COLORS.GREEN)
-            continue
-
+        # ---------- Special: level (auto-split) ----------
         if field == 'level':
-            # Auto-split if user typed 'Level 6 (Business Officer)' or similar
+            print(f"\nCurrent value: {color_text(current if current != '' else '(empty)', COLORS.BLUE)}")
+            raw = input(color_text("New value (Enter to skip): ",
+                                   COLORS.MAGENTA)).strip()
+            if raw == '':
+                print_colored("[i] Skipped.", COLORS.YELLOW); continue
             new_level, new_alias = split_level_and_alias(raw)
-            updates['level'] = new_level
-            row['level'] = new_level
+            updates['level'] = new_level; row['level'] = new_level
             if new_alias:
-                updates['alias'] = new_alias
-                row['alias'] = new_alias
-                print_colored(f"[✓] Split → level='{new_level}', alias='{new_alias}'", COLORS.GREEN)
+                updates['alias'] = new_alias; row['alias'] = new_alias
+                print_colored(f"[✓] Split → level='{new_level}', alias='{new_alias}'",
+                              COLORS.GREEN)
             else:
                 print_colored(f"[✓] Level set to '{new_level}'", COLORS.GREEN)
             continue
 
-        if field == 'marks':
-            if raw.isdigit():
-                updates[field] = int(raw)
-                row[field] = int(raw)
-                print_colored(f"[✓] Marks will be updated to {raw}", COLORS.GREEN)
+        # ---------- Generic: numeric and text ----------
+        print(f"\nCurrent value: {color_text(current if current != '' else '(empty)', COLORS.BLUE)}")
+        raw = input(color_text("New value (Enter to skip, or 'clear' to empty): ",
+                               COLORS.MAGENTA)).strip()
+
+        if raw == '':
+            print_colored("[i] Skipped (no change).", COLORS.YELLOW); continue
+
+        if raw.lower() in ('clear', 'null', 'none'):
+            if field in ('marks', 'response_lines', 'attachments', 'maxbytes'):
+                updates[field] = None; row[field] = None
             else:
-                print_colored("[!] Marks must be a number. Keeping current value.", COLORS.YELLOW)
+                updates[field] = ''; row[field] = ''
+            print_colored("[✓] Field will be cleared.", COLORS.GREEN)
+            continue
+
+        _INT_FIELDS   = {'marks', 'response_lines', 'attachments', 'maxbytes'}
+        _FLOAT_FIELDS = {'fraction_correct', 'fraction_wrong', 'penalty'}
+
+        if field in _INT_FIELDS:
+            if raw.lstrip('-').isdigit():
+                updates[field] = int(raw); row[field] = int(raw)
+                print_colored(f"[✓] {field} → {raw}", COLORS.GREEN)
+            else:
+                print_colored(f"[!] {field} must be a whole number.", COLORS.YELLOW)
+        elif field in _FLOAT_FIELDS:
+            try:
+                val = float(raw)
+                updates[field] = val; row[field] = val
+                print_colored(f"[✓] {field} → {val}", COLORS.GREEN)
+            except ValueError:
+                print_colored(f"[!] {field} must be a number.", COLORS.YELLOW)
         else:
-            updates[field] = raw
-            row[field] = raw
+            updates[field] = raw; row[field] = raw
             print_colored(f"[✓] {field} will be updated to: {raw}", COLORS.GREEN)
 
 def delete_question_interactive():
