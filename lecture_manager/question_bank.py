@@ -1764,10 +1764,12 @@ def unified_question_menu():
             quick_lookup_interactive()
         elif choice == '3':
             view_whole_paper_interactive()
+            input(color_text("\nPress Enter to continue...", COLORS.MAGENTA))
         elif choice == '4':
             browse_by_syllabus_interactive()
         elif choice == '5':
             advanced_search_interactive()
+            input(color_text("\nPress Enter to continue...", COLORS.MAGENTA))
         elif choice == '6':
             add_question_interactive()
         elif choice == '7':
