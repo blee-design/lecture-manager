@@ -2610,7 +2610,7 @@ def update_question_interactive():
             for f in group:
                 val = row.get(f)
                 if val is None or val == '':
-                    display_val = "None"
+                    display_val = color_text("None", COLORS.YELLOW)
                 else:
                     display_val = str(val)
                     if len(display_val) > 55:
