@@ -6,7 +6,12 @@
       <!-- Paper Header -->
       <div class="card-header bg-dark text-white text-center py-4">
         <h1 class="display-5 fw-bold">{{ institution|upper }}</h1>
-        <h3 class="mt-2">{{ level }}</h3>
+        <h3 class="mt-2">
+          {% if level and alias %}Level {{ level }} ({{ alias }})
+          {% elif level %}Level {{ level }}
+          {% elif alias %}{{ alias }}
+          {% endif %}
+        </h3>
         <h4 class="mt-1 text-muted">
           {% if date %}<i class="bi bi-calendar"></i> Exam Date: {{ date }}{% else %}Exam Date: <span class="text-warning">(not specified)</span>{% endif %}
         </h4>

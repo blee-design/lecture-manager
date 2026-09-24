@@ -586,6 +586,39 @@ def migrate_table():
         """)
         print_colored("[✓] Added full‑text index ft_search for question search.", COLORS.GREEN)
 
+    # ---- Alias column: role / designation split from level ----
+    cursor.execute("SHOW COLUMNS FROM questions LIKE 'alias'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE questions ADD COLUMN alias VARCHAR(255) NULL")
+        print_colored("[✓] Added 'alias' column to questions.", COLORS.GREEN)
+
+    # One-time backfill: only fires if any 'level' value still contains
+    # letters (i.e. a combined "Level 6 (Business Officer)" style string).
+    # Silent on databases that are already migrated.
+    cursor.execute("""
+        SELECT COUNT(*) FROM questions
+        WHERE level IS NOT NULL AND level REGEXP '[A-Za-z]'
+    """)
+    if cursor.fetchone()[0] > 0:
+        from .question_bank import split_level_and_alias
+        cursor.execute("""
+            SELECT id, level FROM questions
+            WHERE level IS NOT NULL AND level != ''
+        """)
+        rows = cursor.fetchall()
+        updated = 0
+        for qid, lvl in rows:
+            num, alias = split_level_and_alias(lvl)
+            if num != lvl or alias is not None:
+                cursor.execute(
+                    "UPDATE questions SET level = %s, alias = %s WHERE id = %s",
+                    (num, alias, qid)
+                )
+                updated += 1
+        conn.commit()
+        if updated:
+            print_colored(f"[✓] Split {updated} level values into number + alias.", COLORS.GREEN)
+
     # ---- Add all missing columns to questions table ----
     columns_to_add = {
         'source': 'VARCHAR(255) NULL',

@@ -883,7 +883,11 @@ def question_paper():
     date = request.args.get('date', '')
     institution = request.args.get('institution', '')
     level = request.args.get('level', '')
+    alias = request.args.get('alias', '')
     paper = request.args.get('paper', '')
+
+    # If no explicit alias was requested, derive it from the first result
+    # so the header can show 'Level 6 (Business Officer)'.
 
     if not any([date, institution, level, paper]):
         return render_template('paper_form.html')
@@ -902,11 +906,16 @@ def question_paper():
         subj = q.get('subject', '')
         grouped[grp][subj].append(q)
 
+    first_q = results[0] if results else {}
+    display_alias = alias or (first_q.get('alias') or '')
+    display_level = level or (first_q.get('level') or '')
+
     return render_template('question_paper.html',
                            grouped=grouped,
                            date=date,
                            institution=institution,
-                           level=level,
+                           level=display_level,
+                           alias=display_alias,
                            paper=paper)
 
 @app.route('/question/suggestions')

@@ -304,6 +304,181 @@ def format_bilingual_text(nepali, english):
         return f"{nepali} ({english})"
     return nepali or english
 
+def split_level_and_alias(raw):
+    """
+    Split a combined 'level' string into (level_number, alias).
+
+    Handles these patterns:
+      'Level 6 (Business Officer)'  → ('6', 'Business Officer')
+      'Level 6 - Business Officer'  → ('6', 'Business Officer')
+      'Level 6 Business Officer'    → ('6', 'Business Officer')
+      'Level 6'                     → ('6', None)
+      'Officer Level 6'             → ('6', 'Officer')
+      'Business Officer Level 6'    → ('6', 'Business Officer')
+      '6 Business Officer'          → ('6', 'Business Officer')
+      'Business Officer 6'          → ('6', 'Business Officer')
+      '6'                           → ('6', None)
+      '6/7'                         → ('6/7', None)
+      'Business Officer'            → (None, 'Business Officer')
+      'Credit Officer - Technical'  → (None, 'Credit Officer - Technical')
+
+    Returns (level_or_None, alias_or_None).
+    """
+    if raw is None:
+        return None, None
+    s = str(raw).strip()
+    if not s:
+        return None, None
+
+    s = re.sub(r'\s+', ' ', s)
+
+    # Case 1: pure number, or '6/7', '6,7', '6-7' → level only
+    if re.fullmatch(r'\d{1,2}(?:[/,\-]\d{1,2})*', s):
+        return s, None
+
+    # Case 2: 'Level N ...' — Level at the start
+    m = re.match(r'^Level\s+(\d{1,2}(?:[/,\-]\d{1,2})*)\s*(.*)$', s, re.IGNORECASE)
+    if m:
+        level_num = m.group(1)
+        rest = _clean_alias(m.group(2))
+        return level_num, rest
+
+    # Case 3: '<prefix> Level N [suffix]' — Level in the middle/end,
+    # optional parenthesised suffix after the number.
+    # Handles both 'Officer Level 6' and 'Assistant Director Level 6 (Officer Third)'.
+    m = re.match(r'^(.+?)\s+Level\s+(\d{1,2}(?:[/,\-]\d{1,2})*)\s*(.*)$',
+                 s, re.IGNORECASE)
+    if m:
+        prefix    = _clean_alias(m.group(1))
+        level_num = m.group(2)
+        suffix    = m.group(3).strip()
+        if suffix:
+            suffix = suffix.strip().strip('()').strip()
+            suffix = re.sub(r'^[\-–—:]\s*', '', suffix).strip()
+            alias_text = f"{prefix} ({suffix})" if prefix else suffix
+        else:
+            alias_text = prefix
+        return level_num, _clean_alias(alias_text)
+
+    # Case 4: 'N <rest>' — number first, alias after
+    m = re.match(r'^(\d{1,2}(?:[/,\-]\d{1,2})*)\s+(.+)$', s)
+    if m:
+        return m.group(1), _clean_alias(m.group(2))
+
+    # Case 5: '<rest> N' — trailing 1-2 digit number as level
+    m = re.match(r'^(.+?)\s+(\d{1,2}(?:[/,\-]\d{1,2})*)$', s)
+    if m:
+        return m.group(2), _clean_alias(m.group(1))
+
+    # Case 6: no number → whole thing is alias
+    return None, s
+
+
+def split_level_and_alias(raw):
+    """
+    Split a combined 'level' string into (level_number, alias).
+
+    Handles these patterns:
+      'Level 6 (Business Officer)'  → ('6', 'Business Officer')
+      'Level 6 - Business Officer'  → ('6', 'Business Officer')
+      'Level 6 Business Officer'    → ('6', 'Business Officer')
+      'Level 6'                     → ('6', None)
+      'Officer Level 6'             → ('6', 'Officer')
+      'Business Officer Level 6'    → ('6', 'Business Officer')
+      '6 Business Officer'          → ('6', 'Business Officer')
+      'Business Officer 6'          → ('6', 'Business Officer')
+      '6'                           → ('6', None)
+      '6/7'                         → ('6/7', None)
+      'Business Officer'            → (None, 'Business Officer')
+      'Credit Officer - Technical'  → (None, 'Credit Officer - Technical')
+
+    Returns (level_or_None, alias_or_None).
+    """
+    if raw is None:
+        return None, None
+    s = str(raw).strip()
+    if not s:
+        return None, None
+
+    s = re.sub(r'\s+', ' ', s)
+
+    # Case 1: pure number, or '6/7', '6,7', '6-7' → level only
+    if re.fullmatch(r'\d{1,2}(?:[/,\-]\d{1,2})*', s):
+        return s, None
+
+    # Case 2: 'Level N ...' — Level at the start
+    m = re.match(r'^Level\s+(\d{1,2}(?:[/,\-]\d{1,2})*)\s*(.*)$', s, re.IGNORECASE)
+    if m:
+        level_num = m.group(1)
+        rest = _clean_alias(m.group(2))
+        return level_num, rest
+
+    # Case 3: '<prefix> Level N [suffix]' — Level in the middle/end,
+    # optional parenthesised suffix after the number.
+    m = re.match(r'^(.+?)\s+Level\s+(\d{1,2}(?:[/,\-]\d{1,2})*)\s*(.*)$',
+                 s, re.IGNORECASE)
+    if m:
+        prefix    = _clean_alias(m.group(1))
+        level_num = m.group(2)
+        suffix    = m.group(3).strip()
+        if suffix:
+            suffix = suffix.strip().strip('()').strip()
+            suffix = re.sub(r'^[\-–—:]\s*', '', suffix).strip()
+            alias_text = f"{prefix} ({suffix})" if prefix else suffix
+        else:
+            alias_text = prefix
+        return level_num, _clean_alias(alias_text)
+
+    # Case 4: 'N <rest>' — number first, alias after
+    m = re.match(r'^(\d{1,2}(?:[/,\-]\d{1,2})*)\s+(.+)$', s)
+    if m:
+        return m.group(1), _clean_alias(m.group(2))
+
+    # Case 5: '<rest> N' — trailing 1-2 digit number as level
+    m = re.match(r'^(.+?)\s+(\d{1,2}(?:[/,\-]\d{1,2})*)$', s)
+    if m:
+        return m.group(2), _clean_alias(m.group(1))
+
+    # Case 6: no number → whole thing is alias
+    return None, s
+
+
+def _clean_alias(text):
+    """Trim, strip wrapping parens, drop leading/trailing dashes/colons."""
+    if not text:
+        return None
+    t = text.strip().strip('()').strip()
+    t = re.sub(r'^[\-–—:]\s*', '', t).strip()
+    t = re.sub(r'[\-–—:]\s*$', '', t).strip()
+    t = re.sub(r'\s+', ' ', t)
+    return t or None
+    """Trim, strip wrapping parens, drop leading/trailing dashes/colons."""
+    if not text:
+        return None
+    t = text.strip().strip('()').strip()
+    t = re.sub(r'^[\-–—:]\s*', '', t).strip()
+    t = re.sub(r'[\-–—:]\s*$', '', t).strip()
+    t = re.sub(r'\s+', ' ', t)
+    return t or None
+
+def format_level_alias(level, alias):
+    """
+    Recombine level + alias for display.
+      ('6',  'Business Officer') → 'Level 6 (Business Officer)'
+      ('6',  None)               → 'Level 6'
+      (None, 'Business Officer') → 'Business Officer'
+      (None, None)               → ''
+    """
+    level = (level or '').strip()
+    alias = (alias or '').strip()
+    level_is_numeric = bool(re.fullmatch(r'\d{1,2}(?:[/,\-]\d{1,2})*', level))
+    if level and alias:
+        prefix = f"Level {level}" if level_is_numeric else level
+        return f"{prefix} ({alias})"
+    if level:
+        return f"Level {level}" if level_is_numeric else level
+    return alias
+
 def _short_preview(text, max_len=50):
     """Truncate text at a word boundary with '…' if longer than max_len."""
     if not text:
@@ -463,7 +638,7 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                  maxbytes=2097152, grader_info=None,
                  syllabus_code=None, q_type='essay',
                  feedback_true=None, feedback_false=None,
-                 penalty=0, exam_type='open'):
+                 penalty=0, exam_type='open', alias=None):
     # Convert empty strings to None for nullable fields
     if paper == '':
         paper = None
@@ -474,6 +649,12 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
 
     # Normalise the question number centrally so every caller behaves the same
     question_number = normalize_question_number(question_number)
+
+    # Auto-split a combined level string into level + alias.
+    # If the caller already passed 'alias' explicitly, trust that and only
+    # normalise the level. Otherwise split whatever's in 'level'.
+    if alias is None and level:
+        level, alias = split_level_and_alias(level)
 
     # Check duplicate
     if not force:
@@ -533,17 +714,17 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
          show_num_correct, correct_feedback, partially_correct_feedback,
          incorrect_feedback, response_lines, attachments, filetypes, maxbytes,
          grader_info, type, syllabus_code,
-         penalty, feedback_true, feedback_false, exam_type)
+         penalty, feedback_true, feedback_false, exam_type, alias)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s)
+                %s, %s, %s, %s, %s)
     """, (date, institution, subject, paper, group, marks, chapter,
           question_number, nepali, english, level, notes,
           general_feedback, fraction_correct, fraction_wrong,
           shuffle_answers, show_num_correct,
           correct_feedback, partially_correct_feedback, incorrect_feedback,
           response_lines, attachments, filetypes, maxbytes, grader_info, q_type, syllabus_code,
-          penalty, feedback_true, feedback_false, exam_type or 'open'))
+          penalty, feedback_true, feedback_false, exam_type or 'open', alias))
     conn.commit()
     qid = cursor.lastrowid
 
@@ -608,7 +789,7 @@ def get_question_by_id(qid):
     conn.close()
     return q
 
-def get_questions_by_criteria(date=None, institution=None, level=None, paper=None, group=None, subject=None, question_number=None, chapter=None, syllabus_code=None):
+def get_questions_by_criteria(date=None, institution=None, level=None, alias=None, paper=None, group=None, subject=None, question_number=None, chapter=None, syllabus_code=None):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     conditions = []
@@ -623,6 +804,9 @@ def get_questions_by_criteria(date=None, institution=None, level=None, paper=Non
     if level:
         conditions.append("level LIKE %s")
         params.append(f"{level}%")
+    if alias:
+        conditions.append("alias LIKE %s")
+        params.append(f"%{alias}%")
     if paper:
         # Paper is a controlled vocabulary (pretest / paper_i / paper_ii / paper_iii).
         # Exact match — otherwise 'paper_i' also matches 'paper_ii'.
@@ -894,8 +1078,8 @@ def _display_single_question(q):
     subject = q.get('subject') or ''
 
     print(f"  {'Institution':<14}: {color_text(inst, COLORS.BLUE, bold=True)}")
-    if level:
-        print(f"  {'Level':<14}: {level}")
+    if level or q.get('alias'):
+        print(f"  {'Level':<14}: {format_level_alias(level, q.get('alias'))}")
     if date_str:
         print(f"  {'Date':<14}: {date_str}")
     if group:
@@ -1073,14 +1257,16 @@ def _display_paper(questions, show_answers=False):
     first = questions[0]
     inst = first.get('institution') or '(unknown institution)'
     level = first.get('level') or ''
+    alias = first.get('alias') or ''
     date_str = first.get('question_date') or ''
 
     print()
     print_colored("  " + _title_rule("📄 EXAM PAPER"), COLORS.CYAN)
     print()
     print(f"     {color_text(inst, COLORS.BLUE, bold=True)}")
-    if level:
-        print(f"     {level}")
+    combined_level = format_level_alias(level, alias)
+    if combined_level:
+        print(f"     {combined_level}")
     if date_str:
         print(f"     {color_text(date_str, COLORS.MAGENTA)}")
     print_colored("  " + _rule(), COLORS.CYAN)
@@ -1962,7 +2148,8 @@ def add_question_interactive():
     q_num      = _prompt_field("Question Number: ")
     nepali     = _prompt_field("Nepali Transcription: ")
     english    = _prompt_field("English Transcription: ")
-    level      = _prompt_field("Level: ")
+    raw_level  = _prompt_field("Level (e.g. '6' or 'Level 6 (Business Officer)'): ")
+    level, level_alias = split_level_and_alias(raw_level)
     notes      = input(color_text("Notes (optional): ", COLORS.MAGENTA)).strip() or None
     gf         = input(color_text("General Feedback / Explanation (optional): ", COLORS.MAGENTA)).strip() or None
 
@@ -2009,6 +2196,7 @@ def add_question_interactive():
         grader_info=grader_info,
         q_type=q_type,
         exam_type=exam_type,
+        alias=level_alias,
     )
     if qid:
         print_colored(f"[✓] Question processed with ID: {qid}", COLORS.GREEN)
@@ -2172,13 +2360,14 @@ def advanced_search_interactive():
     print("Leave value blank to clear that criterion.")
     print("After setting criteria, choose '9. Search' to run the search.\n")
 
-    fields = ['id', 'date', 'institution', 'level', 'paper', 'group', 'subject',
+    fields = ['id', 'date', 'institution', 'level', 'alias', 'paper', 'group', 'subject',
             'question_number', 'chapter', 'syllabus_code', 'type', 'exam_type']
     display_names = {
         'id':              'question ID',
         'date':            'question_date',
         'institution':     'institution',
-        'level':           'level',
+        'level': 'level',
+        'alias': 'alias (role)',
         'paper':           'paper',
         'group':           'group',
         'subject':         'subject',
@@ -2334,7 +2523,7 @@ def update_question_interactive():
         'question_date', 'institution', 'subject', 'paper', 'group',
         'marks', 'chapter', 'question_number',
         'syllabus_code',
-        'nepali_transcription', 'english_transcription', 'level', 'notes', 'type',
+        'nepali_transcription', 'english_transcription', 'level', 'alias', 'notes', 'type',
         'exam_type',
         'options',   # special: opens the interactive editor for MCQ/TF/Matching
     ]
@@ -2452,6 +2641,26 @@ def update_question_interactive():
             else:
                 print_colored("[i] Essay questions have no options/pairs.", COLORS.YELLOW)
             continue
+
+        # ---- Special: alias (role/designation) ----
+        if field == 'alias':
+            current = row.get('alias') or ''
+            print(f"\nCurrent alias: {color_text(current or '(empty)', COLORS.BLUE)}")
+            raw = input(color_text("New alias (or 'clear' to blank): ", COLORS.MAGENTA)).strip()
+            if raw == '':
+                print_colored("[i] Skipped.", COLORS.YELLOW)
+                continue
+            if raw.lower() in ('clear', 'null', 'none'):
+                updates['alias'] = None
+                row['alias'] = None
+                print_colored("[✓] Alias will be cleared.", COLORS.GREEN)
+            else:
+                updates['alias'] = raw
+                row['alias'] = raw
+                print_colored(f"[✓] Alias will be updated to: {raw}", COLORS.GREEN)
+            continue
+
+
         # ---- Special: syllabus_code ----
         if field == 'syllabus_code':
             raw = input(color_text("New syllabus code (e.g. 06.03, or 'clear' to blank it): ",
@@ -2498,6 +2707,19 @@ def update_question_interactive():
                 updates[field] = ''   # empty string
                 row[field] = ''
                 print_colored("[✓] Field will be cleared (set to empty string).", COLORS.GREEN)
+            continue
+
+        if field == 'level':
+            # Auto-split if user typed 'Level 6 (Business Officer)' or similar
+            new_level, new_alias = split_level_and_alias(raw)
+            updates['level'] = new_level
+            row['level'] = new_level
+            if new_alias:
+                updates['alias'] = new_alias
+                row['alias'] = new_alias
+                print_colored(f"[✓] Split → level='{new_level}', alias='{new_alias}'", COLORS.GREEN)
+            else:
+                print_colored(f"[✓] Level set to '{new_level}'", COLORS.GREEN)
             continue
 
         if field == 'marks':

@@ -10,7 +10,12 @@
         <!-- Institution and Level -->
         <div class="text-center mb-3">
           <h2 class="display-6">{{ question.institution }}</h2>
-          <h5 class="text-muted">{{ question.level }}</h5>
+          <h5 class="text-muted">
+            {% if question.level and question.alias %}Level {{ question.level }} ({{ question.alias }})
+            {% elif question.level %}Level {{ question.level }}
+            {% elif question.alias %}{{ question.alias }}
+            {% endif %}
+          </h5>
           <p class="lead">{{ question.question_date }}</p>
         </div>
 

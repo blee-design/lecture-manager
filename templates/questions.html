@@ -90,7 +90,12 @@
       <tr>
         <td>{{ q.question_date }}</td>
         <td>{{ q.institution }}</td>
-        <td>{{ q.level }}</td>
+        <td>
+          {% if q.level and q.alias %}L{{ q.level }} ({{ q.alias }})
+          {% elif q.level %}L{{ q.level }}
+          {% elif q.alias %}{{ q.alias }}
+          {% endif %}
+        </td>
         <td>{{ q.subject }}</td>
         <td>{{ q.paper or '' }}</td>
         <td>{{ q.syllabus_code or '' }}</td>
