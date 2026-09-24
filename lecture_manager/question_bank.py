@@ -345,7 +345,6 @@ def split_level_and_alias(raw):
 
     # Case 3: '<prefix> Level N [suffix]' — Level in the middle/end,
     # optional parenthesised suffix after the number.
-    # Handles both 'Officer Level 6' and 'Assistant Director Level 6 (Officer Third)'.
     m = re.match(r'^(.+?)\s+Level\s+(\d{1,2}(?:[/,\-]\d{1,2})*)\s*(.*)$',
                  s, re.IGNORECASE)
     if m:
@@ -372,86 +371,8 @@ def split_level_and_alias(raw):
 
     # Case 6: no number → whole thing is alias
     return None, s
-
-
-def split_level_and_alias(raw):
-    """
-    Split a combined 'level' string into (level_number, alias).
-
-    Handles these patterns:
-      'Level 6 (Business Officer)'  → ('6', 'Business Officer')
-      'Level 6 - Business Officer'  → ('6', 'Business Officer')
-      'Level 6 Business Officer'    → ('6', 'Business Officer')
-      'Level 6'                     → ('6', None)
-      'Officer Level 6'             → ('6', 'Officer')
-      'Business Officer Level 6'    → ('6', 'Business Officer')
-      '6 Business Officer'          → ('6', 'Business Officer')
-      'Business Officer 6'          → ('6', 'Business Officer')
-      '6'                           → ('6', None)
-      '6/7'                         → ('6/7', None)
-      'Business Officer'            → (None, 'Business Officer')
-      'Credit Officer - Technical'  → (None, 'Credit Officer - Technical')
-
-    Returns (level_or_None, alias_or_None).
-    """
-    if raw is None:
-        return None, None
-    s = str(raw).strip()
-    if not s:
-        return None, None
-
-    s = re.sub(r'\s+', ' ', s)
-
-    # Case 1: pure number, or '6/7', '6,7', '6-7' → level only
-    if re.fullmatch(r'\d{1,2}(?:[/,\-]\d{1,2})*', s):
-        return s, None
-
-    # Case 2: 'Level N ...' — Level at the start
-    m = re.match(r'^Level\s+(\d{1,2}(?:[/,\-]\d{1,2})*)\s*(.*)$', s, re.IGNORECASE)
-    if m:
-        level_num = m.group(1)
-        rest = _clean_alias(m.group(2))
-        return level_num, rest
-
-    # Case 3: '<prefix> Level N [suffix]' — Level in the middle/end,
-    # optional parenthesised suffix after the number.
-    m = re.match(r'^(.+?)\s+Level\s+(\d{1,2}(?:[/,\-]\d{1,2})*)\s*(.*)$',
-                 s, re.IGNORECASE)
-    if m:
-        prefix    = _clean_alias(m.group(1))
-        level_num = m.group(2)
-        suffix    = m.group(3).strip()
-        if suffix:
-            suffix = suffix.strip().strip('()').strip()
-            suffix = re.sub(r'^[\-–—:]\s*', '', suffix).strip()
-            alias_text = f"{prefix} ({suffix})" if prefix else suffix
-        else:
-            alias_text = prefix
-        return level_num, _clean_alias(alias_text)
-
-    # Case 4: 'N <rest>' — number first, alias after
-    m = re.match(r'^(\d{1,2}(?:[/,\-]\d{1,2})*)\s+(.+)$', s)
-    if m:
-        return m.group(1), _clean_alias(m.group(2))
-
-    # Case 5: '<rest> N' — trailing 1-2 digit number as level
-    m = re.match(r'^(.+?)\s+(\d{1,2}(?:[/,\-]\d{1,2})*)$', s)
-    if m:
-        return m.group(2), _clean_alias(m.group(1))
-
-    # Case 6: no number → whole thing is alias
-    return None, s
-
 
 def _clean_alias(text):
-    """Trim, strip wrapping parens, drop leading/trailing dashes/colons."""
-    if not text:
-        return None
-    t = text.strip().strip('()').strip()
-    t = re.sub(r'^[\-–—:]\s*', '', t).strip()
-    t = re.sub(r'[\-–—:]\s*$', '', t).strip()
-    t = re.sub(r'\s+', ' ', t)
-    return t or None
     """Trim, strip wrapping parens, drop leading/trailing dashes/colons."""
     if not text:
         return None
@@ -505,6 +426,7 @@ def _get_filtered_questions_interactive():
         'date': '',
         'institution': '',
         'level': '',
+        'alias': '',
         'paper': '',
         'group': '',
         'subject': '',
@@ -894,14 +816,14 @@ def search_questions_all_fields(search_term):
     cursor = conn.cursor(dictionary=True)
     like = f"%{search_term}%"
 
-    # Search main table
     sql_main = """
         SELECT id FROM questions
         WHERE subject LIKE %s OR institution LIKE %s OR chapter LIKE %s
-           OR nepali_transcription LIKE %s OR english_transcription LIKE %s
-           OR notes LIKE %s
+        OR alias LIKE %s
+        OR nepali_transcription LIKE %s OR english_transcription LIKE %s
+        OR notes LIKE %s
     """
-    cursor.execute(sql_main, (like, like, like, like, like, like))
+    cursor.execute(sql_main, (like, like, like, like, like, like, like))
     main_ids = [row['id'] for row in cursor.fetchall()]
 
     # Search options
@@ -2336,6 +2258,7 @@ def view_whole_paper_interactive():
     date = _prompt_field("Date (YYYY-MM-DD): ")
     institution = _prompt_field("Institution (keyword): ")
     level = _prompt_field("Level (keyword): ")
+    alias = _prompt_field("Alias/role (keyword): ")
     paper = _prompt_field("Paper (optional): ")
 
     if not any([date, institution, level, paper]):
@@ -2343,7 +2266,7 @@ def view_whole_paper_interactive():
         return
 
     results = get_questions_by_criteria(date=date, institution=institution,
-                                        level=level, paper=paper)
+                                        level=level, alias=alias, paper=paper)
     if not results:
         print_colored("[i] No questions found.", COLORS.YELLOW)
         return
@@ -2785,7 +2708,7 @@ def export_questions_csv():
 
     export_fields = [
         'id',
-        'question_date', 'institution', 'level', 'paper', 'group',
+        'question_date', 'institution', 'level', 'alias', 'paper', 'group',
         'subject', 'chapter', 'question_number', 'marks',
         'nepali_transcription', 'english_transcription', 'notes',
         'source', 'type', 'exam_type',
@@ -2939,6 +2862,7 @@ def import_questions_csv():
             'question_date': row.get('question_date'),
             'institution': row.get('institution'),
             'level': row.get('level'),
+            'alias': row.get('alias'),
             'paper': row.get('paper'),
             'group': row.get('group'),
             'subject': row.get('subject'),
@@ -3674,6 +3598,7 @@ def bulk_rename_interactive():
         ('subject',        'subject',       'text'),
         ('paper',          'paper',         'text'),
         ('level',          'level',         'text'),
+        ('alias',          'alias',         'text'),
         ('group',          'group',         'text'),
         ('source',         'source',        'text'),
         ('exam_type',      'exam_type',     'exam_type'),

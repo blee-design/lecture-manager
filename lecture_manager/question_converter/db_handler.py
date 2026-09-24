@@ -411,6 +411,7 @@ def get_questions(filters=None):
             'hints': [],
             'institution': row.get('institution') or '',
             'level': row.get('level') or '',
+            'alias': row.get('alias'),
             'paper': row.get('paper') or '',
             'subject': row.get('subject') or '',
             'date': row.get('question_date') or '',
