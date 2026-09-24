@@ -2026,6 +2026,28 @@ def _prompt_field(prompt, default=None):
     return val if val else default
 
 
+def _input_with_prefill(prompt, prefill=''):
+    """
+    input() with the current value already typed in, cursor at end.
+    User can edit in place: backspace, arrows, Ctrl+U to clear, etc.
+    Enter submits. Falls back to plain input() if readline is unavailable.
+    """
+    try:
+        import readline
+    except ImportError:
+        return input(prompt)
+
+    def _hook():
+        if prefill:
+            readline.insert_text(prefill)
+        readline.set_startup_hook()
+
+    readline.set_startup_hook(_hook)
+    try:
+        return input(prompt)
+    finally:
+        readline.set_startup_hook()
+
 def _prompt_number(prompt, default=None, kind='int'):
     """Prompt for a number. Blank input → default. kind='int' or 'float'."""
     while True:
@@ -2082,8 +2104,14 @@ def _prompt_multiline(field_label, current_value):
 
     # ---------------- Inline ----------------
     if mode == 'i':
-        new_val = input(color_text("  New value (or 'clear' to empty, Enter to skip): ",
-                                   COLORS.MAGENTA)).strip()
+        # Pre-fill with the current value so the user can edit in place
+        # (backspace, arrows, Ctrl+U). Same clear/skip conventions apply.
+        raw = _input_with_prefill(
+            color_text("  New value (Enter to keep, 'clear' to wipe): ",
+                       COLORS.MAGENTA),
+            prefill=(current_value or '')
+        )
+        new_val = raw.strip()
         if new_val == '':
             return '__SKIP__'
         if new_val.lower() in ('clear', 'null', 'none'):
@@ -2100,8 +2128,12 @@ def _prompt_multiline(field_label, current_value):
                 break
     if not editor:
         print_colored("[!] No $EDITOR found. Falling back to inline.", COLORS.YELLOW)
-        new_val = input(color_text("  New value (or 'clear', Enter to skip): ",
-                                   COLORS.MAGENTA)).strip()
+        raw = _input_with_prefill(
+            color_text("  New value (Enter to skip, 'clear' to wipe): ",
+                       COLORS.MAGENTA),
+            prefill=(current_value or '')
+        )
+        new_val = raw.strip()
         if new_val == '':
             return '__SKIP__'
         if new_val.lower() in ('clear', 'null', 'none'):
@@ -2972,8 +3004,11 @@ def update_question_interactive():
             continue
 
         print(f"\nCurrent value: {color_text(current if current != '' else '(empty)', COLORS.BLUE)}")
-        raw = input(color_text("New value (Enter to skip, or 'clear' to empty): ",
-                               COLORS.MAGENTA)).strip()
+        raw = _input_with_prefill(
+            color_text("New value (Enter to skip, or 'clear' to empty): ",
+                       COLORS.MAGENTA),
+            prefill=(current or '')
+        ).strip()
 
         if raw == '':
             print_colored("[i] Skipped (no change).", COLORS.YELLOW); continue
