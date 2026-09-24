@@ -14,3 +14,4 @@ include LICENSE
 include Makefile
 include lecture-manager.sh
 include questions_formatting_prompt.txt
+templates/static/
