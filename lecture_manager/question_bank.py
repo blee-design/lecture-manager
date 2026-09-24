@@ -1540,37 +1540,45 @@ def browse_by_syllabus_interactive():
     """
     from .file_manager import _papers
     from . import syllabus_config as SC
+    from collections import defaultdict
+
+    def _reload_indexes():
+        """
+        Re-fetch every question and rebuild the three lookup indexes.
+
+        Called at the top of every menu level so edits made during the
+        session (question renames, paper swaps, chapter re-detection)
+        show up immediately instead of requiring a CLI restart.
+        """
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM questions")
+        rows = cursor.fetchall()
+        cursor.close(); conn.close()
+
+        bt = defaultdict(list)
+        bp = defaultdict(list)
+        bpp = defaultdict(list)
+        for q in rows:
+            info = resolve_question_syllabus(q)
+            pk = info['paper_key']
+            if not pk:
+                continue
+            bpp[pk].append(q)
+            subj = info['subject_code']
+            chap = info['chapter_code']
+            if subj:
+                bp[(pk, subj)].append(q)
+                if chap:
+                    bt[(pk, subj, chap)].append(q)
+        return bt, bp, bpp
 
     while True:
         print()
         print_colored("  📖  BROWSE BY SYLLABUS", COLORS.CYAN, bold=True)
         print_colored("  " + _rule(), COLORS.CYAN)
 
-        # --- Load all questions once ---
-        conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM questions")
-        all_questions = cursor.fetchall()
-        cursor.close(); conn.close()
-
-        # --- Build indexes: (paper, subj, chap) -> [q...], (paper, subj) -> [q...] ---
-        from collections import defaultdict
-        by_triple = defaultdict(list)
-        by_pair = defaultdict(list)
-        by_paper = defaultdict(list)
-
-        for q in all_questions:
-            info = resolve_question_syllabus(q)
-            pk = info['paper_key']
-            if not pk:
-                continue
-            by_paper[pk].append(q)
-            subj = info['subject_code']
-            chap = info['chapter_code']
-            if subj:
-                by_pair[(pk, subj)].append(q)
-                if chap:
-                    by_triple[(pk, subj, chap)].append(q)
+        by_triple, by_pair, by_paper = _reload_indexes()
 
         # ==================================================
         # LEVEL 1: Paper selection
@@ -1608,6 +1616,7 @@ def browse_by_syllabus_interactive():
         # ==================================================
         back_to_papers = False
         while not back_to_papers:
+            by_triple, by_pair, by_paper = _reload_indexes()
             print()
             print_colored(f"  📘  {paper_display}", COLORS.CYAN, bold=True)
             print_colored("  " + _rule(), COLORS.CYAN)
@@ -1645,6 +1654,7 @@ def browse_by_syllabus_interactive():
             # ==================================================
             back_to_subjects = False
             while not back_to_subjects:
+                by_triple, by_pair, by_paper = _reload_indexes()
                 print()
                 print_colored(f"  📗  {paper_display}  ›  {subj_code} {subj_name}", COLORS.CYAN, bold=True)
                 print_colored("  " + _rule(), COLORS.CYAN)
@@ -1680,14 +1690,15 @@ def browse_by_syllabus_interactive():
                 # ==================================================
                 # LEVEL 4: Question list (stays here after viewing)
                 # ==================================================
-                qs = by_triple.get((paper_key, subj_code, chap_code), [])
-                qs_sorted = sorted(
-                    qs,
-                    key=lambda x: (x.get('question_date') or '',
-                                   x.get('question_number') or '')
-                )
-
                 while True:
+                    by_triple, by_pair, by_paper = _reload_indexes()
+                    qs = by_triple.get((paper_key, subj_code, chap_code), [])
+                    qs_sorted = sorted(
+                        qs,
+                        key=lambda x: (x.get('question_date') or '',
+                                       x.get('question_number') or '')
+                    )
+
                     print()
                     print_colored(
                         f"  📄  {paper_display}  ›  {subj_code} {subj_name}  ›  "
@@ -2143,29 +2154,25 @@ def _prompt_yes_no(prompt, default=True):
         return default
     return raw in ('y', 'yes', '1', 'true')
 
-
 def _prompt_multiline(field_label, current_value):
     """
-    Multi-line editor for long-form fields, honouring the app's existing
-    conventions:
+    Quick multi-line editor — no forced $EDITOR.
 
-      Inline mode:
-        - Type a value             → update
-        - Type 'clear'             → clear the field (set to '')
-        - Press Enter (empty)      → skip (no change)
+    Modes
+    -----
+      Enter  → inline pre-filled (default; edit the current value in place)
+      m      → multi-line: one line at a time, blank line to finish
+      p      → paste from clipboard (fastest for long blocks on Linux)
+      c      → clear the field
+      s      → skip (no change)
+      e      → open in $EDITOR (opt-in, for rare cases)
 
-      Editor mode ($EDITOR):
-        - Save file with content   → update
-        - Save file empty          → clear the field
-        - Quit without saving      → skip (no change)
-
-    Returns:
-      - the new string
-      - '' (empty string)  to signal "clear the field"
-      - '__SKIP__'         to signal "no change"
+    Returns
+    -------
+      str      — new value
+      ''       — clear the field
+      '__SKIP__' — no change
     """
-    import tempfile, os, subprocess
-
     print()
     print_colored(f"  Field: {field_label}", COLORS.CYAN, bold=True)
     if current_value:
@@ -2175,37 +2182,84 @@ def _prompt_multiline(field_label, current_value):
         print(f"  Current: {color_text('None', COLORS.YELLOW)}")
 
     print("  How do you want to edit?")
-    print("    e   Open in $EDITOR (multi-line)  ← default")
-    print("    i   Inline single-line input")
-    print("    p   Paste from clipboard")
-    mode = input(color_text("  Choose [e/i/p, Enter=e]: ", COLORS.MAGENTA)).strip().lower() or 'e'
+    print("    Enter — inline (pre-filled, edit in place)   ← default")
+    print("    m     — multi-line (one line at a time, blank line to finish)")
+    print("    p     — paste from clipboard")
+    print("    c     — clear the field")
+    print("    s     — skip (no change)")
+    print("    e     — open in $EDITOR")
 
-    # ---------------- Inline ----------------
-    if mode == 'i':
-        # Pre-fill with the current value so the user can edit in place
-        # (backspace, arrows, Ctrl+U). Same clear/skip conventions apply.
-        raw = _input_with_prefill(
-            color_text("  New value (Enter to keep, 'clear' to wipe): ",
-                       COLORS.MAGENTA),
-            prefill=(current_value or '')
-        )
-        new_val = raw.strip()
-        if new_val == '':
-            return '__SKIP__'
-        if new_val.lower() in ('clear', 'null', 'none'):
-            return ''
-        return new_val
+    mode = input(color_text("  Choose [Enter/m/p/c/s/e]: ", COLORS.MAGENTA)).strip().lower()
 
+    # ---------- Skip ----------
+    if mode == 's':
+        return '__SKIP__'
+
+    # ---------- Clear ----------
+    if mode == 'c':
+        return ''
+
+    # ---------- Clipboard paste ----------
     if mode == 'p':
         pasted = _paste_from_clipboard()
         if not pasted.strip():
-            print_colored("[i] Clipboard empty.", COLORS.YELLOW)
+            print_colored("[i] Clipboard empty — no change.", COLORS.YELLOW)
             return '__SKIP__'
-        # normalise line endings
-        pasted = pasted.replace('\r\n', '\n').replace('\r', '\n').replace('\v', '\n').rstrip()
+        pasted = (pasted
+                  .replace('\r\n', '\n')
+                  .replace('\r',   '\n')
+                  .replace('\v',   '\n')
+                  .rstrip())
         return pasted
 
-    # ---------------- Editor ----------------
+    # ---------- Multi-line, line by line ----------
+    if mode == 'm':
+        print()
+        print_colored("  Enter lines one at a time.", COLORS.BLUE)
+        print_colored("  Finish with a blank line.  (Ctrl+C cancels)", COLORS.BLUE)
+        print()
+        lines = []
+        try:
+            while True:
+                line = input("  | ")
+                if line == '':
+                    break
+                lines.append(line)
+        except KeyboardInterrupt:
+            print()
+            print_colored("[i] Cancelled — no change.", COLORS.YELLOW)
+            return '__SKIP__'
+        if not lines:
+            print_colored("[i] No lines entered — no change.", COLORS.YELLOW)
+            return '__SKIP__'
+        return "\n".join(lines)
+
+    # ---------- Editor (opt-in) ----------
+    if mode == 'e':
+        return _prompt_editor(field_label, current_value)
+
+    # ---------- Default: inline pre-filled ----------
+    raw = _input_with_prefill(
+        color_text("  New value (Enter to keep, 'clear' to wipe): ", COLORS.MAGENTA),
+        prefill=(current_value or '')
+    )
+    new_val = raw.rstrip('\n')
+
+    if new_val == (current_value or ''):
+        return '__SKIP__'          # user just pressed Enter → keep
+    if new_val == '':
+        return '__SKIP__'          # empty input → keep (use 'c' to clear)
+    if new_val.strip().lower() in ('clear', 'null', 'none'):
+        return ''                  # explicit clear
+    return new_val
+
+def _prompt_editor(field_label, current_value):
+    """
+    Open $EDITOR (or a sensible fallback) to edit a field.
+    Returns the new value, '' for clear, or '__SKIP__' for no change.
+    """
+    import os, subprocess, tempfile
+
     editor = os.environ.get('EDITOR') or os.environ.get('VISUAL')
     if not editor:
         for candidate in ('nano', 'vim', 'vi', 'emacs'):
@@ -2213,6 +2267,8 @@ def _prompt_multiline(field_label, current_value):
                               capture_output=True).returncode == 0:
                 editor = candidate
                 break
+
+    # No editor available → fall back to inline pre-filled
     if not editor:
         print_colored("[!] No $EDITOR found. Falling back to inline.", COLORS.YELLOW)
         raw = _input_with_prefill(
@@ -2220,10 +2276,10 @@ def _prompt_multiline(field_label, current_value):
                        COLORS.MAGENTA),
             prefill=(current_value or '')
         )
-        new_val = raw.strip()
-        if new_val == '':
+        new_val = raw.rstrip('\n')
+        if new_val == '' or new_val == (current_value or ''):
             return '__SKIP__'
-        if new_val.lower() in ('clear', 'null', 'none'):
+        if new_val.strip().lower() in ('clear', 'null', 'none'):
             return ''
         return new_val
 
@@ -2232,18 +2288,18 @@ def _prompt_multiline(field_label, current_value):
         tmp.write(current_value or '')
         tmp_path = tmp.name
 
-    # Capture mtime before opening, to detect "save vs quit without saving"
     mtime_before = os.path.getmtime(tmp_path)
 
     try:
-        print_colored(f"  Opening {editor} … (save & quit to continue; quit without saving to skip)",
-                      COLORS.BLUE)
+        print_colored(
+            f"  Opening {editor} … "
+            f"(save & quit to continue; quit without saving to skip)",
+            COLORS.BLUE,
+        )
         subprocess.run([editor, tmp_path], check=False)
 
-        # Did the user actually save anything? If mtime is unchanged, they
-        # probably quit without writing (e.g. ':q!' in vim, or Ctrl-X in nano).
-        mtime_after = os.path.getmtime(tmp_path)
-        if mtime_after == mtime_before:
+        # Quit-without-saving → no change
+        if os.path.getmtime(tmp_path) == mtime_before:
             return '__SKIP__'
 
         with open(tmp_path, 'r', encoding='utf-8') as f:
@@ -2254,13 +2310,12 @@ def _prompt_multiline(field_label, current_value):
         except OSError:
             pass
 
-    # Normalise line endings: LibreOffice / Word / WPS use \r\n or \v
-    # for paragraph marks, which terminal display and HTML both mishandle.
-    content = content.replace('\r\n', '\n')
-    content = content.replace('\r',   '\n')
-    content = content.replace('\v',   '\n')   # soft line breaks
-    content = content.replace('\x00', '')     # strip NUL bytes
-    content = content.rstrip()
+    content = (content
+               .replace('\r\n', '\n')
+               .replace('\r',   '\n')
+               .replace('\v',   '\n')
+               .replace('\x00', '')
+               .rstrip())
 
     if content == '':
         return ''
