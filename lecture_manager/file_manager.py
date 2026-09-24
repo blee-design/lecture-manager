@@ -611,6 +611,25 @@ def organize_video(record, source_file=None, overwrite=False, interactive=True):
         else:
             source_file = None
 
+    # ---- Non-interactive: search the library for a file matching this
+    #      record's hash, so auto-fix can locate files that ended up in
+    #      the wrong folder. ----
+    if not source_file and not interactive:
+        file_hash = record.get('file_hash')
+        if file_hash:
+            for root, _, files in os.walk(ROOT_DIR):
+                matched = None
+                for f in files:
+                    if (f.startswith(file_hash)
+                            and f.lower().endswith(('.mp4', '.mkv', '.webm', '.avi', '.mov'))):
+                        matched = os.path.join(root, f)
+                        break
+                if matched:
+                    source_file = matched
+                    break
+            if source_file:
+                print_colored(f"[i] Located by hash: {source_file}", COLORS.BLUE)
+
     if not source_file and interactive:
         source_file = prompt_for_source_file(record)
         if not source_file:

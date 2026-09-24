@@ -794,12 +794,28 @@ def update_lecture():
                             conn3.commit()
                             cur3.close()
                             conn3.close()
-                            print_colored(f"[✓] Original filename auto-regenerated to: {new_original}", COLORS.GREEN)
+                                                        print_colored(f"[✓] Original filename auto-regenerated to: {new_original}", COLORS.GREEN)
                 except mysql.connector.Error as e:
                     conn.rollback()
                     cursor.close()
                     conn.close()
                     print_colored(f"[!] Update failed: {e}", COLORS.RED)
+                    continue
+
+                # ----- Offer to move the file to the new location -----
+                # Changing syllabus_id changes the subject/chapter subfolder.
+                # If we don't move the file, the DB and disk drift apart.
+                updated_record = get_record_by_video_id(video_id)
+                if updated_record:
+                    move_choice = input(color_text(
+                        "Syllabus ID updated. Move the video file to the new location now? (y/n): ",
+                        COLORS.MAGENTA)).strip().lower()
+                    if move_choice == 'y':
+                        result = organize_video(updated_record, overwrite=False, interactive=False)
+                        if result:
+                            print_colored("[✓] File moved to correct location.", COLORS.GREEN)
+                        else:
+                            print_colored("[!] File move failed. Run Tally → option 10 later.", COLORS.YELLOW)
                 continue
 
             elif field == 'mirror_video_id':
