@@ -1300,12 +1300,20 @@ def _display_paper(questions, show_answers=False):
                 nep = html_to_terminal(q.get('nepali_transcription') or '').strip()
                 eng = html_to_terminal(q.get('english_transcription') or '').strip()
                 if nep and eng and nep.lower() == eng.lower():
-                    print(f"           {nep}")
+                    print(_render_block(nep, "           "))
                 else:
                     if nep:
-                        print(f"           {nep}")
+                        print(_render_block(nep, "           "))
                     if eng:
-                        print(f"           {color_text('(' + eng + ')', COLORS.WHITE) if nep else eng}")
+                        if nep:
+                            if "\n" in eng:
+                                eng_lines = eng.split("\n")
+                                eng_lines[0] = f"({eng_lines[0]}"
+                                eng_lines[-1] = f"{eng_lines[-1]})"
+                                eng = "\n".join(eng_lines)
+                            else:
+                                eng = color_text(f"({eng})", COLORS.WHITE)
+                        print(_render_block(eng, "           "))
                 if q.get('notes'):
                     print(f"           {color_text('Note:', COLORS.YELLOW)} {q['notes']}")
 
@@ -1319,9 +1327,17 @@ def _display_paper(questions, show_answers=False):
                             print(f"              {pair.get('subquestion','')}  "
                                   f"{color_text('↔', COLORS.CYAN)}  {pair.get('answer','')}")
                     if q.get('general_feedback'):
-                        print(f"              {color_text('💡', COLORS.GREEN)} {html_to_terminal(q['general_feedback'])}")
+                        _print_labeled(
+                            color_text('💡', COLORS.GREEN),
+                            q['general_feedback'],
+                            indent="              ",
+                        )
                     if qtype == 'essay' and q.get('grader_info'):
-                        print(f"              {color_text('📝 Grader:', COLORS.GREEN)} {html_to_terminal(q['grader_info'])}")
+                        _print_labeled(
+                            color_text('📝 Grader:', COLORS.GREEN),
+                            q['grader_info'],
+                            indent="              ",
+                        )
 
     print()
     print_colored("  " + _rule(), COLORS.CYAN)
