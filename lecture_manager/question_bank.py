@@ -438,6 +438,7 @@ def _get_filtered_questions_interactive():
         'date': 'Question Date',
         'institution': 'Institution',
         'level': 'Level',
+        'alias': 'Alias (role)',
         'paper': 'Paper',
         'group': 'Group',
         'subject': 'Subject',
@@ -511,7 +512,7 @@ def _get_filtered_questions_interactive():
                 print(f"  ... and {len(filtered) - 5} more")
 
         print("\n  " + color_text("OPTIONS:", COLORS.WHITE, bold=True))
-        print("  1-8. Edit filter (by number)")
+        print("  1-9. Edit filter (by number)")
         print("  9.  " + color_text("Execute with current filters", COLORS.GREEN, bold=True))
         print("  0.  " + color_text("Cancel", COLORS.RED))
         print("  c.  " + color_text("Clear all filters", COLORS.YELLOW))
@@ -531,7 +532,7 @@ def _get_filtered_questions_interactive():
             print_colored("[✓] All filters cleared.", COLORS.GREEN)
             continue
 
-        elif choice.isdigit() and 1 <= int(choice) <= 8:
+        elif choice.isdigit() and 1 <= int(choice) <= 9:
             idx = int(choice) - 1
             key = list(filters.keys())[idx]
             current = filters[key]
@@ -819,9 +820,9 @@ def search_questions_all_fields(search_term):
     sql_main = """
         SELECT id FROM questions
         WHERE subject LIKE %s OR institution LIKE %s OR chapter LIKE %s
-        OR alias LIKE %s
-        OR nepali_transcription LIKE %s OR english_transcription LIKE %s
-        OR notes LIKE %s
+           OR alias LIKE %s
+           OR nepali_transcription LIKE %s OR english_transcription LIKE %s
+           OR notes LIKE %s
     """
     cursor.execute(sql_main, (like, like, like, like, like, like, like))
     main_ids = [row['id'] for row in cursor.fetchall()]
@@ -2261,7 +2262,7 @@ def view_whole_paper_interactive():
     alias = _prompt_field("Alias/role (keyword): ")
     paper = _prompt_field("Paper (optional): ")
 
-    if not any([date, institution, level, paper]):
+    if not any([date, institution, level, alias, paper]):
         print_colored("[!] You must provide at least one search criterion.", COLORS.RED)
         return
 
@@ -2835,6 +2836,8 @@ def import_questions_csv():
     from .question_converter.db_handler import insert_question
     from .question_converter.exceptions import DuplicateQuestionError
 
+    import time
+    _start = time.time()
     print(f"\n[i] Found {len(rows)} questions in the CSV file.")
     print("How to handle duplicates?")
     print("  1. Skip duplicates (keep existing)")
@@ -2854,10 +2857,6 @@ def import_questions_csv():
 
     total = len(rows)
     for idx, row in enumerate(rows, 1):
-        if idx % 5 == 0 or idx == total:
-            qno = row.get('question_no', '?')
-            print(f"{COLORS.CYAN}  [{idx}/{total}] Processing Q{qno}...{COLORS.RESET}")
-
         q_dict = {
             'question_date': row.get('question_date'),
             'institution': row.get('institution'),
@@ -2927,6 +2926,7 @@ def import_questions_csv():
     cursor.close()
     conn.close()
 
+    elapsed = time.time() - _start
     print("\n" + "═" * 50)
     print_colored("  IMPORT COMPLETE", COLORS.CYAN, bold=True)
     print(f"  {COLORS.GREEN}✅ Added   : {added}{COLORS.RESET}")
@@ -2934,6 +2934,7 @@ def import_questions_csv():
     print(f"  {COLORS.YELLOW}⏭️ Skipped : {skipped}{COLORS.RESET}")
     if errors:
         print(f"  {COLORS.RED}❌ Errors  : {len(errors)}{COLORS.RESET}")
+    print(f"  ⏱️  Time    : {elapsed:.2f}s")
     print("═" * 50)
 
 def export_questions_txt():
