@@ -218,8 +218,9 @@ def add_paper(paper_key, display_name, folder_name, keywords="", syllabus_id=Non
             return None
 
     try:
-        cursor.execute("SELECT COALESCE(MAX(display_order), 0) FROM papers")
-        next_order = (cursor.fetchone()[0] or 0) + 10
+        cursor.execute("SELECT COALESCE(MAX(display_order), 0) AS max_order FROM papers")
+        row = cursor.fetchone()
+        next_order = ((row or {}).get('max_order') or 0) + 10
         cursor.execute("""
             INSERT INTO papers
                 (paper_key, display_name, folder_name, keywords, display_order, syllabus_id)
