@@ -41,6 +41,10 @@ def load_quotes():
 
 QUOTES = load_quotes()
 
+def _strip_syllabus_tag(text):
+    """Remove a leading '[XX] ' prefix used for display in the subject dropdown."""
+    import re as _re
+    return _re.sub(r'^\[[^\]]+\]\s*', '', (text or '')).strip()
 
 # ====================== STYLE CONFIGURATION ======================
 def configure_styles():
@@ -602,14 +606,16 @@ class PomodoroApp:
         self.streak_label = ttk.Label(timer_frame, font=("Helvetica", 12), foreground="#FFA500")
         self.streak_label.grid(row=7, column=0, pady=5)
 
-        # -- Subject (dropdown) --
+        # -- Subject (dropdown) — flat list from every syllabus --
         subject_frame = ttk.LabelFrame(left, text="📌 Subject", padding="10")
         subject_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=5)
         subject_frame.columnconfigure(0, weight=1)
         self.subject_var = tk.StringVar()
-        self.subject_combo = ttk.Combobox(subject_frame, textvariable=self.subject_var, state="readonly")
+        self.subject_combo = ttk.Combobox(
+            subject_frame, textvariable=self.subject_var, state="readonly"
+        )
         self.subject_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
-        self.refresh_subject_list()   # load subjects from DB
+        self.refresh_subject_list()
 
         # -- Session Type --
         type_frame = ttk.LabelFrame(left, text="📌 Session Type", padding="10")
@@ -995,7 +1001,7 @@ class PomodoroApp:
 
             subject_match = re.search(r'\[Subject:\s*(.*?)\]', first_line)
             if subject_match:
-                subject = subject_match.group(1).strip()
+                subject = _strip_syllabus_tag(subject_match.group(1))
 
             type_match = re.search(r'\((\w+)\)', first_line)
             if type_match:
@@ -1031,17 +1037,44 @@ class PomodoroApp:
                 cursor.close()
                 conn.close()
 
-            # Resolve subject_id from subject text
+            # Resolve subject_id from subject text (self-healing)
             subject_id = None
+            resolved_subject_name = subject  # what we actually store
             if subject:
                 conn = get_connection()
-                cursor = conn.cursor()
-                cursor.execute("SELECT id FROM subjects WHERE name = %s", (subject,))
+                cursor = conn.cursor(dictionary=True)
+
+                # 1. Exact match
+                cursor.execute(
+                    "SELECT id, name FROM subjects WHERE name = %s",
+                    (subject,)
+                )
                 row = cursor.fetchone()
+
+                # 2. Normalized match — strip "N. " prefix, compare case-insensitively
+                if not row:
+                    import re as _re
+                    def _norm(s):
+                        return _re.sub(r'^\d+\.\s*', '', s or '').strip().lower()
+                    target = _norm(subject)
+                    cursor.execute(
+                        "SELECT id, name FROM subjects WHERE active = 1"
+                    )
+                    for c in cursor.fetchall():
+                        if _norm(c['name']) == target:
+                            row = c
+                            break
+
                 if row:
-                    subject_id = row[0]
+                    subject_id = row['id']
+                    resolved_subject_name = row['name']  # canonical spelling
                 else:
-                    messagebox.showwarning("Subject not found", f"Subject '{subject}' not found. It will be set to NULL.")
+                    messagebox.showwarning(
+                        "Subject not found",
+                        f"Subject '{subject}' not found. It will be set to NULL.\n\n"
+                        f"Tip: add this subject to your syllabus, or rename "
+                        f"the log entry manually."
+                    )
                 cursor.close()
                 conn.close()
 
@@ -1056,7 +1089,7 @@ class PomodoroApp:
                         SET timestamp = %s, duration_min = %s, subject = %s, subject_id = %s,
                             notes = %s, task_id = %s, session_type = %s
                         WHERE id = %s
-                    """, (timestamp_str, duration, subject, subject_id, notes, task_id, session_type, log_id))
+                    """, (timestamp_str, duration, resolved_subject_name, subject_id, notes, task_id, session_type, log_id))
                     if cursor.rowcount > 0:
                         updated += 1
                     else:
@@ -1209,27 +1242,42 @@ class PomodoroApp:
         self.update_task_combo()
 
     def refresh_subject_list(self):
+        """
+        Flat list of every active subject from every syllabus.
+        Each entry is tagged [L6], [L4], etc. so you can tell which
+        syllabus it belongs to.
+        """
         conn = get_connection()
-        cursor = conn.cursor()
-
-        # New query: groups by paper (Pretest → Paper I → Paper II → Paper III)
+        cursor = conn.cursor(dictionary=True)
         cursor.execute("""
-            SELECT DISTINCT name
-            FROM subjects
-            WHERE active = 1
-            ORDER BY FIELD(paper, 'pretest','paper_i','paper_ii','paper_iii'), chapter, name
+            SELECT s.name,
+                   sy.level        AS syll_level,
+                   sy.syllabus_key AS syll_key
+            FROM subjects s
+            JOIN papers  p  ON p.paper_key = s.paper
+            JOIN syllabi sy ON sy.id       = p.syllabus_id
+            WHERE s.active = 1
+            ORDER BY sy.display_order, sy.display_name,
+                     s.paper, s.chapter, s.name
         """)
-        subjects = [row[0] for row in cursor.fetchall()]
+        rows = cursor.fetchall()
         cursor.close()
         conn.close()
 
-        # Optional: remove any duplicates (just in case)
-        subjects = list(dict.fromkeys(subjects))   # preserves order
+        def _tag(row):
+            lvl = (row.get('syll_level') or '').strip()
+            if lvl:
+                return f"L{lvl}"
+            return (row.get('syll_key') or '?')[:3].upper()
 
-        # Now set the combobox values
+        subjects = [f"[{_tag(r)}] {r['name']}" for r in rows]
+        subjects = list(dict.fromkeys(subjects))
+
         self.subject_combo['values'] = subjects
-        if subjects and not self.subject_var.get():
+        if subjects:
             self.subject_var.set(subjects[0])
+        else:
+            self.subject_var.set('')
 
     def update_task_combo(self):
         options = []
@@ -1540,7 +1588,7 @@ class PomodoroApp:
 
     def log_session(self):
         """Fallback: log a work session without pause tracking."""
-        subject_name = self.subject_var.get().strip()
+        subject_name = _strip_syllabus_tag(self.subject_var.get())
         subject_id = None
         if subject_name:
             try:
@@ -1927,16 +1975,32 @@ class PomodoroApp:
 
     def log_work_session(self):
         """Insert a log entry for a completed work session."""
-        subject_name = self.subject_var.get().strip()
+        subject_name = _strip_syllabus_tag(self.subject_var.get())
         subject_id = None
         if subject_name:
             try:
+                import re as _re
                 conn = get_connection()
-                cursor = conn.cursor()
-                cursor.execute("SELECT id FROM subjects WHERE name = %s", (subject_name,))
+                cursor = conn.cursor(dictionary=True)
+                cursor.execute(
+                    "SELECT id, name FROM subjects WHERE name = %s",
+                    (subject_name,)
+                )
                 row = cursor.fetchone()
+                if not row:
+                    def _norm(s):
+                        return _re.sub(r'^\d+\.\s*', '', s or '').strip().lower()
+                    target = _norm(subject_name)
+                    cursor.execute(
+                        "SELECT id, name FROM subjects WHERE active = 1"
+                    )
+                    for c in cursor.fetchall():
+                        if _norm(c['name']) == target:
+                            row = c
+                            break
                 if row:
-                    subject_id = row[0]
+                    subject_id = row['id']
+                    subject_name = row['name']  # canonical
                 cursor.close()
                 conn.close()
             except Exception:
@@ -2312,7 +2376,13 @@ class PomodoroApp:
             self.cycles_completed = state['cycles_completed']
 
             if state.get('subject'):
-                self.subject_var.set(state['subject'])
+                bare = _strip_syllabus_tag(state['subject'])
+                chosen = None
+                for v in self.subject_combo['values']:
+                    if _strip_syllabus_tag(v) == bare:
+                        chosen = v
+                        break
+                self.subject_var.set(chosen or bare)
             else:
                 self.subject_var.set('')
 
