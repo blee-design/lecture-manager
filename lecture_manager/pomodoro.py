@@ -606,15 +606,38 @@ class PomodoroApp:
         self.streak_label = ttk.Label(timer_frame, font=("Helvetica", 12), foreground="#FFA500")
         self.streak_label.grid(row=7, column=0, pady=5)
 
-        # -- Subject (dropdown) — flat list from every syllabus --
+        # -- Subject (dropdown) with syllabus picker --
         subject_frame = ttk.LabelFrame(left, text="📌 Subject", padding="10")
         subject_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=5)
         subject_frame.columnconfigure(0, weight=1)
+
+        # Syllabus selector (filters the Subject list below)
+        ttk.Label(subject_frame, text="Syllabus:",
+                  font=("Helvetica", 9)).grid(row=0, column=0, sticky=tk.W, padx=5)
+        self.syllabus_var = tk.StringVar()
+        self.syllabus_combo = ttk.Combobox(
+            subject_frame, textvariable=self.syllabus_var, state="readonly"
+        )
+        self.syllabus_combo.grid(
+            row=1, column=0, sticky=(tk.W, tk.E), padx=5, pady=(0, 6)
+        )
+        self.syllabus_combo.bind(
+            '<<ComboboxSelected>>', lambda e: self.on_syllabus_change()
+        )
+        self._syllabus_map = {}   # display_name -> syllabus_key
+
+        # Subject dropdown
+        ttk.Label(subject_frame, text="Subject:",
+                  font=("Helvetica", 9)).grid(row=2, column=0, sticky=tk.W, padx=5)
         self.subject_var = tk.StringVar()
         self.subject_combo = ttk.Combobox(
             subject_frame, textvariable=self.subject_var, state="readonly"
         )
-        self.subject_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
+        self.subject_combo.grid(
+            row=3, column=0, sticky=(tk.W, tk.E), padx=5, pady=(0, 5)
+        )
+
+        self.load_syllabus_list()
         self.refresh_subject_list()
 
         # -- Session Type --
@@ -1243,41 +1266,60 @@ class PomodoroApp:
 
     def refresh_subject_list(self):
         """
-        Flat list of every active subject from every syllabus.
-        Each entry is tagged [L6], [L4], etc. so you can tell which
-        syllabus it belongs to.
+        Load subjects for whichever syllabus is selected above.
+        Filters via papers.syllabus_id → syllabi.syllabus_key.
         """
-        conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT s.name,
-                   sy.level        AS syll_level,
-                   sy.syllabus_key AS syll_key
-            FROM subjects s
-            JOIN papers  p  ON p.paper_key = s.paper
-            JOIN syllabi sy ON sy.id       = p.syllabus_id
-            WHERE s.active = 1
-            ORDER BY sy.display_order, sy.display_name,
-                     s.paper, s.chapter, s.name
-        """)
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
+        syllabus_key = self._syllabus_map.get(self.syllabus_var.get())
 
-        def _tag(row):
-            lvl = (row.get('syll_level') or '').strip()
-            if lvl:
-                return f"L{lvl}"
-            return (row.get('syll_key') or '?')[:3].upper()
+        subjects = []
+        if syllabus_key:
+            conn = get_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("""
+                SELECT DISTINCT s.name
+                FROM subjects s
+                JOIN papers p   ON p.paper_key = s.paper
+                JOIN syllabi sy ON sy.id       = p.syllabus_id
+                WHERE s.active = 1 AND sy.syllabus_key = %s
+                ORDER BY s.paper, s.chapter, s.name
+            """, (syllabus_key,))
+            subjects = [r['name'] for r in cursor.fetchall()]
+            cursor.close()
+            conn.close()
 
-        subjects = [f"[{_tag(r)}] {r['name']}" for r in rows]
         subjects = list(dict.fromkeys(subjects))
-
         self.subject_combo['values'] = subjects
         if subjects:
             self.subject_var.set(subjects[0])
         else:
             self.subject_var.set('')
+
+    def load_syllabus_list(self):
+        """Populate the syllabus dropdown with all active syllabi."""
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT syllabus_key, display_name, level
+            FROM syllabi
+            WHERE active = 1
+            ORDER BY display_order, display_name
+        """)
+        syllabi = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        self._syllabus_map = {
+            s['display_name']: s['syllabus_key'] for s in syllabi
+        }
+        values = [s['display_name'] for s in syllabi]
+        self.syllabus_combo['values'] = values
+        if values:
+            self.syllabus_var.set(values[0])
+
+    def on_syllabus_change(self):
+        """Reload the subject list when the syllabus selection changes."""
+        self.subject_var.set('')
+        self.refresh_subject_list()
 
     def update_task_combo(self):
         options = []
