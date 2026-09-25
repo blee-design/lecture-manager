@@ -4,7 +4,10 @@ import re
 import os
 import sys
 from .constants import C
-from .exceptions import ConverterError, ParseError, ValidationError, IOError
+from .exceptions import (
+    ConverterError, ParseError, ValidationError, IOError,
+    InvalidFilterError,
+)
 
 
 # -------------------- LOGGING --------------------
@@ -26,104 +29,6 @@ def log(msg, level="INFO", verbose=False):
 
 # -------------------- UTILITIES --------------------
 CORRECT_PATTERNS = [r"\*", r"\[(correct|ok|right)\]"]
-
-def validate_filter_pattern(filter_arg, max_question, strict=False):
-    """Validate filter pattern and return parsed numbers with error messages
-    If strict=True, out-of-range numbers are treated as errors (not warnings)"""
-    if not filter_arg or filter_arg.strip() == "":
-        return set(), [], []
-    
-    selected_numbers = set()
-    errors = []
-    warnings = []
-    
-    # Clean the filter argument
-    filter_arg = filter_arg.strip()
-    
-    # Basic validation - only allow digits, commas, dots, and spaces
-    if not re.match(r'^[\d\s,.]+$', filter_arg.replace('..', '')):
-        errors.append(f"Pattern contains invalid characters. Only numbers, commas, and '..' are allowed.")
-        return selected_numbers, errors, warnings
-    
-    parts = [p.strip() for p in filter_arg.split(',') if p.strip()]
-    
-    for part in parts:
-        if '..' in part:
-            # Check for multiple '..' in one part
-            if part.count('..') > 1:
-                errors.append(f"Multiple '..' in '{part}' - use only one '..' per range")
-                continue
-                
-            range_parts = part.split('..')
-            if len(range_parts) != 2:
-                errors.append(f"Invalid range format in '{part}' - must be 'start..end'")
-                continue
-            
-            start_str, end_str = range_parts[0].strip(), range_parts[1].strip()
-            
-            # Validate start and end are numbers
-            if not start_str.isdigit() or not end_str.isdigit():
-                errors.append(f"Non-numeric values in range '{part}'")
-                continue
-            
-            start, end = int(start_str), int(end_str)
-            
-            # Validate range bounds
-            if start <= 0:
-                errors.append(f"Range start in '{part}' must be positive (got {start})")
-                continue
-            if end <= 0:
-                errors.append(f"Range end in '{part}' must be positive (got {end})")
-                continue
-            
-            # Check if range is reversed
-            if start > end:
-                # Auto-correct but warn
-                start, end = end, start
-                warnings.append(f"Range '{part}' was reversed, auto-corrected to {start}..{end}")
-            
-            # Check if range is within available questions - TREAT AS ERROR IN STRICT MODE
-            if start > max_question:
-                if strict:
-                    errors.append(f"Range start {start} exceeds maximum available question {max_question}")
-                else:
-                    warnings.append(f"Range start {start} exceeds maximum available question {max_question}")
-                    start = max_question + 1  # Make range empty
-            elif end > max_question:
-                if strict:
-                    errors.append(f"Range end {end} exceeds maximum available question {max_question}")
-                else:
-                    warnings.append(f"Range end {end} exceeds maximum available question {max_question}")
-                    end = max_question
-            
-            # Only add valid numbers if no errors in strict mode
-            if not (strict and (start > max_question or end > max_question)):
-                if start <= end:
-                    for num in range(start, end + 1):
-                        if 1 <= num <= max_question:
-                            selected_numbers.add(num)
-        else:
-            # Handle individual number
-            if not part.isdigit():
-                errors.append(f"Invalid number '{part}' - must be a positive integer")
-                continue
-            
-            num = int(part)
-            
-            if num <= 0:
-                errors.append(f"Invalid question number '{num}' - must be positive")
-                continue
-            
-            # Check if number exists - TREAT AS ERROR IN STRICT MODE
-            if num > max_question:
-                if strict:
-                    errors.append(f"Question {num} not found (maximum available: {max_question})")
-                else:
-                    warnings.append(f"Question {num} not found (maximum available: {max_question})")
-            else:
-                selected_numbers.add(num)
-    
-    return selected_numbers, errors, warnings
 
 def strip_latex_blocks(text):
     """Only strip LaTeX blocks if the text actually contains LaTeX markers"""
@@ -166,97 +71,6 @@ def is_correct_option(option_text, has_latex_in_question=False):
             clean_text = re.sub(pat, "", option_text, flags=re.IGNORECASE).strip()
             return True, clean_text
     return False, option_text.strip()
-
-def normalize_text(t):
-    return re.sub(r"\s+", " ", t.strip().lower())
-
-def filter_questions(questions, filter_arg, verbose=False):
-    """Filter questions based on selection criteria - with comprehensive error handling
-    Throws error if questions are out of range"""
-    if not filter_arg or filter_arg.strip() == "":
-        log(f"No filter specified, using all {len(questions)} questions", "INFO", verbose)
-        return questions
-
-    # Get the maximum question number
-    if not questions:
-        print(f"{C.YELLOW}[WARNING] No questions to filter{C.RESET}")
-        return questions
-    
-    max_question = max([q.get("question_no", 0) for q in questions])
-    log(f"Parsing filter pattern: '{filter_arg}'", "INFO", verbose)
-    log(f"Available questions: 1 to {max_question}", "INFO", verbose)
-
-    # Use STRICT mode - out-of-range numbers are ERRORS
-    selected_numbers, errors, warnings = validate_filter_pattern(filter_arg, max_question, strict=True)
-
-    # Display errors if any - THESE ARE NOW FATAL
-    if errors:
-        raise InvalidFilterError("\n".join(errors))
-        for error in errors:
-            print(f"  • {error}")
-        print(f"\n{C.YELLOW}Available questions: 1 to {max_question}{C.RESET}")
-        print(f"{C.YELLOW}Examples of valid patterns:{C.RESET}")
-        print(f"  {C.GREEN}-q 1,5,10{C.RESET}           # Individual questions")
-        print(f"  {C.GREEN}-q 5..10{C.RESET}            # Range (inclusive)")
-        print(f"  {C.GREEN}-q 1,5..10,15,20..25{C.RESET} # Mixed pattern")
-        print(f"\n{C.YELLOW}Fix: Remove out-of-range numbers from your filter pattern.{C.RESET}")
-
-    # If no valid numbers selected
-    if not selected_numbers:
-        print(f"{C.YELLOW}[WARNING] No valid question numbers selected, using all questions{C.RESET}")
-        return questions
-
-    # Display warnings if any (these are non-fatal like reversed ranges)
-    if warnings and verbose:
-        print(f"\n{C.YELLOW}[WARNING] Filter adjustments:{C.RESET}")
-        for warning in warnings:
-            print(f"  • {warning}")
-
-    # Filter questions
-    filtered = []
-    for q in questions:
-        q_no = q.get("question_no", 0)
-        if q_no in selected_numbers:
-            filtered.append(q)
-
-    # Sort selected numbers for consistent display
-    sorted_numbers = sorted(selected_numbers)
-    
-    # Show which numbers were actually found vs requested
-    found_nums = [q.get("question_no", 0) for q in filtered]
-    not_found = [n for n in selected_numbers if n not in found_nums]
-    
-    if not_found:
-        print(f"{C.YELLOW}[WARNING] Some questions not found in input:{C.RESET}")
-        print(f"  Missing: {sorted(not_found)}")
-        print(f"  Available: 1 to {max_question}")
-
-    # Summary
-    log(f"\n{C.CYAN}Filter Summary:{C.RESET}", "SUMMARY", True)
-    log(f"  Requested pattern: {filter_arg}", "INFO", True)
-    log(f"  Parsed numbers: {sorted_numbers}", "INFO", verbose)
-    log(f"  Found: {len(filtered)} of {len(selected_numbers)} requested questions", "INFO", True)
-    
-    if verbose and filtered:
-        # Show which questions were selected
-        print(f"\n{C.CYAN}Selected Questions:{C.RESET}")
-        for q in filtered[:10]:  # Show first 10 only
-            q_preview = q.get('text', '')[:50] + "..." if len(q.get('text', '')) > 50 else q.get('text', '')
-            print(f"  Question {q.get('question_no', '?'):3d}: {q_preview}")
-        if len(filtered) > 10:
-            print(f"  ... and {len(filtered) - 10} more questions")
-
-    # Re-number filtered questions sequentially
-    for i, q in enumerate(filtered, 1):
-        old_no = q.get("question_no", 0)
-        # Store original number if not already stored
-        if "original_question_no" not in q:
-            q["original_question_no"] = old_no
-        q["question_no"] = i
-        if verbose and old_no != i:
-            log(f"  Renumbered: Question {old_no} → {i}", "INFO", verbose)
-
-    return filtered
 
 def find_line_in_file(file_path, search_text):
     """Find the actual line number of text in the file"""
@@ -384,6 +198,9 @@ def validate_filter_pattern(filter_arg, max_question, strict=False):
     
     return selected_numbers, errors, warnings
 
+def normalize_text(t):
+    return re.sub(r"\s+", " ", t.strip().lower())
+
 def filter_questions(questions, filter_arg, verbose=False):
     """Filter questions based on selection criteria - with comprehensive error handling"""
     if not filter_arg or filter_arg.strip() == "":
@@ -404,7 +221,7 @@ def filter_questions(questions, filter_arg, verbose=False):
 
     # Display errors if any
     if errors:
-        raise InvalidFilterError("\n".join(errors))
+        print(f"\n{C.RED}Invalid filter pattern:{C.RESET}")
         for error in errors:
             print(f"  • {error}")
         print(f"\n{C.YELLOW}Available questions: 1 to {max_question}{C.RESET}")
@@ -412,9 +229,8 @@ def filter_questions(questions, filter_arg, verbose=False):
         print(f"  {C.GREEN}-q 1,5,10{C.RESET}           # Individual questions")
         print(f"  {C.GREEN}-q 5..10{C.RESET}            # Range (inclusive)")
         print(f"  {C.GREEN}-q 1,5..10,15,20..25{C.RESET} # Mixed pattern")
-        print(f"\n{C.YELLOW}Note:{C.RESET} Question numbers must exist in your input file.")
-        # Don't exit, just return all questions as a safety measure
-        return questions
+        print(f"\n{C.YELLOW}Fix: Remove out-of-range numbers from your filter pattern.{C.RESET}")
+        raise InvalidFilterError("\n".join(errors))
 
     # If no valid numbers selected
     if not selected_numbers:

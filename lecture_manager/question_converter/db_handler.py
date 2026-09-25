@@ -8,32 +8,83 @@ from .constants import C          # <-- add this
 from .utils import log, filter_questions
 from ..utils import print_colored, COLORS, color_text
 from ..db import get_connection
-from .exceptions import DuplicateQuestionError, ConverterError
+from .exceptions import DuplicateQuestionError, ConverterError, ValidationError
 from .text_parser import parse_text_file
 from .xml_handler import xml_to_questions
 from .json_handler import json_to_questions
 
-def map_paper_value(paper_str):
+def map_paper_value(paper_str, level=None):
+    """
+    Resolve a paper string from an import file to a paper_key.
+
+    Resolution order:
+      1. Exact match against paper_key / display_name / folder_name
+      2. Loose substring match, preferring the one whose syllabus level
+         matches the question's level (if provided)
+      3. Legacy aliases for very old import files
+
+    Returns a paper_key, or None if nothing matches.
+    """
     if not paper_str:
         return None
+
     raw = paper_str.strip().lower()
+    from ..syllabus_config import get_papers, get_syllabi
 
-    from ..syllabus_config import get_papers
-    for p in get_papers(active_only=False):
-        key    = (p.get('paper_key') or '').lower()
-        name   = (p.get('display_name') or '').lower()
-        folder = (p.get('folder_name') or '').lower()
-        if raw in (key, name, folder):
-            return p['paper_key']
+    papers = get_papers(active_only=False)
 
-    # Legacy aliases for very old files
+    raw = paper_str.strip().lower()
+    from ..syllabus_config import get_papers, get_syllabi
+
+    papers = get_papers(active_only=False)
+
+    def _norm(s):
+        """Normalize for comparison: lowercase, single spaces, spaces→underscore."""
+        if s is None:
+            return ''
+        return re.sub(r'\s+', '_', str(s).strip().lower())
+
+    raw_norm = _norm(raw)
+
+    # ---- 1. Exact match on key / name / folder (normalized) ----
+    for p in papers:
+        for candidate in (p.get('paper_key'), p.get('display_name'), p.get('folder_name')):
+            if _norm(candidate) == raw_norm:
+                return p['paper_key']
+
+    # ---- 2. Substring match (raw is contained in key/name/folder) ----
+    candidates = []
+    for p in papers:
+        for candidate in (p.get('paper_key'), p.get('display_name'), p.get('folder_name')):
+            if _norm(raw) in _norm(candidate):
+                candidates.append(p)
+                break
+
+    if candidates:
+        # Prefer the candidate whose syllabus level matches the question level
+        if level:
+            level_norm = _norm(level).replace('level_', '').lstrip('l')
+            syllabi = {s['id']: s for s in get_syllabi(active_only=False)}
+            for c in candidates:
+                sid = c.get('syllabus_id')
+                if sid and sid in syllabi:
+                    c_level = _norm(syllabi[sid].get('level')).replace('level_', '').lstrip('l')
+                    if c_level == level_norm:
+                        return c['paper_key']
+        # Fall back to the first candidate only if it's unambiguous
+        if len(candidates) == 1:
+            return candidates[0]['paper_key']
+        # Multiple candidates with no level to disambiguate: pick nothing.
+        # The caller will raise ValidationError with the full list.
+
+    # ---- 3. Legacy aliases ----
     legacy = {
-        'pretest officer': 'pretest',
-        'first paper': 'paper_i',
+        'pretest officer':  'pretest',
+        'first paper':      'paper_i',
         'first paper: economics': 'paper_i',
-        'second paper': 'paper_ii',
+        'second paper':     'paper_ii',
         'second paper: management': 'paper_ii',
-        'third paper': 'paper_iii',
+        'third paper':      'paper_iii',
         'third paper: research methodologies, ict and banking laws & regulation': 'paper_iii',
     }
     return legacy.get(raw)
@@ -172,7 +223,10 @@ def insert_question(q_dict, source=None, force=False):
     date = clean_value(q_dict.get('question_date'))
     institution = clean_value(q_dict.get('institution'))
     level = clean_value(q_dict.get('level'))
-    paper = map_paper_value(clean_value(q_dict.get('paper')))
+    paper = map_paper_value(
+        clean_value(q_dict.get('paper')),
+        level=clean_value(q_dict.get('level')),
+    )
     from ..syllabus_config import get_papers
     if q_dict.get('paper') and not paper:
         valid = [p['paper_key'] for p in get_papers(active_only=False)]
