@@ -921,55 +921,76 @@ def update_question(qid, **kwargs):
                 fields.append(f"{key} = %s")
             values.append(val)
 
-    if not fields:
-        return 'no_fields'
+    has_related = (options is not None or pairs is not None or hints is not None)
 
-    values.append(qid)
-    sql = f"UPDATE questions SET {', '.join(fields)} WHERE id = %s"
+    # Bail only if there is genuinely nothing to do — no scalar fields AND
+    # no relationship tables. Previously this returned 'no_fields' when
+    # only options/pairs/hints were staged, silently dropping the change.
+    if not fields and not has_related:
+        return 'no_fields'
 
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute(sql, values)
-        conn.commit()
-        affected = cursor.rowcount
+        affected = 0
+        if fields:
+            values.append(qid)
+            sql = f"UPDATE questions SET {', '.join(fields)} WHERE id = %s"
+            cursor.execute(sql, values)
+            affected = cursor.rowcount
 
-        if options is not None or pairs is not None or hints is not None:
+        if has_related:
             if options is not None:
                 cursor.execute("DELETE FROM question_options WHERE question_id = %s", (qid,))
                 # Pull the question-level fractions (may not be in kwargs)
                 q_frac_correct = kwargs.get('fraction_correct', 100)
-                q_frac_wrong = kwargs.get('fraction_wrong', -20)
+                q_frac_wrong   = kwargs.get('fraction_wrong', -20)
                 for idx, opt in enumerate(options):
                     if 'fraction' in opt and opt['fraction'] is not None:
                         fraction = opt['fraction']
                     else:
                         fraction = q_frac_correct if opt.get('correct', False) else q_frac_wrong
                     cursor.execute("""
-                        INSERT INTO question_options (question_id, text, fraction, feedback, display_order)
+                        INSERT INTO question_options
+                            (question_id, text, fraction, feedback, display_order)
                         VALUES (%s, %s, %s, %s, %s)
                     """, (qid, opt['text'], fraction, opt.get('feedback', ''), idx))
+
             if pairs is not None:
                 cursor.execute("DELETE FROM question_matching_pairs WHERE question_id = %s", (qid,))
                 for idx, pair in enumerate(pairs):
                     cursor.execute("""
-                        INSERT INTO question_matching_pairs (question_id, subquestion, answer, display_order)
+                        INSERT INTO question_matching_pairs
+                            (question_id, subquestion, answer, display_order)
                         VALUES (%s, %s, %s, %s)
                     """, (qid, pair['subquestion'], pair['answer'], idx))
+
             if hints is not None:
                 cursor.execute("DELETE FROM question_hints WHERE question_id = %s", (qid,))
                 for idx, hint in enumerate(hints, 1):
                     cursor.execute("""
-                        INSERT INTO question_hints (question_id, hint_text, clear_incorrect, show_num_correct, hint_number)
+                        INSERT INTO question_hints
+                            (question_id, hint_text, clear_incorrect, show_num_correct, hint_number)
                         VALUES (%s, %s, %s, %s, %s)
-                    """, (qid, hint['text'], hint.get('clear_incorrect', False),
+                    """, (qid, hint['text'],
+                          hint.get('clear_incorrect', False),
                           hint.get('show_num_correct', False), idx))
-            conn.commit()
 
+        conn.commit()
         cursor.close()
         conn.close()
+
+        # If we only touched related tables, the parent row didn't change —
+        # but we did rewrite its children, so report success either way.
+        if has_related:
+            return 'updated'
         return 'updated' if affected > 0 else 'no_change'
+
     except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         cursor.close()
         conn.close()
         return f'error: {e}'
