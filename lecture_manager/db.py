@@ -22,7 +22,7 @@ _APP_TABLES = [
     'facebook_entries',
     'pomodoro_settings', 'pomodoro_tasks', 'pomodoro_log',
     'pomodoro_state', 'pomodoro_badges', 'user_badges', 'pomodoro_pauses',
-    'subjects', 'chapters', 'papers',
+    'subjects', 'chapters', 'papers', 'syllabi',
     'questions', 'question_options', 'question_matching_pairs', 'question_hints',
     'oauth_credentials',
     'instapaper_credentials', 'instapaper_articles', 'instapaper_oauth',
