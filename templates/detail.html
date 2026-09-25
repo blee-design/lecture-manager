@@ -22,7 +22,28 @@
         {% endif %}
       </dd>
 
+      {% set _p = lookup_paper(record.paper) %}
+      {% if _p and _p.syllabus %}
       <dt class="col-sm-3">Syllabus</dt>
+      <dd class="col-sm-9">
+        {{ _p.syllabus.display_name }}
+        {% if _p.syllabus.level %}
+          <span class="badge bg-info">Level {{ _p.syllabus.level }}</span>
+        {% endif %}
+      </dd>
+      {% endif %}
+
+      <dt class="col-sm-3">Paper</dt>
+      <dd class="col-sm-9">
+        {% if _p and _p.paper %}
+          {{ _p.paper.display_name }}
+          <code class="text-muted small">[{{ record.paper }}]</code>
+        {% else %}
+          {{ record.paper or '—' }}
+        {% endif %}
+      </dd>
+
+      <dt class="col-sm-3">Syllabus ID</dt>
       <dd class="col-sm-9">{{ record.syllabus_id or '' }}</dd>
 
       <dt class="col-sm-3">Subject</dt>
@@ -113,8 +134,6 @@
     </div>
     {% endif %}
 
-    <div class="mt-4">
-      <a href="{{ url_for('lectures') }}" class="btn btn-secondary">Back to list</a>
     <div class="mt-4">
       <a href="{{ url_for('lectures') }}" class="btn btn-secondary">Back to list</a>
       <a href="{{ url_for('edit_lecture_web', id=record.id) }}" class="btn btn-warning">Edit</a>

@@ -7,20 +7,122 @@ Hardcoded templates in DEFAULT_PAPER_TEMPLATE exist only as optional seeds.
 from .db import get_connection
 from .utils import print_colored, color_text, COLORS
 
+def _fmt_size(nbytes):
+    """Human-readable file size."""
+    if nbytes < 1024:
+        return f"{nbytes} B"
+    if nbytes < 1024 * 1024:
+        return f"{nbytes/1024:.1f} KB"
+    return f"{nbytes/(1024*1024):.2f} MB"
 
-# ---------- READ ----------
-def get_papers(active_only=True):
-    """Return list of paper dicts. Empty list means user hasn't set up yet."""
+# ---------- SYLLABI ----------
+def get_syllabi(active_only=True):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
-    sql = "SELECT * FROM papers"
+    sql = "SELECT * FROM syllabi"
     if active_only:
         sql += " WHERE active = 1"
     sql += " ORDER BY display_order, display_name"
     cursor.execute(sql)
     rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
+    cursor.close(); conn.close()
+    return rows
+
+
+def get_syllabus(syllabus_key):
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM syllabi WHERE syllabus_key = %s", (syllabus_key,))
+    row = cursor.fetchone()
+    cursor.close(); conn.close()
+    return row
+
+
+def add_syllabus(syllabus_key, display_name, level=None, description=None):
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT COALESCE(MAX(display_order), 0) FROM syllabi")
+        next_order = (cursor.fetchone()[0] or 0) + 10
+        cursor.execute("""
+            INSERT INTO syllabi (syllabus_key, display_name, level, description, display_order)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (syllabus_key, display_name, level, description, next_order))
+        conn.commit()
+        return cursor.lastrowid
+    except Exception as e:
+        print_colored(f"[!] Could not add syllabus: {e}", COLORS.RED)
+        return None
+    finally:
+        cursor.close(); conn.close()
+
+
+def update_syllabus(syllabus_id, **fields):
+    allowed = {'display_name', 'level', 'description', 'active', 'display_order', 'syllabus_key'}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return False
+    sets = ", ".join(f"{k} = %s" for k in updates)
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"UPDATE syllabi SET {sets} WHERE id = %s",
+                   (*updates.values(), syllabus_id))
+    conn.commit()
+    ok = cursor.rowcount > 0
+    cursor.close(); conn.close()
+    return ok
+
+
+def delete_syllabus(syllabus_id, cascade_papers=False):
+    """Delete a syllabus. If cascade_papers is True, also delete its papers
+    and (transitively) their subjects and chapters."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id FROM papers WHERE syllabus_id = %s", (syllabus_id,))
+    paper_ids = [r[0] for r in cursor.fetchall()]
+
+    if paper_ids and not cascade_papers:
+        cursor.close(); conn.close()
+        raise ValueError(
+            f"Syllabus has {len(paper_ids)} paper(s). "
+            f"Pass cascade_papers=True to delete them too."
+        )
+
+    if cascade_papers and paper_ids:
+        placeholders = ",".join(["%s"] * len(paper_ids))
+        cursor.execute(f"""
+            DELETE FROM subjects
+            WHERE paper IN (
+                SELECT paper_key FROM papers WHERE id IN ({placeholders})
+            )
+        """, paper_ids)
+        cursor.execute(f"DELETE FROM papers WHERE id IN ({placeholders})", paper_ids)
+
+    cursor.execute("DELETE FROM syllabi WHERE id = %s", (syllabus_id,))
+    conn.commit()
+    ok = cursor.rowcount > 0
+    cursor.close(); conn.close()
+    return ok
+
+# ---------- READ ----------
+def get_papers(active_only=True, syllabus_id=None):
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    conditions = []
+    params = []
+    if active_only:
+        conditions.append("active = 1")
+    if syllabus_id is not None:
+        conditions.append("syllabus_id = %s")
+        params.append(syllabus_id)
+    sql = "SELECT * FROM papers"
+    if conditions:
+        sql += " WHERE " + " AND ".join(conditions)
+    sql += " ORDER BY display_order, display_name"
+    cursor.execute(sql, params)
+    rows = cursor.fetchall()
+    cursor.close(); conn.close()
     return rows
 
 def get_subjects(paper_key=None, active_only=True):
@@ -91,28 +193,50 @@ def get_chapters(subject_id=None, active_only=True):
     return rows
 
 # ---------- WRITE ----------
-def add_paper(paper_key, display_name, folder_name, keywords=""):
+def add_paper(paper_key, display_name, folder_name, keywords="", syllabus_id=None):
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
+
+    # Warn if another paper already uses this folder name
+    cursor.execute(
+        "SELECT paper_key, display_name FROM papers WHERE folder_name = %s",
+        (folder_name,),
+    )
+    collisions = cursor.fetchall()
+    if collisions:
+        print_colored(
+            f"[!] Folder name '{folder_name}' is already used by:",
+            COLORS.YELLOW,
+        )
+        for c in collisions:
+            print(f"     - [{c['paper_key']}] {c['display_name']}")
+        ans = input(color_text("  Continue anyway? (y/n): ", COLORS.MAGENTA)).strip().lower()
+        if ans != 'y':
+            cursor.close()
+            conn.close()
+            print_colored("Cancelled.", COLORS.YELLOW)
+            return None
+
     try:
-        # Append new papers after existing ones: max(display_order) + 10
         cursor.execute("SELECT COALESCE(MAX(display_order), 0) FROM papers")
         next_order = (cursor.fetchone()[0] or 0) + 10
         cursor.execute("""
-            INSERT INTO papers (paper_key, display_name, folder_name, keywords, display_order)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (paper_key, display_name, folder_name, keywords, next_order))
+            INSERT INTO papers
+                (paper_key, display_name, folder_name, keywords, display_order, syllabus_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (paper_key, display_name, folder_name, keywords, next_order, syllabus_id))
         conn.commit()
         return cursor.lastrowid
     except Exception as e:
         print_colored(f"[!] Could not add paper: {e}", COLORS.RED)
         return None
     finally:
-        cursor.close(); conn.close()
-
+        cursor.close()
+        conn.close()
 
 def update_paper(paper_id, **fields):
-    allowed = {'display_name', 'folder_name', 'keywords', 'active', 'display_order'}
+    allowed = {'display_name', 'folder_name', 'keywords', 'active',
+               'display_order', 'syllabus_id'}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return False
@@ -126,6 +250,19 @@ def update_paper(paper_id, **fields):
     cursor.close(); conn.close()
     return ok
 
+def clear_syllabus(syllabus_id):
+    """Delete all papers (and their subjects/chapters) under one syllabus."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT paper_key FROM papers WHERE syllabus_id = %s",
+                   (syllabus_id,))
+    keys = [r[0] for r in cursor.fetchall()]
+    if keys:
+        placeholders = ",".join(["%s"] * len(keys))
+        cursor.execute(f"DELETE FROM subjects WHERE paper IN ({placeholders})", keys)
+        cursor.execute(f"DELETE FROM papers WHERE paper_key IN ({placeholders})", keys)
+    conn.commit()
+    cursor.close(); conn.close()
 
 def delete_paper(paper_id, cascade_subjects=False):
     conn = get_connection()
@@ -267,97 +404,174 @@ def seed_from_default_template():
 
 
 # ---------- EXPORT / IMPORT ----------
-def export_syllabus(filepath):
+def export_syllabus(filepath, syllabus_id=None, verbose=True):
     """
-    Write all papers + subjects + chapters to a JSON file (v2).
+    Write papers + subjects + chapters to JSON (v3).
+    If `syllabus_id` is given, export just that syllabus. Otherwise all.
 
-    Structure:
-    {
-      "version": 2,
-      "exported_at": "...",
-      "papers": [
-        {
-          paper_key, display_name, folder_name, keywords, display_order,
-          subjects: [
-            {
-              name, chapter,
-              chapters: [
-                { chapter_code, name, description, display_order }
-              ]
-            }
-          ]
-        }
-      ]
-    }
-    """
-    import json
-    from datetime import datetime
-
-    papers = get_papers(active_only=False)
-    data = {
-        "version": 2,
-        "exported_at": datetime.now().isoformat(),
-        "papers": [],
-    }
-
-    total_subjects = 0
-    total_chapters = 0
-
-    for p in papers:
-        subs = get_subjects(paper_key=p["paper_key"], active_only=False)
-        sub_list = []
-        for s in subs:
-            chapters = get_chapters(subject_id=s["id"], active_only=False)
-            sub_list.append({
-                "name": s["name"],
-                "chapter": s.get("chapter") or "",
-                "chapters": [
-                    {
-                        "chapter_code": c.get("chapter_code") or "",
-                        "name": c.get("name") or "",
-                        "description": c.get("description") or "",
-                        "display_order": c.get("display_order", 0),
-                    }
-                    for c in chapters
-                ],
-            })
-            total_subjects += 1
-            total_chapters += len(chapters)
-
-        data["papers"].append({
-            "paper_key": p["paper_key"],
-            "display_name": p["display_name"],
-            "folder_name": p["folder_name"],
-            "keywords": p.get("keywords") or "",
-            "display_order": p.get("display_order", 0),
-            "subjects": sub_list,
-        })
-
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-    print_colored(
-        f"[✓] Exported {len(papers)} papers, {total_subjects} subjects, "
-        f"{total_chapters} chapters to {filepath}",
-        COLORS.GREEN
-    )
-    return True
-
-def import_syllabus(filepath, merge=True):
-    """
-    Read papers + subjects + chapters from a JSON file.
-
-    Behaviour (both merge modes are additive — no data loss):
-      - Papers that don't exist are created.
-      - Papers that exist are walked into; missing subjects are added.
-      - Within each subject, missing chapters are added.
-      - Existing rows are never overwritten.
-
-    merge=False additionally wipes papers/subjects/chapters *first*.
+    Returns True on success (kept for backwards compatibility).
     """
     import json
     import os
+    import time
+    from datetime import datetime
 
+    t0 = time.time()
+
+    if syllabus_id is not None:
+        syllabi = [s for s in get_syllabi(active_only=False)
+                   if s['id'] == syllabus_id]
+        scope_label = "Current syllabus"
+    else:
+        syllabi = get_syllabi(active_only=False)
+        scope_label = "All syllabi"
+
+    if not syllabi:
+        if verbose:
+            print_colored("[i] Nothing to export — no syllabi configured.",
+                          COLORS.YELLOW)
+        return True
+
+    # ---------- banner ----------
+    if verbose:
+        print()
+        print_colored("═" * 64, COLORS.CYAN)
+        print_colored("  📤  EXPORT SYLLABUS", COLORS.CYAN, bold=True)
+        print_colored("═" * 64, COLORS.CYAN)
+        print()
+        print(f"  Scope : {scope_label}")
+        print(f"  File  : {filepath}")
+        print()
+        print_colored("  📋  Contents", COLORS.CYAN, bold=True)
+        print_colored("  " + "─" * 60, COLORS.CYAN)
+
+    # ---------- build payload ----------
+    data = {
+        "version": 3,
+        "exported_at": datetime.now().isoformat(),
+        "syllabi": [],
+    }
+
+    total_papers = 0
+    total_subjects = 0
+    total_chapters = 0
+
+    for syl in syllabi:
+        papers_out = []
+        syl_papers = 0
+        syl_subjects = 0
+        syl_chapters = 0
+
+        for p in get_papers(active_only=False, syllabus_id=syl['id']):
+            subj_out = []
+            for s in get_subjects(paper_key=p['paper_key'], active_only=False):
+                chapters = get_chapters(subject_id=s['id'], active_only=False)
+                subj_out.append({
+                    "name": s["name"],
+                    "chapter": s.get("chapter") or "",
+                    "chapters": [
+                        {
+                            "chapter_code": c.get("chapter_code") or "",
+                            "name": c.get("name") or "",
+                            "description": c.get("description") or "",
+                            "display_order": c.get("display_order", 0),
+                        }
+                        for c in chapters
+                    ],
+                })
+                syl_subjects += 1
+                syl_chapters += len(chapters)
+
+            papers_out.append({
+                "paper_key": p["paper_key"],
+                "display_name": p["display_name"],
+                "folder_name": p["folder_name"],
+                "keywords": p.get("keywords") or "",
+                "display_order": p.get("display_order", 0),
+                "subjects": subj_out,
+            })
+            syl_papers += 1
+
+        data["syllabi"].append({
+            "syllabus_key": syl["syllabus_key"],
+            "display_name": syl["display_name"],
+            "level": syl.get("level"),
+            "description": syl.get("description"),
+            "display_order": syl.get("display_order", 0),
+            "papers": papers_out,
+        })
+
+        total_papers += syl_papers
+        total_subjects += syl_subjects
+        total_chapters += syl_chapters
+
+        # ---------- per-syllabus line ----------
+        if verbose:
+            lvl = f"  (Level {syl['level']})" if syl.get('level') else ""
+            print(f"  📚 {color_text(syl['display_name'], COLORS.GREEN, bold=True)}{lvl}")
+            if not papers_out:
+                print_colored("     (no papers)", COLORS.YELLOW)
+            for i, p in enumerate(papers_out):
+                last = (i == len(papers_out) - 1)
+                branch = "└─" if last else "├─"
+                n_subj = len(p["subjects"])
+                n_chap = sum(len(s["chapters"]) for s in p["subjects"])
+                name = p["display_name"]
+                if len(name) > 42:
+                    name = name[:39] + "..."
+                print(f"     {branch} 📄 {name:<44} "
+                      f"{n_subj:>2} subj · {n_chap:>3} ch")
+            print()
+
+    # ---------- write file ----------
+    if verbose:
+        print_colored("  ⏳ Writing to file...", COLORS.BLUE)
+
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print_colored(f"\n  [!] Write failed: {e}", COLORS.RED)
+        return False
+
+    # ---------- summary ----------
+    if verbose:
+        try:
+            size = os.path.getsize(filepath)
+            size_str = _fmt_size(size)
+        except OSError:
+            size_str = "?"
+        elapsed = time.time() - t0
+
+        print()
+        print_colored("  ✓ " +
+                      f"Exported {len(syllabi)} syllab{'us' if len(syllabi)==1 else 'i'} "
+                      f"→ {total_papers} papers · {total_subjects} subjects · "
+                      f"{total_chapters} chapters",
+                      COLORS.GREEN, bold=True)
+        print(f"     📁 {filepath}  ({size_str})")
+        print(f"     ⏱️  {elapsed:.2f}s")
+        print_colored("═" * 64, COLORS.CYAN)
+        print()
+
+    return True
+
+def import_syllabus(filepath, merge=True, target_syllabus_id=None,
+                    verbose=True):
+    """
+    Read a syllabus JSON file and import it.
+
+    Accepts both v3 (top-level "syllabi") and v2 (flat "papers") formats.
+
+    Returns (papers_added, subjects_added, chapters_added).
+    """
+    import json
+    import os
+    import time
+
+    t0 = time.time()
+
+    # ---------- load file ----------
     if not os.path.exists(filepath):
         print_colored(f"[!] File not found: {filepath}", COLORS.RED)
         return 0, 0, 0
@@ -369,76 +583,258 @@ def import_syllabus(filepath, merge=True):
         print_colored(f"[!] Could not read file: {e}", COLORS.RED)
         return 0, 0, 0
 
-    if not isinstance(data, dict) or "papers" not in data:
-        print_colored("[!] Invalid syllabus file — missing 'papers' key.", COLORS.RED)
+    if not isinstance(data, dict):
+        print_colored("[!] Invalid syllabus file — expected a JSON object.",
+                      COLORS.RED)
         return 0, 0, 0
 
-    if not merge:
-        clear_all()
-        print_colored("[i] Cleared existing syllabus.", COLORS.YELLOW)
+    version = data.get("version", 2)
 
+    # ---------- normalise bundles ----------
+    if version >= 3 and "syllabi" in data:
+        bundles = [(syl, syl.get("papers", [])) for syl in data["syllabi"]]
+    else:
+        # v2: flat file — wrap in a synthetic syllabus
+        if target_syllabus_id is not None:
+            target = next((s for s in get_syllabi(active_only=False)
+                           if s['id'] == target_syllabus_id), None)
+        else:
+            target = next((s for s in get_syllabi(active_only=False)), None)
+            if not target:
+                add_syllabus("imported", "Imported syllabus",
+                             level=None,
+                             description="Auto-created on v2 import")
+                target = next(s for s in get_syllabi(active_only=False)
+                              if s['syllabus_key'] == "imported")
+        fake_syl = target or {
+            "syllabus_key": "imported",
+            "display_name": "Imported syllabus",
+            "level": None, "description": None, "display_order": 0,
+        }
+        bundles = [(fake_syl, data.get("papers", []))]
+
+    if target_syllabus_id is not None:
+        override = next((s for s in get_syllabi(active_only=False)
+                         if s['id'] == target_syllabus_id), None)
+        if override:
+            bundles = [(override, papers) for (_s, papers) in bundles]
+
+    # ---------- banner ----------
+    if verbose:
+        print()
+        print_colored("═" * 64, COLORS.CYAN)
+        print_colored("  📥  IMPORT SYLLABUS", COLORS.CYAN, bold=True)
+        print_colored("═" * 64, COLORS.CYAN)
+        print()
+        fname = os.path.basename(filepath)
+        print(f"  📁 File   : {fname}")
+        print(f"  🔖 Format : v{version}"
+              + (f"  ·  {len(data.get('syllabi', data.get('papers', [])))} syllabi"
+                 if version >= 3 else f"  ·  {len(data.get('papers', []))} papers"))
+        mode_label = "Wipe existing then import" if not merge else "Merge (add new only)"
+        print(f"  ⚙️  Mode   : {mode_label}")
+        if target_syllabus_id is not None:
+            t = next((s for s in get_syllabi(active_only=False)
+                      if s['id'] == target_syllabus_id), None)
+            if t:
+                print(f"  🎯 Target : {t['display_name']}  (papers will be forced here)")
+        print()
+
+    # ---------- wipe if requested ----------
+    if not merge:
+        if verbose:
+            print_colored("  ⚠️  Clearing existing syllabus data...", COLORS.YELLOW)
+        clear_all()
+
+    # ---------- preview pass (read-only) ----------
+    if verbose:
+        print_colored("  📋  PREVIEW", COLORS.CYAN, bold=True)
+        print_colored("  " + "─" * 60, COLORS.CYAN)
+
+        existing_syl_keys = {s['syllabus_key'] for s in get_syllabi(active_only=False)}
+        existing_paper_keys = {p['paper_key'] for p in get_papers(active_only=False)}
+
+        for syl_spec, papers in bundles:
+            skey = syl_spec.get("syllabus_key") or "(missing key)"
+            sname = syl_spec.get("display_name") or skey
+            lvl = f"  (Level {syl_spec['level']})" if syl_spec.get('level') else ""
+            exists = skey in existing_syl_keys
+            tag = color_text("[exists]", COLORS.BLUE) if exists \
+                  else color_text("[new]   ", COLORS.GREEN)
+            print(f"  📚 {color_text(sname, COLORS.GREEN, bold=True)}{lvl}  {tag}")
+
+            if not papers:
+                print_colored("     (no papers in file)", COLORS.YELLOW)
+            for i, p in enumerate(papers):
+                last = (i == len(papers) - 1)
+                branch = "└─" if last else "├─"
+                pkey = p.get("paper_key", "?")
+                pname = p.get("display_name", pkey)
+                if len(pname) > 40:
+                    pname = pname[:37] + "..."
+                n_subj = len(p.get("subjects", []))
+                n_chap = sum(len(s.get("chapters", []))
+                             for s in p.get("subjects", []))
+                ptag = color_text("[~]", COLORS.BLUE) if pkey in existing_paper_keys \
+                       else color_text("[+]", COLORS.GREEN)
+                print(f"     {branch} {ptag} 📄 {pname:<42} "
+                      f"{n_subj:>2} subj · {n_chap:>3} ch")
+            print()
+
+        print_colored("  " + "─" * 60, COLORS.CYAN)
+        print_colored("  ⏳ Importing...", COLORS.BLUE)
+        print()
+
+    # ---------- import pass ----------
     papers_added = 0
     subjects_added = 0
     chapters_added = 0
 
-    for p in data["papers"]:
-        key = p.get("paper_key")
-        if not key:
+    papers_skipped = 0
+    subjects_skipped = 0
+    chapters_skipped = 0
+    syllabi_added = 0
+    syllabi_existing = 0
+
+    for syl_spec, papers in bundles:
+        syllabus_key = syl_spec.get("syllabus_key")
+        if not syllabus_key:
             continue
 
-        # --- Find or create the paper ---
-        existing_paper = None
-        for ep in get_papers(active_only=False):
-            if ep["paper_key"] == key:
-                existing_paper = ep
-                break
-
-        if not existing_paper:
-            if add_paper(key,
-                         p.get("display_name", key),
-                         p.get("folder_name", key),
-                         p.get("keywords", "")):
-                papers_added += 1
+        existing_syl = next(
+            (s for s in get_syllabi(active_only=False)
+             if s['syllabus_key'] == syllabus_key),
+            None,
+        )
+        if existing_syl:
+            syllabus_id = existing_syl['id']
+            syllabi_existing += 1
         else:
-            pass  # exists — walk into it
+            syllabus_id = add_syllabus(
+                syllabus_key,
+                syl_spec.get("display_name", syllabus_key),
+                level=syl_spec.get("level"),
+                description=syl_spec.get("description"),
+            )
+            if not syllabus_id:
+                continue
+            syllabi_added += 1
 
-        # --- Walk into subjects ---
-        for s in p.get("subjects", []):
-            s_code = str(s.get("chapter") or "").zfill(2)
-            if not s_code:
+        for p in papers:
+            pkey = p.get("paper_key")
+            if not pkey:
                 continue
 
-            # Look for existing subject with same paper + code
-            existing_subj = get_subject_by_paper_and_code(key, s_code)
-            if not existing_subj:
-                sub_id = add_subject(s["name"], key, chapter=s_code)
-                if sub_id:
-                    subjects_added += 1
+            existing_p = next(
+                (x for x in get_papers(active_only=False)
+                 if x['paper_key'] == pkey),
+                None,
+            )
+            if existing_p:
+                pid = existing_p['id']
+                papers_skipped += 1
+                if not existing_p.get('syllabus_id'):
+                    update_paper(pid, syllabus_id=syllabus_id)
             else:
-                sub_id = existing_subj["id"]
+                pid = add_paper(
+                    pkey,
+                    p.get("display_name", pkey),
+                    p.get("folder_name", pkey),
+                    p.get("keywords", ""),
+                    syllabus_id=syllabus_id,
+                )
+                if pid:
+                    papers_added += 1
 
-            if not sub_id:
+            if not pid:
                 continue
 
-            # --- Walk into chapters ---
-            existing_chapters = {
-                c["chapter_code"]
-                for c in get_chapters(subject_id=sub_id, active_only=False)
-            }
-            for c in s.get("chapters", []):
-                code = str(c.get("chapter_code") or "").zfill(2)
-                cname = c.get("name") or ""
-                if not code or not cname:
+            for s in p.get("subjects", []):
+                s_code = str(s.get("chapter") or "").zfill(2)
+                if not s_code:
                     continue
-                if code in existing_chapters:
-                    continue
-                if add_chapter(sub_id, code, cname,
-                               description=c.get("description") or None,
-                               display_order=c.get("display_order")):
-                    chapters_added += 1
 
-    print_colored(
-        f"[✓] Imported {papers_added} papers, {subjects_added} subjects, "
-        f"{chapters_added} chapters.", COLORS.GREEN
-    )
+                existing_s = get_subject_by_paper_and_code(pkey, s_code)
+                if existing_s:
+                    sid = existing_s["id"]
+                    subjects_skipped += 1
+                else:
+                    sid = add_subject(s["name"], pkey, chapter=s_code)
+                    if sid:
+                        subjects_added += 1
+
+                if not sid:
+                    continue
+
+                existing_chapters = {
+                    str(c["chapter_code"]).zfill(2)
+                    for c in get_chapters(subject_id=sid, active_only=False)
+                }
+                for c in s.get("chapters", []):
+                    code = str(c.get("chapter_code") or "").zfill(2)
+                    cname = c.get("name") or ""
+                    if not code or not cname:
+                        continue
+                    if code in existing_chapters:
+                        chapters_skipped += 1
+                        continue
+                    if add_chapter(sid, code, cname,
+                                   description=c.get("description") or None,
+                                   display_order=c.get("display_order")):
+                        chapters_added += 1
+
+    # ---------- summary ----------
+    elapsed = time.time() - t0
+
+    if verbose:
+        print()
+        if syllabi_added:
+            print_colored(f"     ✓ {syllabi_added} new syllab"
+                          f"{'us' if syllabi_added == 1 else 'i'} created",
+                          COLORS.GREEN)
+        if syllabi_existing:
+            print_colored(f"     ⏭️  {syllabi_existing} existing syllab"
+                          f"{'us' if syllabi_existing == 1 else 'i'} merged into",
+                          COLORS.BLUE)
+
+        if papers_added:
+            print_colored(f"     ✓ {papers_added} new paper"
+                          f"{'s' if papers_added != 1 else ''} created",
+                          COLORS.GREEN)
+        if papers_skipped:
+            print_colored(f"     ⏭️  {papers_skipped} existing paper"
+                          f"{'s' if papers_skipped != 1 else ''} skipped",
+                          COLORS.BLUE)
+
+        if subjects_added:
+            print_colored(f"     ✓ {subjects_added} new subject"
+                          f"{'s' if subjects_added != 1 else ''} created",
+                          COLORS.GREEN)
+        if subjects_skipped:
+            print_colored(f"     ⏭️  {subjects_skipped} existing subject"
+                          f"{'s' if subjects_skipped != 1 else ''} skipped",
+                          COLORS.BLUE)
+
+        if chapters_added:
+            print_colored(f"     ✓ {chapters_added} new chapter"
+                          f"{'s' if chapters_added != 1 else ''} created",
+                          COLORS.GREEN)
+        if chapters_skipped:
+            print_colored(f"     ⏭️  {chapters_skipped} existing chapter"
+                          f"{'s' if chapters_skipped != 1 else ''} skipped",
+                          COLORS.BLUE)
+
+        total_new = syllabi_added + papers_added + subjects_added + chapters_added
+        if total_new == 0:
+            print_colored("     ✓ Nothing to do — file is already in sync.",
+                          COLORS.YELLOW)
+        else:
+            print_colored(f"     ✓ Import complete ({total_new} row"
+                          f"{'s' if total_new != 1 else ''} added total)",
+                          COLORS.GREEN, bold=True)
+
+        print(f"     ⏱️  {elapsed:.2f}s")
+        print_colored("═" * 64, COLORS.CYAN)
+        print()
+
     return papers_added, subjects_added, chapters_added

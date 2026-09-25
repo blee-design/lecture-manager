@@ -120,82 +120,195 @@ def syllabus_menu():
     from . import syllabus_config as SC
     from .file_manager import reload_paper_cache
 
-    while True:
-        print("\n" + "═" * 50)
-        print_colored("  📚 SYLLABUS SETUP", COLORS.CYAN, bold=True)
-        print("═" * 50)
-        papers = SC.get_papers(active_only=False)
-        print(f"  Papers: {len(papers)}")
-        for p in papers:
-            n_sub = len(SC.get_subjects(p["paper_key"], active_only=False))
-            print(f"    • [{p['paper_key']}] {p['display_name']}  ({n_sub} subjects)")
-        print("─" * 50)
-        print("  1. Add paper")
-        print("  2. Add subject")
-        print("  3. Edit paper")
-        print("  4. Edit subject")
-        print("  5. Delete paper")
-        print("  6. Delete subject")
-        print("  7. Export current syllabus to JSON")
-        print("  8. Import syllabus from JSON")
-        print("  9. Clear all (start fresh)")
-        print("  c. Manage chapters (add / edit / delete)")
-        print("  0. Back")
-        print("─" * 50)
-        choice = input(color_text("Choose: ", COLORS.MAGENTA)).strip()
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _load_syllabus(sid):
+        if sid is None:
+            return None
+        for s in SC.get_syllabi(active_only=False):
+            if s['id'] == sid:
+                return s
+        return None
 
-        # ---------- 1. Add paper ----------
+    def _pick_syllabus(prompt="Choose syllabus"):
+        syllabi = SC.get_syllabi(active_only=False)
+        if not syllabi:
+            print_colored("[i] No syllabi yet. Add one from 'sy' first.", COLORS.YELLOW)
+            return None
+        print()
+        for i, s in enumerate(syllabi, 1):
+            n_papers = len(SC.get_papers(active_only=False, syllabus_id=s['id']))
+            lvl = f"  (Level {s['level']})" if s.get('level') else ""
+            print(f"  {i}. {s['display_name']}{lvl}  —  {n_papers} paper(s)")
+        print("  0. Cancel")
+        c = input(color_text(f"{prompt} (1-{len(syllabi)}, 0=cancel): ",
+                             COLORS.MAGENTA)).strip()
+        if not c.isdigit():
+            return None
+        idx = int(c)
+        if idx == 0 or idx > len(syllabi):
+            return None
+        return syllabi[idx - 1]
+
+    def _syllabus_stats(syllabus):
+        """Return (n_papers, n_subjects, n_chapters) scoped to a syllabus."""
+        papers = SC.get_papers(active_only=False, syllabus_id=syllabus['id'])
+        keys = {p['paper_key'] for p in papers}
+        subjects = [s for s in SC.get_subjects(active_only=False)
+                    if s.get('paper') in keys]
+        n_chapters = sum(
+            len(SC.get_chapters(subject_id=s['id'], active_only=False))
+            for s in subjects
+        )
+        return len(papers), len(subjects), n_chapters
+
+    # Seed the current syllabus with the first one (if any)
+    current_id = None
+    all_syll = SC.get_syllabi(active_only=False)
+    if all_syll:
+        current_id = all_syll[0]['id']
+
+    # ------------------------------------------------------------------
+    # Main menu loop
+    # ------------------------------------------------------------------
+    while True:
+        current = _load_syllabus(current_id)
+
+        print()
+        print_colored("  📚  SYLLABUS SETUP", COLORS.CYAN, bold=True)
+        print_colored("  " + "─" * 62, COLORS.CYAN)
+
+        if current:
+            n_p, n_s, n_c = _syllabus_stats(current)
+            lvl = f"  •  Level {current['level']}" if current.get('level') else ""
+            print(f"  Current: {color_text(current['display_name'], COLORS.GREEN, bold=True)}{lvl}")
+            print(f"           {n_p} paper(s)  •  {n_s} subject(s)  •  {n_c} chapter(s)")
+        else:
+            print_colored("  No syllabus selected.", COLORS.YELLOW)
+
+        print_colored("  " + "─" * 62, COLORS.CYAN)
+        print("  sy. " + color_text("Manage syllabi", COLORS.YELLOW) +
+              "       (add / edit / delete / reassign papers)")
+        print("  sw. " + color_text("Switch current syllabus", COLORS.YELLOW))
+        print("  " + "─" * 62)
+        print("   1. Add paper")
+        print("   2. Add subject")
+        print("   3. Edit paper")
+        print("   4. Edit subject")
+        print("   5. Delete paper")
+        print("   6. Delete subject")
+        print("   7. Export current syllabus to JSON")
+        print("   8. Import syllabus from JSON")
+        print("   9. Clear current syllabus (papers & subjects)")
+        print("   c. Manage chapters (add / edit / delete)")
+        print("   0. Back to main menu")
+        print_colored("  " + "─" * 62, COLORS.CYAN)
+
+        choice = input(color_text("Choose: ", COLORS.MAGENTA)).strip().lower()
+
+        # ---------- sy: manage syllabi ----------
+        if choice == 'sy':
+            new_id = _manage_syllabi_submenu(SC, current_id)
+            if new_id is not None:
+                current_id = new_id
+                reload_paper_cache()
+            # If the current was deleted, _manage_syllabi_submenu returns None
+            # → fall back to first available
+            if _load_syllabus(current_id) is None:
+                remaining = SC.get_syllabi(active_only=False)
+                current_id = remaining[0]['id'] if remaining else None
+            continue
+
+        # ---------- sw: switch current ----------
+        if choice == 'sw':
+            picked = _pick_syllabus("Switch to")
+            if picked:
+                current_id = picked['id']
+                reload_paper_cache()
+                print_colored(f"[✓] Switched to '{picked['display_name']}'.", COLORS.GREEN)
+            continue
+
+        # ---------- Everything else needs a current syllabus ----------
+        if choice in ('1','2','3','4','5','6','7','8','9','c') and not current:
+            print_colored("[!] Pick a syllabus first ('sw') or add one ('sy').",
+                          COLORS.RED)
+            input("\nPress Enter to continue...")
+            continue
+
+        # ==============================================================
+        # 1. Add paper
+        # ==============================================================
         if choice == "1":
-            key = input("Paper key (e.g. semester_1, no spaces): ").strip()
+            key = input("Paper key (lowercase, no spaces, e.g. l6_pretest): ").strip()
             if not key:
-                print_colored("[!] Paper key required.", COLORS.RED); continue
+                continue
             if not key.replace("_", "").isalnum():
-                print_colored("[!] Paper key must be alphanumeric (underscores allowed).", COLORS.RED); continue
-            name = input("Display name (e.g. Semester 1 — BBS): ").strip()
+                print_colored("[!] Key must be alphanumeric (underscores ok).", COLORS.RED)
+                continue
+            if key in {p['paper_key'] for p in SC.get_papers(active_only=False)}:
+                print_colored(f"[!] Paper key '{key}' already exists.", COLORS.RED)
+                continue
+            name = input("Display name: ").strip()
             if not name:
-                print_colored("[!] Display name required.", COLORS.RED); continue
+                print_colored("[!] Display name required.", COLORS.RED)
+                continue
             folder = input(f"Folder name [{name}]: ").strip() or name
-            kws = input("Keywords (comma-sep, for auto-detect): ").strip()
-            if SC.add_paper(key, name, folder, kws):
-                print_colored(f"[✓] Paper '{name}' added.", COLORS.GREEN)
+            kws = input("Auto-detect keywords (comma-separated, optional): ").strip()
+            if SC.add_paper(key, name, folder, kws, syllabus_id=current['id']):
+                print_colored(f"[✓] Paper '{name}' added to '{current['display_name']}'.",
+                              COLORS.GREEN)
                 reload_paper_cache()
             else:
-                print_colored("[!] Could not add paper (key may already exist).", COLORS.RED)
+                print_colored("[!] Could not add paper.", COLORS.RED)
 
-        # ---------- 2. Add subject ----------
+        # ==============================================================
+        # 2. Add subject
+        # ==============================================================
         elif choice == "2":
+            papers = SC.get_papers(active_only=False, syllabus_id=current['id'])
             if not papers:
-                print_colored("Add a paper first.", COLORS.YELLOW); continue
+                print_colored("Add a paper first.", COLORS.YELLOW)
+                continue
             for i, p in enumerate(papers, 1):
                 print(f"  {i}. {p['display_name']}")
             pi = input("Paper number: ").strip()
             if not pi.isdigit() or not (1 <= int(pi) <= len(papers)):
-                print_colored("[!] Invalid paper number.", COLORS.RED); continue
+                print_colored("[!] Invalid paper number.", COLORS.RED)
+                continue
             paper = papers[int(pi) - 1]
             code = input("Subject code (e.g. 01, 02): ").strip()
             if not code:
-                print_colored("[!] Subject code required.", COLORS.RED); continue
+                print_colored("[!] Subject code required.", COLORS.RED)
+                continue
             name = input("Subject name: ").strip()
             if not name:
-                print_colored("[!] Subject name required.", COLORS.RED); continue
-            if SC.add_subject(name, paper["paper_key"], chapter=code):
-                print_colored(f"[✓] Subject '{name}' added to {paper['display_name']}.", COLORS.GREEN)
+                print_colored("[!] Subject name required.", COLORS.RED)
+                continue
+            if SC.add_subject(name, paper['paper_key'], chapter=code):
+                print_colored(f"[✓] Subject '{name}' added under {paper['display_name']}.",
+                              COLORS.GREEN)
                 reload_paper_cache()
             else:
-                print_colored("[!] Could not add subject (name may already exist).", COLORS.RED)
+                print_colored("[!] Could not add (name may already exist).", COLORS.RED)
 
-        # ---------- 3. Edit paper ----------
+        # ==============================================================
+        # 3. Edit paper
+        # ==============================================================
         elif choice == "3":
+            papers = SC.get_papers(active_only=False, syllabus_id=current['id'])
             if not papers:
-                print_colored("No papers to edit.", COLORS.YELLOW); continue
+                print_colored("No papers to edit.", COLORS.YELLOW)
+                continue
             for i, p in enumerate(papers, 1):
                 print(f"  {i}. [{p['paper_key']}] {p['display_name']}")
-            pi = input("Edit which paper? number (or blank): ").strip()
-            if not pi.isdigit() or not (1 <= int(pi) <= len(papers)): continue
+            pi = input("Edit which paper? number (blank to cancel): ").strip()
+            if not pi.isdigit() or not (1 <= int(pi) <= len(papers)):
+                continue
             p = papers[int(pi) - 1]
-            print(f"\n  Current display name: {p['display_name']}")
-            print(f"  Current folder name : {p['folder_name']}")
-            print(f"  Current keywords    : {p.get('keywords') or '(none)'}")
+            print(f"\n  Display name : {p['display_name']}")
+            print(f"  Folder name  : {p['folder_name']}")
+            print(f"  Keywords     : {p.get('keywords') or '(none)'}")
             new_name = input("New display name (blank to keep): ").strip()
             new_folder = input("New folder name (blank to keep): ").strip()
             new_kws = input("New keywords (blank to keep): ").strip()
@@ -204,22 +317,28 @@ def syllabus_menu():
             if new_folder: updates['folder_name'] = new_folder
             if new_kws:    updates['keywords'] = new_kws
             if not updates:
-                print_colored("No changes made.", COLORS.YELLOW); continue
+                print_colored("No changes made.", COLORS.YELLOW)
+                continue
             if SC.update_paper(p['id'], **updates):
                 print_colored("[✓] Paper updated.", COLORS.GREEN)
                 reload_paper_cache()
-            else:
-                print_colored("[!] Update failed.", COLORS.RED)
 
-        # ---------- 4. Edit subject ----------
+        # ==============================================================
+        # 4. Edit subject
+        # ==============================================================
         elif choice == "4":
-            subs = SC.get_subjects(active_only=False)
+            papers = SC.get_papers(active_only=False, syllabus_id=current['id'])
+            keys = {p['paper_key'] for p in papers}
+            subs = [s for s in SC.get_subjects(active_only=False)
+                    if s.get('paper') in keys]
             if not subs:
-                print_colored("No subjects to edit.", COLORS.YELLOW); continue
+                print_colored("No subjects to edit.", COLORS.YELLOW)
+                continue
             for i, s in enumerate(subs, 1):
                 print(f"  {i}. [{s['paper']}] {s['name']}  (code: {s['chapter']})")
-            si = input("Edit which subject? number (or blank): ").strip()
-            if not si.isdigit() or not (1 <= int(si) <= len(subs)): continue
+            si = input("Edit which subject? number (blank to cancel): ").strip()
+            if not si.isdigit() or not (1 <= int(si) <= len(subs)):
+                continue
             s = subs[int(si) - 1]
             print(f"\n  Current name : {s['name']}")
             print(f"  Current code : {s['chapter']}")
@@ -229,157 +348,370 @@ def syllabus_menu():
             if new_name: updates['name'] = new_name
             if new_code: updates['chapter'] = new_code
             if not updates:
-                print_colored("No changes made.", COLORS.YELLOW); continue
+                print_colored("No changes made.", COLORS.YELLOW)
+                continue
             if SC.update_subject(s['id'], **updates):
                 print_colored("[✓] Subject updated.", COLORS.GREEN)
                 reload_paper_cache()
-            else:
-                print_colored("[!] Update failed.", COLORS.RED)
 
-        # ---------- 5. Delete paper ----------
+        # ==============================================================
+        # 5. Delete paper
+        # ==============================================================
         elif choice == "5":
+            papers = SC.get_papers(active_only=False, syllabus_id=current['id'])
             if not papers:
-                print_colored("No papers to delete.", COLORS.YELLOW); continue
+                print_colored("No papers to delete.", COLORS.YELLOW)
+                continue
             for i, p in enumerate(papers, 1):
-                n_sub = len(SC.get_subjects(p["paper_key"], active_only=False))
+                n_sub = len(SC.get_subjects(paper_key=p['paper_key'], active_only=False))
                 print(f"  {i}. [{p['paper_key']}] {p['display_name']}  ({n_sub} subjects)")
-            pi = input("Delete which paper? number (or blank to cancel): ").strip()
-            if not pi.isdigit() or not (1 <= int(pi) <= len(papers)): continue
+            pi = input("Delete which paper? number (blank to cancel): ").strip()
+            if not pi.isdigit() or not (1 <= int(pi) <= len(papers)):
+                continue
             p = papers[int(pi) - 1]
-            n_sub = len(SC.get_subjects(p["paper_key"], active_only=False))
-            print_colored(f"[!] Deleting '{p['display_name']}' affects {n_sub} subject(s).", COLORS.YELLOW)
-            print_colored("[!] Lectures already assigned stay in DB but become 'unknown paper'.", COLORS.YELLOW)
+            n_sub = len(SC.get_subjects(paper_key=p['paper_key'], active_only=False))
+            print_colored(f"[!] Deleting '{p['display_name']}' will affect {n_sub} subject(s).",
+                          COLORS.YELLOW)
             cascade = False
             if n_sub > 0:
                 cascade = input("Also delete its subjects? (y/n): ").strip().lower() == 'y'
-            confirm = input("Type 'yes' to confirm: ").strip().lower()
-            if confirm != 'yes':
-                print_colored("Cancelled.", COLORS.YELLOW); continue
+            if input("Type 'yes' to confirm: ").strip().lower() != 'yes':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                continue
             if SC.delete_paper(p['id'], cascade_subjects=cascade):
                 print_colored("[✓] Paper deleted.", COLORS.GREEN)
                 reload_paper_cache()
-            else:
-                print_colored("[!] Delete failed.", COLORS.RED)
 
-        # ---------- 6. Delete subject ----------
+        # ==============================================================
+        # 6. Delete subject
+        # ==============================================================
         elif choice == "6":
-            subs = SC.get_subjects(active_only=False)
+            papers = SC.get_papers(active_only=False, syllabus_id=current['id'])
+            keys = {p['paper_key'] for p in papers}
+            subs = [s for s in SC.get_subjects(active_only=False)
+                    if s.get('paper') in keys]
             if not subs:
-                print_colored("No subjects to delete.", COLORS.YELLOW); continue
+                print_colored("No subjects to delete.", COLORS.YELLOW)
+                continue
             for i, s in enumerate(subs, 1):
                 print(f"  {i}. [{s['paper']}] {s['name']}  (code: {s['chapter']})")
-            si = input("Delete which subject? number (or blank to cancel): ").strip()
-            if not si.isdigit() or not (1 <= int(si) <= len(subs)): continue
+            si = input("Delete which subject? number (blank to cancel): ").strip()
+            if not si.isdigit() or not (1 <= int(si) <= len(subs)):
+                continue
             s = subs[int(si) - 1]
-            confirm = input(f"Delete '{s['name']}'? (y/n): ").strip().lower()
-            if confirm != 'y':
-                print_colored("Cancelled.", COLORS.YELLOW); continue
+            if input(f"Delete '{s['name']}'? (y/n): ").strip().lower() != 'y':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                continue
             if SC.delete_subject(s['id']):
                 print_colored("[✓] Subject deleted.", COLORS.GREEN)
                 reload_paper_cache()
-            else:
-                print_colored("[!] Delete failed.", COLORS.RED)
 
-        # ---------- 7. Export syllabus to JSON ----------
+        # ==============================================================
+        # 7. Export current syllabus to JSON
+        # ==============================================================
         elif choice == "7":
-            if not papers:
-                print_colored("Nothing to export.", COLORS.YELLOW); continue
             from datetime import datetime
-            default_name = f"syllabus_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            print()
+            print("Export scope:")
+            print("  1. Current syllabus only")
+            print("  2. All syllabi (full backup)")
+            scope = input("Choose (1/2, default 1): ").strip() or "1"
+
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            if scope == "2":
+                default_name = f"syllabus_ALL_{ts}.json"
+            else:
+                default_name = f"syllabus_{current['syllabus_key']}_{ts}.json"
+
             path = input(f"Output path [{default_name}]: ").strip() or default_name
-            print_colored(f"[i] Exporting papers, subjects and chapters...", COLORS.BLUE)
+
             try:
-                SC.export_syllabus(path)
+                if scope == "2":
+                    SC.export_syllabus(path)          # no syllabus_id → all
+                    print_colored(f"[✓] All syllabi exported to {path}", COLORS.GREEN)
+                else:
+                    SC.export_syllabus(path, syllabus_id=current['id'])
             except Exception as e:
                 print_colored(f"[!] Export failed: {e}", COLORS.RED)
 
-        # ---------- 8. Import syllabus from JSON ----------
+        # ==============================================================
+        # 8. Import syllabus from JSON
+        # ==============================================================
         elif choice == "8":
             path = input("Path to syllabus JSON file: ").strip()
             if not path:
                 continue
-            existing = SC.get_papers(active_only=False)
-            merge = True
-            if existing:
-                print_colored(f"[i] You already have {len(existing)} paper(s).", COLORS.YELLOW)
-                mode = input("(m)erge — add new only, or (r)eplace — wipe first? [m/r]: ").strip().lower()
-                if mode == 'r':
-                    confirm = input("Type 'yes' to wipe existing syllabus: ").strip().lower()
-                    if confirm != 'yes':
-                        print_colored("Cancelled.", COLORS.YELLOW); continue
-                    merge = False
-                else:
-                    merge = True
-            else:
-                merge = False
+            # Ask whether to import into the current syllabus, or create a new one
+            print()
+            print("Import into:")
+            print("  1. Current syllabus (merge papers into it)")
+            print("  2. As a new syllabus (create fresh from the file)")
+            print("  0. Cancel")
+            mode = input("Choose (1/2/0): ").strip()
+            if mode == '0' or not mode:
+                continue
 
-            print_colored("[i] Importing...", COLORS.BLUE)
+            if mode == '1':
+                target_id = current['id']
+            elif mode == '2':
+                # Let the file's syllabus_key create a new syllabi row
+                target_id = None  # SC.import_syllabus will create from file
+            else:
+                print_colored("[!] Invalid choice.", COLORS.RED)
+                continue
+
             try:
-                result = SC.import_syllabus(path, merge=merge)
-                # import_syllabus now returns a 3-tuple
+                result = SC.import_syllabus(path, target_syllabus_id=target_id)
                 if isinstance(result, tuple) and len(result) == 3:
                     p, s, c = result
                     print_colored(
-                        f"[✓] Imported: {p} new papers, {s} new subjects, {c} new chapters.",
+                        f"[✓] Imported {p} new papers, {s} new subjects, {c} new chapters.",
                         COLORS.GREEN
                     )
                 reload_paper_cache()
             except Exception as e:
                 print_colored(f"[!] Import failed: {e}", COLORS.RED)
 
-        # ---------- 9. Clear all ----------
+        # ==============================================================
+        # 9. Clear current syllabus
+        # ==============================================================
         elif choice == "9":
-            if input("Really clear everything? Type 'yes' to confirm: ").strip().lower() == "yes":
-                SC.clear_all()
-                reload_paper_cache()
-                print_colored("[✓] Syllabus cleared.", COLORS.GREEN)
+            print_colored(
+                f"[!] This will delete all papers and subjects under "
+                f"'{current['display_name']}'.",
+                COLORS.YELLOW
+            )
+            print_colored(
+                "[!] Questions already linked to those papers stay in the DB "
+                "but become 'unknown paper'.",
+                COLORS.YELLOW
+            )
+            if input("Type 'yes' to confirm: ").strip().lower() != 'yes':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                continue
+            SC.clear_syllabus(current['id'])
+            reload_paper_cache()
+            print_colored("[✓] Syllabus cleared.", COLORS.GREEN)
 
-        # ---------- c. Chapter management ----------
+        # ==============================================================
+        # c. Chapters submenu
+        # ==============================================================
         elif choice == "c":
+            papers = SC.get_papers(active_only=False, syllabus_id=current['id'])
             chapters_submenu(SC, reload_paper_cache, papers)
+
+        # ==============================================================
+        # 0. Back
+        # ==============================================================
+        elif choice == "0":
+            return
+
+        else:
+            print_colored("[!] Invalid option.", COLORS.RED)
+
+def _manage_syllabi_submenu(SC, current_id):
+    """
+    Sub-submenu for CRUD on the syllabi themselves.
+    Returns the id of the syllabus that should become 'current', or None.
+    """
+    from .file_manager import reload_paper_cache
+
+    while True:
+        syllabi = SC.get_syllabi(active_only=False)
+
+        print()
+        print_colored("  🗂️   MANAGE SYLLABI", COLORS.CYAN, bold=True)
+        print_colored("  " + "─" * 62, COLORS.CYAN)
+
+        if syllabi:
+            for i, s in enumerate(syllabi, 1):
+                n_papers = len(SC.get_papers(active_only=False, syllabus_id=s['id']))
+                n_all    = len(SC.get_papers(active_only=False))
+                lvl = f"  (L{s['level']})" if s.get('level') else ""
+                marker = "  ← current" if s['id'] == current_id else ""
+                print(f"  {i}. {s['display_name']}{lvl}  "
+                      f"— {n_papers} paper(s){marker}")
+        else:
+            print_colored("  No syllabi yet.", COLORS.YELLOW)
+
+        print_colored("  " + "─" * 62, COLORS.CYAN)
+        print("   1. Add syllabus")
+        print("   2. Edit syllabus")
+        print("   3. Delete syllabus")
+        print("   4. Reassign orphan papers to a syllabus")
+        print("   0. Back")
+        print_colored("  " + "─" * 62, COLORS.CYAN)
+
+        choice = input(color_text("Choose: ", COLORS.MAGENTA)).strip()
+
+        # ---------- 1. Add ----------
+        if choice == "1":
+            key = input("Syllabus key (lowercase, no spaces, e.g. l4_psc_kharidar): ").strip()
+            if not key:
+                continue
+            if not key.replace("_", "").isalnum():
+                print_colored("[!] Key must be alphanumeric.", COLORS.RED)
+                continue
+            if key in {s['syllabus_key'] for s in syllabi}:
+                print_colored(f"[!] Key '{key}' already exists.", COLORS.RED)
+                continue
+            name = input("Display name (e.g. 'PSC Kharidar Level 4'): ").strip()
+            if not name:
+                print_colored("[!] Display name required.", COLORS.RED)
+                continue
+            level = input("Level (e.g. 4, 6, pretest — optional): ").strip() or None
+            desc = input("Description (optional): ").strip() or None
+            if SC.add_syllabus(key, name, level, desc):
+                print_colored(f"[✓] Syllabus '{name}' added.", COLORS.GREEN)
+
+        # ---------- 2. Edit ----------
+        elif choice == "2":
+            if not syllabi:
+                print_colored("No syllabi to edit.", COLORS.YELLOW)
+                continue
+            for i, s in enumerate(syllabi, 1):
+                print(f"  {i}. {s['display_name']}")
+            si = input("Edit which? number (blank to cancel): ").strip()
+            if not si.isdigit() or not (1 <= int(si) <= len(syllabi)):
+                continue
+            s = syllabi[int(si) - 1]
+            print(f"\n  Current display name : {s['display_name']}")
+            print(f"  Current level        : {s.get('level') or '(none)'}")
+            print(f"  Current description  : {s.get('description') or '(none)'}")
+            new_name = input("New display name (blank to keep): ").strip()
+            new_lvl  = input("New level (blank to keep, 'clear' to blank): ").strip()
+            new_desc = input("New description (blank to keep): ").strip()
+            updates = {}
+            if new_name: updates['display_name'] = new_name
+            if new_lvl:
+                updates['level'] = None if new_lvl.lower() == 'clear' else new_lvl
+            if new_desc: updates['description'] = new_desc
+            if not updates:
+                print_colored("No changes.", COLORS.YELLOW)
+                continue
+            if SC.update_syllabus(s['id'], **updates):
+                print_colored("[✓] Syllabus updated.", COLORS.GREEN)
+
+        # ---------- 3. Delete ----------
+        elif choice == "3":
+            if not syllabi:
+                print_colored("No syllabi to delete.", COLORS.YELLOW)
+                continue
+            for i, s in enumerate(syllabi, 1):
+                n_papers = len(SC.get_papers(active_only=False, syllabus_id=s['id']))
+                print(f"  {i}. {s['display_name']}  ({n_papers} papers)")
+            si = input("Delete which? number (blank to cancel): ").strip()
+            if not si.isdigit() or not (1 <= int(si) <= len(syllabi)):
+                continue
+            s = syllabi[int(si) - 1]
+            n_papers = len(SC.get_papers(active_only=False, syllabus_id=s['id']))
+            print_colored(
+                f"[!] Deleting '{s['display_name']}' will also delete its "
+                f"{n_papers} paper(s), subjects, and chapters.",
+                COLORS.YELLOW,
+            )
+            print_colored(
+                "[!] Questions stay in the DB but become 'unknown paper'.",
+                COLORS.YELLOW,
+            )
+            if input("Type 'yes' to confirm: ").strip().lower() != 'yes':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                continue
+            try:
+                if SC.delete_syllabus(s['id'], cascade_papers=True):
+                    print_colored("[✓] Syllabus deleted.", COLORS.GREEN)
+                    if s['id'] == current_id:
+                        current_id = None
+            except Exception as e:
+                print_colored(f"[!] Delete failed: {e}", COLORS.RED)
+
+        # ---------- 4. Reassign orphans ----------
+        elif choice == "4":
+            orphans = [p for p in SC.get_papers(active_only=False)
+                       if p.get('syllabus_id') is None]
+            if not orphans:
+                print_colored("[i] No orphan papers — all papers have a syllabus.",
+                              COLORS.GREEN)
+                continue
+            print()
+            print_colored(f"  {len(orphans)} paper(s) with no syllabus:",
+                          COLORS.YELLOW)
+            for i, p in enumerate(orphans, 1):
+                print(f"  {i}. [{p['paper_key']}] {p['display_name']}")
+
+            if not syllabi:
+                print_colored("[!] No syllabi exist yet. Add one first.", COLORS.RED)
+                continue
+            print()
+            print("  Assign all of them to which syllabus?")
+            for i, s in enumerate(syllabi, 1):
+                print(f"  {i}. {s['display_name']}")
+            print("  0. Cancel")
+            ti = input("Choose: ").strip()
+            if not ti.isdigit() or int(ti) == 0 or int(ti) > len(syllabi):
+                continue
+            target = syllabi[int(ti) - 1]
+            if input(f"Assign {len(orphans)} paper(s) to '{target['display_name']}'? (y/n): "
+                     ).strip().lower() != 'y':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                continue
+            for p in orphans:
+                SC.update_paper(p['id'], syllabus_id=target['id'])
+            print_colored(f"[✓] Reassigned {len(orphans)} paper(s).", COLORS.GREEN)
+            reload_paper_cache()
 
         # ---------- 0. Back ----------
         elif choice == "0":
-            break
+            return current_id
+
         else:
             print_colored("[!] Invalid option.", COLORS.RED)
 
 def chapters_submenu(SC, reload_paper_cache, papers):
-    """Nested menu for managing chapters under subjects."""
+    """Nested menu for managing chapters under subjects (scoped to one syllabus)."""
     while True:
-        print("\n" + "─" * 50)
+        print()
         print_colored("  📖 CHAPTER MANAGEMENT", COLORS.CYAN, bold=True)
-        print("─" * 50)
-        print("  1. List chapters of a subject")
-        print("  2. Add a chapter")
-        print("  3. Edit a chapter")
-        print("  4. Delete a chapter")
-        print("  0. Back")
+        print_colored("  " + "─" * 46, COLORS.CYAN)
+        print("   1. List chapters of a subject")
+        print("   2. Add a chapter")
+        print("   3. Edit a chapter")
+        print("   4. Delete a chapter")
+        print("   0. Back")
         choice = input(color_text("Choose: ", COLORS.MAGENTA)).strip()
 
         if choice == "0":
             return
 
         if not papers and choice in ("1", "2", "3", "4"):
-            print_colored("No papers configured. Add a paper first.", COLORS.YELLOW)
+            print_colored("No papers in this syllabus. Add a paper first.",
+                          COLORS.YELLOW)
             continue
 
-        # ----- 1. List -----
-        if choice == "1":
+        # Common helper: pick paper → pick subject → return (paper, subject)
+        def _pick_paper_and_subject():
             for i, p in enumerate(papers, 1):
                 print(f"  {i}. {p['display_name']}")
-            pi = input("Paper number (or blank to cancel): ").strip()
+            pi = input("Paper number (blank to cancel): ").strip()
             if not pi.isdigit() or not (1 <= int(pi) <= len(papers)):
-                continue
-            subj_list = SC.get_subjects(paper_key=papers[int(pi) - 1]["paper_key"], active_only=False)
+                return None, None
+            paper = papers[int(pi) - 1]
+            subj_list = SC.get_subjects(paper_key=paper['paper_key'], active_only=False)
             if not subj_list:
-                print_colored("No subjects in that paper.", COLORS.YELLOW); continue
+                print_colored("No subjects in that paper.", COLORS.YELLOW)
+                return None, None
             for i, s in enumerate(subj_list, 1):
                 print(f"  {i}. [{s['chapter']}] {s['name']}")
-            si = input("Subject number: ").strip()
+            si = input("Subject number (blank to cancel): ").strip()
             if not si.isdigit() or not (1 <= int(si) <= len(subj_list)):
+                return None, None
+            return paper, subj_list[int(si) - 1]
+
+        # ---------- 1. List ----------
+        if choice == "1":
+            _, subj = _pick_paper_and_subject()
+            if not subj:
                 continue
-            subj = subj_list[int(si) - 1]
             chs = SC.get_chapters(subject_id=subj["id"], active_only=False)
             print(f"\n  Chapters of [{subj['chapter']}] {subj['name']}:")
             if not chs:
@@ -387,22 +719,11 @@ def chapters_submenu(SC, reload_paper_cache, papers):
             for c in chs:
                 print(f"    [{c['chapter_code']}] {c['name']}")
 
-        # ----- 2. Add -----
+        # ---------- 2. Add ----------
         elif choice == "2":
-            for i, p in enumerate(papers, 1):
-                print(f"  {i}. {p['display_name']}")
-            pi = input("Paper number: ").strip()
-            if not pi.isdigit() or not (1 <= int(pi) <= len(papers)):
+            _, subj = _pick_paper_and_subject()
+            if not subj:
                 continue
-            subj_list = SC.get_subjects(paper_key=papers[int(pi) - 1]["paper_key"], active_only=False)
-            if not subj_list:
-                print_colored("No subjects.", COLORS.YELLOW); continue
-            for i, s in enumerate(subj_list, 1):
-                print(f"  {i}. [{s['chapter']}] {s['name']}")
-            si = input("Subject number: ").strip()
-            if not si.isdigit() or not (1 <= int(si) <= len(subj_list)):
-                continue
-            subj = subj_list[int(si) - 1]
             code = input("Chapter code (e.g. 01, 02): ").strip()
             if not code:
                 continue
@@ -413,23 +734,16 @@ def chapters_submenu(SC, reload_paper_cache, papers):
             if SC.add_chapter(subj["id"], code, name, description=desc):
                 print_colored("[✓] Chapter added.", COLORS.GREEN)
                 reload_paper_cache()
-            else:
-                print_colored("[!] Could not add chapter.", COLORS.RED)
 
-        # ----- 3. Edit -----
+        # ---------- 3. Edit ----------
         elif choice == "3":
-            all_subjects = SC.get_subjects(active_only=False)
-            if not all_subjects:
-                print_colored("No subjects.", COLORS.YELLOW); continue
-            for i, s in enumerate(all_subjects, 1):
-                print(f"  {i}. [{s['paper']}] [{s['chapter']}] {s['name']}")
-            si = input("Subject number (blank to cancel): ").strip()
-            if not si.isdigit() or not (1 <= int(si) <= len(all_subjects)):
+            _, subj = _pick_paper_and_subject()
+            if not subj:
                 continue
-            subj = all_subjects[int(si) - 1]
             chs = SC.get_chapters(subject_id=subj["id"], active_only=False)
             if not chs:
-                print_colored("No chapters.", COLORS.YELLOW); continue
+                print_colored("No chapters.", COLORS.YELLOW)
+                continue
             for i, c in enumerate(chs, 1):
                 print(f"  {i}. [{c['chapter_code']}] {c['name']}")
             ci = input("Chapter number (blank to cancel): ").strip()
@@ -444,25 +758,21 @@ def chapters_submenu(SC, reload_paper_cache, papers):
             if new_name: updates['name'] = new_name
             if new_desc: updates['description'] = new_desc
             if not updates:
-                print_colored("No changes.", COLORS.YELLOW); continue
+                print_colored("No changes.", COLORS.YELLOW)
+                continue
             if SC.update_chapter(c['id'], **updates):
                 print_colored("[✓] Chapter updated.", COLORS.GREEN)
                 reload_paper_cache()
 
-        # ----- 4. Delete -----
+        # ---------- 4. Delete ----------
         elif choice == "4":
-            all_subjects = SC.get_subjects(active_only=False)
-            if not all_subjects:
-                print_colored("No subjects.", COLORS.YELLOW); continue
-            for i, s in enumerate(all_subjects, 1):
-                print(f"  {i}. [{s['paper']}] [{s['chapter']}] {s['name']}")
-            si = input("Subject number (blank to cancel): ").strip()
-            if not si.isdigit() or not (1 <= int(si) <= len(all_subjects)):
+            _, subj = _pick_paper_and_subject()
+            if not subj:
                 continue
-            subj = all_subjects[int(si) - 1]
             chs = SC.get_chapters(subject_id=subj["id"], active_only=False)
             if not chs:
-                print_colored("No chapters.", COLORS.YELLOW); continue
+                print_colored("No chapters.", COLORS.YELLOW)
+                continue
             for i, c in enumerate(chs, 1):
                 print(f"  {i}. [{c['chapter_code']}] {c['name']}")
             ci = input("Delete which chapter? number: ").strip()
@@ -473,8 +783,6 @@ def chapters_submenu(SC, reload_paper_cache, papers):
                 if SC.delete_chapter(c['id']):
                     print_colored("[✓] Chapter deleted.", COLORS.GREEN)
                     reload_paper_cache()
-                else:
-                    print_colored("[!] Delete failed.", COLORS.RED)
 
         else:
             print_colored("[!] Invalid option.", COLORS.RED)

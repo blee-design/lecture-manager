@@ -201,15 +201,19 @@ def _subject_lookup():
         _SUBJECT_KEY_TO_NAME = cache
     return _SUBJECT_KEY_TO_NAME
 
-
 def _subject_name_lookup():
-    """{subject_name: paper_key} — one DB hit for the whole session."""
+    """{subject_name: [paper_key, ...]} — one DB hit for the whole session.
+    A name can map to multiple papers if two syllabi reuse the same subject name."""
     global _SUBJECT_NAME_TO_PAPER
     if _SUBJECT_NAME_TO_PAPER is None:
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT name, paper FROM subjects WHERE active = 1")
-        cache = {row['name']: row['paper'] for row in cursor.fetchall() if row.get('paper')}
+        cache = {}
+        for row in cursor.fetchall():
+            if not row.get('paper'):
+                continue
+            cache.setdefault(row['name'], []).append(row['paper'])
         cursor.close()
         conn.close()
         _SUBJECT_NAME_TO_PAPER = cache
@@ -484,15 +488,42 @@ def parse_syllabus_id(syllabus_id):
 def detect_paper(subject, syllabus_id=None, chapter=None, interactive=True):
     """
     Determine which paper a record belongs to.
-    Reads subject->paper mappings from an in-memory cache (loaded once).
-    Falls back to keyword matching. Returns None if nothing matches and
-    the user doesn't pick.
+
+    Subject names may appear in multiple papers (different syllabi).
+    When that happens, ask the user to disambiguate. Returns None if
+    nothing matches and the user doesn't pick.
     """
-    # 1. Exact subject name match (from cache — no DB hit)
+    # 1. Exact subject-name match — may return 1 or more candidates
     if subject:
         lookup = _subject_name_lookup()
-        if subject.strip() in lookup:
-            return lookup[subject.strip()]
+        papers = lookup.get(subject.strip(), [])
+
+        if len(papers) == 1:
+            return papers[0]
+
+        if len(papers) > 1 and interactive:
+            from . import syllabus_config as SC
+            print_colored(
+                f"[!] Subject '{subject}' exists in multiple papers.",
+                COLORS.YELLOW,
+            )
+            print()
+            for i, pk in enumerate(papers, 1):
+                paper = next((p for p in SC.get_papers(active_only=False)
+                              if p['paper_key'] == pk), None)
+                label = paper['display_name'] if paper else pk
+                if paper and paper.get('syllabus_id'):
+                    syll = next((s for s in SC.get_syllabi(active_only=False)
+                                 if s['id'] == paper['syllabus_id']), None)
+                    if syll:
+                        lvl = f"  (Level {syll['level']})" if syll.get('level') else ""
+                        label = f"{syll['display_name']}{lvl}  →  {label}"
+                print(f"  {i}. {label}")
+            c = input(color_text("Choose (blank to cancel): ",
+                                 COLORS.MAGENTA)).strip()
+            if c.isdigit() and 1 <= int(c) <= len(papers):
+                return papers[int(c) - 1]
+            return None
 
     # 2. Keyword fallback
     combined = f"{subject or ''} {chapter or ''}".lower()
@@ -503,14 +534,18 @@ def detect_paper(subject, syllabus_id=None, chapter=None, interactive=True):
 
     if len(matches) == 1:
         return matches[0]
+
     if len(matches) > 1 and interactive:
+        from . import syllabus_config as SC
         print_colored(f"[!] Matches multiple papers: {matches}", COLORS.YELLOW)
-        papers = list(_papers().values())
-        for i, p in enumerate(papers, 1):
-            print(f"  {i}. {p['display_name']}")
+        for i, pk in enumerate(matches, 1):
+            paper = next((p for p in SC.get_papers(active_only=False)
+                          if p['paper_key'] == pk), None)
+            print(f"  {i}. {paper['display_name'] if paper else pk}")
         c = input(color_text("Choose (blank to cancel): ", COLORS.MAGENTA)).strip()
-        if c.isdigit() and 1 <= int(c) <= len(papers):
-            return papers[int(c) - 1]["paper_key"]
+        if c.isdigit() and 1 <= int(c) <= len(matches):
+            return matches[int(c) - 1]
+
     return None
 
 def get_target_path(record, interactive=True):

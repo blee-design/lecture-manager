@@ -21,8 +21,15 @@
 
           <div class="row g-3">
             <div class="col-md-4">
+              <label class="form-label small text-muted">Syllabus</label>
+              <select id="syllabus-select" class="form-select" required>
+                <option value="">— choose syllabus —</option>
+              </select>
+              <div class="form-text small" id="syllabus-level"></div>
+            </div>
+            <div class="col-md-4">
               <label class="form-label small text-muted">Paper</label>
-              <select id="paper-select" name="paper_key" class="form-select" required>
+              <select id="paper-select" name="paper_key" class="form-select" required disabled>
                 <option value="">— choose paper —</option>
               </select>
             </div>
@@ -33,6 +40,9 @@
               </select>
               <input type="hidden" id="subject-code" name="subject_code">
             </div>
+          </div>
+
+          <div class="row g-3 mt-2">
             <div class="col-md-4">
               <label class="form-label small text-muted">Chapter</label>
               <select id="chapter-select" class="form-select" required disabled>
@@ -41,9 +51,6 @@
               <input type="hidden" id="chapter-code" name="chapter_code">
               <input type="hidden" id="chapter-title" name="chapter_title">
             </div>
-          </div>
-
-          <div class="row g-3 mt-2">
             <div class="col-md-3">
               <label class="form-label small text-muted">Lecture No.</label>
               <input type="text" id="lecture-no" name="lecture_no"
@@ -55,10 +62,10 @@
                      class="form-control" placeholder="1">
               <small class="text-muted">For part 2 of same lecture</small>
             </div>
-            <div class="col-md-6">
+            <div class="col-md-2">
               <label class="form-label small text-muted">Preview</label>
               <div class="form-control bg-light" id="syllabus-preview"
-                   style="font-family: monospace; font-size: 0.9rem;">
+                   style="font-family: monospace; font-size: 0.85rem;">
                 —
               </div>
             </div>
@@ -122,26 +129,41 @@
 </div>
 
 <script>
+  // ---- Data passed from the view: a list of syllabi, each with papers → subjects → chapters ----
   const TREE = {{ tree_json|safe }};
 
-  const paperSel = document.getElementById('paper-select');
-  const subjSel  = document.getElementById('subject-select');
-  const chapSel  = document.getElementById('chapter-select');
-  const subjCode = document.getElementById('subject-code');
-  const chapCode = document.getElementById('chapter-code');
+  // ---- Element refs ----
+  const syllSel   = document.getElementById('syllabus-select');
+  const paperSel  = document.getElementById('paper-select');
+  const subjSel   = document.getElementById('subject-select');
+  const chapSel   = document.getElementById('chapter-select');
+  const subjCode  = document.getElementById('subject-code');
+  const chapCode  = document.getElementById('chapter-code');
   const chapTitle = document.getElementById('chapter-title');
-  const lecNo    = document.getElementById('lecture-no');
-  const suffixEl = document.getElementById('suffix');
-  const preview  = document.getElementById('syllabus-preview');
+  const lecNo     = document.getElementById('lecture-no');
+  const suffixEl  = document.getElementById('suffix');
+  const preview   = document.getElementById('syllabus-preview');
+  const levelHint = document.getElementById('syllabus-level');
 
-  // Populate papers
-  TREE.forEach(p => {
+  // ---- Populate the syllabus dropdown ----
+  if (!TREE || TREE.length === 0) {
     const opt = document.createElement('option');
-    opt.value = p.paper_key;
-    opt.textContent = p.display_name;
-    paperSel.appendChild(opt);
-  });
+    opt.value = '';
+    opt.textContent = '⚠ No syllabi configured — add one in the CLI first';
+    opt.disabled = true;
+    syllSel.appendChild(opt);
+    syllSel.disabled = true;
+  } else {
+    TREE.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.syllabus_key;
+      const label = s.display_name + (s.level ? ` (Level ${s.level})` : '');
+      opt.textContent = label;
+      syllSel.appendChild(opt);
+    });
+  }
 
+  // ---- Helper: clear a select back to its placeholder ----
   function resetSelect(sel, placeholder) {
     sel.innerHTML = '';
     const o = document.createElement('option');
@@ -151,16 +173,57 @@
     sel.disabled = true;
   }
 
+  // ---- Build the syllabus_id preview string ----
   function updatePreview() {
-    const s = subjCode.value, c = chapCode.value, l = lecNo.value.trim();
+    const s = subjCode.value;
+    const c = chapCode.value;
+    const l = lecNo.value.trim();
     const sfx = suffixEl.value.trim().replace(/^-/, '');
-    if (!s || !c) { preview.textContent = '—'; return; }
+    if (!s || !c) {
+      preview.textContent = '—';
+      return;
+    }
     let sid = `${s}.${c}`;
     if (l) sid += `.${l.padStart(2, '0')}`;
     if (sfx) sid += `-${sfx}`;
     preview.textContent = sid;
   }
 
+  // ---- Chain: syllabus → papers ----
+  syllSel.addEventListener('change', () => {
+    resetSelect(paperSel, '— choose paper —');
+    resetSelect(subjSel,  '— choose subject —');
+    resetSelect(chapSel,  '— choose chapter —');
+    subjCode.value = ''; chapCode.value = ''; chapTitle.value = '';
+    lecNo.value = ''; suffixEl.value = '';
+    levelHint.textContent = '';
+    updatePreview();
+
+    const s = TREE.find(x => x.syllabus_key === syllSel.value);
+    if (!s) return;
+
+    levelHint.textContent = s.level ? `Level ${s.level}` : '';
+
+    if (!s.papers || s.papers.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '⚠ No papers in this syllabus';
+      opt.disabled = true;
+      paperSel.appendChild(opt);
+      paperSel.disabled = false;
+      return;
+    }
+
+    s.papers.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.paper_key;
+      opt.textContent = p.display_name;
+      paperSel.appendChild(opt);
+    });
+    paperSel.disabled = false;
+  });
+
+  // ---- Chain: paper → subjects ----
   paperSel.addEventListener('change', () => {
     resetSelect(subjSel, '— choose subject —');
     resetSelect(chapSel, '— choose chapter —');
@@ -168,17 +231,31 @@
     lecNo.value = ''; suffixEl.value = '';
     updatePreview();
 
-    const p = TREE.find(x => x.paper_key === paperSel.value);
+    const s = TREE.find(x => x.syllabus_key === syllSel.value);
+    if (!s) return;
+    const p = s.papers.find(x => x.paper_key === paperSel.value);
     if (!p) return;
-    p.subjects.forEach(s => {
+
+    if (!p.subjects || p.subjects.length === 0) {
       const opt = document.createElement('option');
-      opt.value = s.code;
-      opt.textContent = `${s.code} — ${s.name}`;
+      opt.value = '';
+      opt.textContent = '⚠ No subjects in this paper';
+      opt.disabled = true;
+      subjSel.appendChild(opt);
+      subjSel.disabled = false;
+      return;
+    }
+
+    p.subjects.forEach(sj => {
+      const opt = document.createElement('option');
+      opt.value = sj.code;
+      opt.textContent = `${sj.code} — ${sj.name}`;
       subjSel.appendChild(opt);
     });
     subjSel.disabled = false;
   });
 
+  // ---- Chain: subject → chapters ----
   subjSel.addEventListener('change', () => {
     resetSelect(chapSel, '— choose chapter —');
     chapCode.value = ''; chapTitle.value = '';
@@ -186,11 +263,25 @@
     updatePreview();
 
     subjCode.value = subjSel.value;
-    const p = TREE.find(x => x.paper_key === paperSel.value);
-    if (!p) return;
-    const s = p.subjects.find(x => x.code === subjSel.value);
+
+    const s = TREE.find(x => x.syllabus_key === syllSel.value);
     if (!s) return;
-    s.chapters.forEach(c => {
+    const p = s.papers.find(x => x.paper_key === paperSel.value);
+    if (!p) return;
+    const sj = p.subjects.find(x => x.code === subjSel.value);
+    if (!sj) return;
+
+    if (!sj.chapters || sj.chapters.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '⚠ No chapters in this subject';
+      opt.disabled = true;
+      chapSel.appendChild(opt);
+      chapSel.disabled = false;
+      return;
+    }
+
+    sj.chapters.forEach(c => {
       const opt = document.createElement('option');
       opt.value = c.code;
       opt.textContent = `${c.code} — ${c.name}   (${c.lecture_count} existing)`;
@@ -199,24 +290,34 @@
     chapSel.disabled = false;
   });
 
+  // ---- Chain: chapter → set title + suggest next lecture number ----
   chapSel.addEventListener('change', () => {
     chapCode.value = chapSel.value;
-    const p = TREE.find(x => x.paper_key === paperSel.value);
-    if (!p) return;
-    const s = p.subjects.find(x => x.code === subjSel.value);
+
+    const s = TREE.find(x => x.syllabus_key === syllSel.value);
     if (!s) return;
-    const c = s.chapters.find(x => x.code === chapSel.value);
+    const p = s.papers.find(x => x.paper_key === paperSel.value);
+    if (!p) return;
+    const sj = p.subjects.find(x => x.code === subjSel.value);
+    if (!sj) return;
+    const c = sj.chapters.find(x => x.code === chapSel.value);
     if (c) {
       chapTitle.value = c.name;
-      // Suggest next lecture number
       const next = String((c.lecture_count || 0) + 1).padStart(2, '0');
       if (!lecNo.value) lecNo.value = next;
     }
     updatePreview();
   });
 
+  // ---- Live preview updates ----
   lecNo.addEventListener('input', updatePreview);
   suffixEl.addEventListener('input', updatePreview);
+
+  // ---- Convenience: auto-select if only one syllabus exists ----
+  if (TREE && TREE.length === 1) {
+    syllSel.value = TREE[0].syllabus_key;
+    syllSel.dispatchEvent(new Event('change'));
+  }
 </script>
 
 {% endblock %}

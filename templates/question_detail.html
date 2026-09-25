@@ -21,6 +21,16 @@
 
         <!-- Metadata -->
         <dl class="row">
+        {% set _p = lookup_paper(question.paper) %}
+        {% if _p and _p.syllabus %}
+        <dt class="col-sm-4">Syllabus</dt>
+        <dd class="col-sm-8">
+          {{ _p.syllabus.display_name }}
+          {% if _p.syllabus.level %}
+            <span class="badge bg-info text-dark">Level {{ _p.syllabus.level }}</span>
+          {% endif %}
+        </dd>
+        {% endif %}
           <dt class="col-sm-4">Subject</dt>
           <dd class="col-sm-8">{{ question.subject }}</dd>
 

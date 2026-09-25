@@ -1085,6 +1085,19 @@ def _display_single_question(q):
         print()
         print_colored("  📖  Syllabus Link", COLORS.CYAN, bold=True)
         print("  " + "─" * (_QB_WIDTH - 4))
+
+        # --- NEW: syllabus name above the paper ---
+        if info['paper_key']:
+            from . import syllabus_config as SC
+            paper = next((p for p in SC.get_papers(active_only=False)
+                          if p['paper_key'] == info['paper_key']), None)
+            if paper and paper.get('syllabus_id'):
+                syll = next((s for s in SC.get_syllabi(active_only=False)
+                             if s['id'] == paper['syllabus_id']), None)
+                if syll:
+                    lvl = f"  (Level {syll['level']})" if syll.get('level') else ""
+                    print(f"     {'Syllabus':<10}: {syll['display_name']}{lvl}")
+
         if info['paper_display']:
             print(f"     {'Paper':<10}: {info['paper_display']}")
         if info['subject_name']:
@@ -1553,60 +1566,93 @@ def find_questions_for_chapter(paper_key, subj_code, chap_code):
             out.append(q)
     return out
 
+def _qb_syllabus_indexes():
+    """
+    Return (by_triple, by_pair, by_paper) built fresh from the questions
+    table. Called by the syllabus browser on every navigation so edits
+    made during the session are immediately visible.
+    """
+    from collections import defaultdict
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM questions")
+    rows = cursor.fetchall()
+    cursor.close(); conn.close()
+
+    bt = defaultdict(list)
+    bp = defaultdict(list)
+    bpp = defaultdict(list)
+    for q in rows:
+        info = resolve_question_syllabus(q)
+        pk = info['paper_key']
+        if not pk:
+            continue
+        bpp[pk].append(q)
+        subj = info['subject_code']
+        chap = info['chapter_code']
+        if subj:
+            bp[(pk, subj)].append(q)
+            if chap:
+                bt[(pk, subj, chap)].append(q)
+    return bt, bp, bpp
+
 def browse_by_syllabus_interactive():
     """
-    Paper → Subject → Chapter → Questions drill-down.
-    Question counts come from (paper, subject_code, chapter_code) parsed
-    from each question's syllabus_code / chapter field.
+    Syllabus → Paper → Subject → Chapter → Questions drill-down.
     """
-    from .file_manager import _papers
     from . import syllabus_config as SC
-    from collections import defaultdict
-
-    def _reload_indexes():
-        """
-        Re-fetch every question and rebuild the three lookup indexes.
-
-        Called at the top of every menu level so edits made during the
-        session (question renames, paper swaps, chapter re-detection)
-        show up immediately instead of requiring a CLI restart.
-        """
-        conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM questions")
-        rows = cursor.fetchall()
-        cursor.close(); conn.close()
-
-        bt = defaultdict(list)
-        bp = defaultdict(list)
-        bpp = defaultdict(list)
-        for q in rows:
-            info = resolve_question_syllabus(q)
-            pk = info['paper_key']
-            if not pk:
-                continue
-            bpp[pk].append(q)
-            subj = info['subject_code']
-            chap = info['chapter_code']
-            if subj:
-                bp[(pk, subj)].append(q)
-                if chap:
-                    bt[(pk, subj, chap)].append(q)
-        return bt, bp, bpp
 
     while True:
+        syllabi = SC.get_syllabi(active_only=True)
+        if not syllabi:
+            print_colored("[i] No syllabi configured. Add one via "
+                          "'📚 Syllabus Setup → sy'.", COLORS.YELLOW)
+            input("\nPress Enter to continue...")
+            return
+
         print()
         print_colored("  📖  BROWSE BY SYLLABUS", COLORS.CYAN, bold=True)
         print_colored("  " + _rule(), COLORS.CYAN)
+        print()
+        print("  Syllabi:")
+        for i, s in enumerate(syllabi, 1):
+            n_papers = len(SC.get_papers(active_only=True, syllabus_id=s['id']))
+            lvl = f"  (Level {s['level']})" if s.get('level') else ""
+            line = f"    {i:2}. {s['display_name']}{lvl}"
+            pad = 56 - len(line) if len(line) < 56 else 4
+            line += " " * pad + f"{n_papers:>3} paper(s)"
+            print(line)
+        print("     0. Back to question bank menu")
 
-        by_triple, by_pair, by_paper = _reload_indexes()
+        si = input(color_text("\n  Choose syllabus: ", COLORS.MAGENTA)).strip()
+        if si == '0' or not si:
+            return
+        if not si.isdigit() or not (1 <= int(si) <= len(syllabi)):
+            print_colored("[!] Invalid choice.", COLORS.RED)
+            continue
 
-        # ==================================================
-        # LEVEL 1: Paper selection
-        # ================================================
-        papers = list(_papers().values())
+        selected_syllabus = syllabi[int(si) - 1]
+        _browse_papers_in_syllabus(selected_syllabus)
+        # When the inner function returns, loop back to the syllabus list.
+
+
+def _browse_papers_in_syllabus(syllabus):
+    """
+    Paper → Subject → Chapter → Questions traversal, scoped to one syllabus.
+    Returns when the user backs out to the syllabus list.
+    """
+    from . import syllabus_config as SC
+
+    while True:  # paper-selection loop
+        by_triple, by_pair, by_paper = _qb_syllabus_indexes()
+
+        print()
+        print_colored(f"  📘  {syllabus['display_name']}", COLORS.CYAN, bold=True)
+        print_colored("  " + _rule(), COLORS.CYAN)
+
+        papers = SC.get_papers(active_only=True, syllabus_id=syllabus['id'])
         if not papers:
-            print_colored("[i] No papers configured.", COLORS.YELLOW)
+            print_colored("[i] No papers in this syllabus yet.", COLORS.YELLOW)
             input("\nPress Enter to continue...")
             return
 
@@ -1620,7 +1666,7 @@ def browse_by_syllabus_interactive():
             pad = 52 - len(line) if len(line) < 52 else 4
             line += " " * pad + f"{n_subj:>3} subj · {count:>4} Q"
             print(line)
-        print("     0. Back")
+        print("     0. Back to syllabi")
 
         pi = input(color_text("\n  Choose paper: ", COLORS.MAGENTA)).strip()
         if pi == '0' or not pi:
@@ -1628,16 +1674,18 @@ def browse_by_syllabus_interactive():
         if not pi.isdigit() or not (1 <= int(pi) <= len(papers)):
             print_colored("[!] Invalid choice.", COLORS.RED)
             continue
+
         selected_paper = papers[int(pi) - 1]
         paper_key = selected_paper['paper_key']
         paper_display = selected_paper['display_name']
 
-        # ==================================================
-        # LEVEL 2: Subject selection
-        # ==================================================
+        # ==============================================================
+        # Subject selection
+        # ==============================================================
         back_to_papers = False
         while not back_to_papers:
-            by_triple, by_pair, by_paper = _reload_indexes()
+            by_triple, by_pair, by_paper = _qb_syllabus_indexes()
+
             print()
             print_colored(f"  📘  {paper_display}", COLORS.CYAN, bold=True)
             print_colored("  " + _rule(), COLORS.CYAN)
@@ -1670,17 +1718,20 @@ def browse_by_syllabus_interactive():
             subj_code = str(selected_subject.get('chapter') or '').zfill(2)
             subj_name = selected_subject['name']
 
-            # ==================================================
-            # LEVEL 3: Chapter selection
-            # ==================================================
+            # ==========================================================
+            # Chapter selection
+            # ==========================================================
             back_to_subjects = False
             while not back_to_subjects:
-                by_triple, by_pair, by_paper = _reload_indexes()
+                by_triple, by_pair, by_paper = _qb_syllabus_indexes()
+
                 print()
-                print_colored(f"  📗  {paper_display}  ›  {subj_code} {subj_name}", COLORS.CYAN, bold=True)
+                print_colored(f"  📗  {paper_display}  ›  {subj_code} {subj_name}",
+                              COLORS.CYAN, bold=True)
                 print_colored("  " + _rule(), COLORS.CYAN)
 
-                chapters = SC.get_chapters(subject_id=selected_subject['id'], active_only=True)
+                chapters = SC.get_chapters(subject_id=selected_subject['id'],
+                                           active_only=True)
                 if not chapters:
                     print_colored("[i] No chapters in this subject.", COLORS.YELLOW)
                     input("\nPress Enter to continue...")
@@ -1708,11 +1759,11 @@ def browse_by_syllabus_interactive():
                 chap_code = str(selected_chapter.get('chapter_code') or '').zfill(2)
                 chap_name = selected_chapter['name']
 
-                # ==================================================
-                # LEVEL 4: Question list (stays here after viewing)
-                # ==================================================
+                # ======================================================
+                # Question list (refreshes on every render)
+                # ======================================================
                 while True:
-                    by_triple, by_pair, by_paper = _reload_indexes()
+                    by_triple, by_pair, by_paper = _qb_syllabus_indexes()
                     qs = by_triple.get((paper_key, subj_code, chap_code), [])
                     qs_sorted = sorted(
                         qs,
@@ -1729,7 +1780,8 @@ def browse_by_syllabus_interactive():
                     print_colored("  " + _rule(), COLORS.CYAN)
 
                     if not qs_sorted:
-                        print_colored("  [i] No questions in this chapter yet.", COLORS.YELLOW)
+                        print_colored("  [i] No questions in this chapter yet.",
+                                      COLORS.YELLOW)
                     else:
                         print(f"\n  {len(qs_sorted)} question(s):")
                         print(f"  {'ID':>5}  {'Date':<10}  {'Qno':<4}  "
@@ -1740,8 +1792,7 @@ def browse_by_syllabus_interactive():
                             qtype = (q.get('type') or 'essay')[:12]
                             preview = _short_preview(
                                 q.get('nepali_transcription')
-                                or q.get('english_transcription')
-                                or '',
+                                or q.get('english_transcription') or '',
                                 40
                             )
                             print(f"  {q['id']:>5}  "
@@ -1754,21 +1805,19 @@ def browse_by_syllabus_interactive():
                         print("    <ID>     view that question (stay on this list)")
                     print("    b        back to chapter list")
                     print("    0        back to subject list")
-                    print("    q        back to paper list / exit")
+                    print("    q        back to syllabus list")
 
                     cmd = input(color_text("  > ", COLORS.MAGENTA)).strip().lower()
 
                     if cmd == 'q':
-                        return  # full exit from browse
+                        return      # unwind all the way to the syllabus picker
 
                     if cmd in ('', 'b', 'back'):
-                        # Exit question list → back to chapter menu
-                        break
+                        break       # → chapter menu
 
                     if cmd == '0':
-                        # Exit question list AND chapter menu → back to subject menu
                         back_to_subjects = True
-                        break
+                        break       # → subject menu
 
                     if cmd.isdigit():
                         q = get_question_by_id(int(cmd))
@@ -1776,21 +1825,15 @@ def browse_by_syllabus_interactive():
                             _display_single_question(q)
                             input("\nPress Enter to continue...")
                             continue
-                        else:
-                            print_colored(f"[!] Question {cmd} not found.", COLORS.RED)
-                            input("\nPress Enter to continue...")
-                            continue
+                        print_colored(f"[!] Question {cmd} not found.", COLORS.RED)
+                        input("\nPress Enter to continue...")
+                        continue
 
                     print_colored(
                         "[!] Enter a numeric ID, 'b' for chapters, "
                         "'0' for subjects, or 'q' to exit.",
                         COLORS.RED
                     )
-
-                if back_to_subjects:
-                    continue
-                else:
-                    continue
 
 def import_export_submenu():
     while True:

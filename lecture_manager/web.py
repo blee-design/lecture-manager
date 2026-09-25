@@ -85,16 +85,17 @@ def _syllabus_matches(record_sid, filter_sid):
 def _build_syllabus_tree():
     """
     Return a nested tree for the syllabus browser:
-      [ { paper_key, display_name, folder_name, lecture_count,
-          subjects: [ { code, name, lecture_count,
-                        chapters: [ { code, name, description, lecture_count } ] } ] } ]
-    Lecture counts come from the youtube_lectures table, keyed by
-    (paper, subject_code, chapter_code) parsed from syllabus_id.
+      [ { syllabus_id, syllabus_key, display_name, level,
+          lecture_count, papers: [
+              { paper_key, display_name, folder_name, lecture_count,
+                subjects: [ { code, name, lecture_count,
+                              chapters: [ { code, name, description,
+                                            lecture_count, question_count } ] } ] } ] } ]
     """
-    from .file_manager import _papers
     from . import syllabus_config as SC
+    from .file_manager import _papers
 
-    # --- Lecture counts ---
+    # ---- Lecture counts (same as before) ----
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute(f"SELECT paper, syllabus_id FROM {TABLE_NAME}")
@@ -102,9 +103,9 @@ def _build_syllabus_tree():
     cursor.close()
     conn.close()
 
-    lecture_counts = {}      # (paper, subj, chap) -> count
-    subject_totals = {}      # (paper, subj) -> count
-    paper_totals = {}        # paper -> count
+    lecture_counts = {}
+    subject_totals = {}
+    paper_totals = {}
 
     for r in rows:
         paper = r.get('paper')
@@ -124,7 +125,7 @@ def _build_syllabus_tree():
             chap = parts[1].zfill(2)
             lecture_counts[(paper, subj, chap)] = lecture_counts.get((paper, subj, chap), 0) + 1
 
-    # --- Question counts ---
+    # ---- Question counts ----
     from .question_bank import resolve_question_syllabus
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -142,35 +143,51 @@ def _build_syllabus_tree():
         if pk and s and c:
             question_counts[(pk, s, c)] = question_counts.get((pk, s, c), 0) + 1
 
-    # --- Build tree ---
+    # ---- Build tree ----
     tree = []
-    for paper in SC.get_papers():
-        paper_key = paper['paper_key']
-        subjects_list = []
-        for subj in SC.get_subjects(paper_key=paper_key, active_only=True):
-            subj_code = str(subj.get('chapter') or '').zfill(2)
-            chapters_list = []
-            for ch in SC.get_chapters(subject_id=subj['id'], active_only=True):
-                ch_code = str(ch.get('chapter_code') or '').zfill(2)
-                chapters_list.append({
-                    'code': ch_code,
-                    'name': ch['name'],
-                    'description': ch.get('description') or '',
-                    'lecture_count': lecture_counts.get((paper_key, subj_code, ch_code), 0),
-                    'question_count': question_counts.get((paper_key, subj_code, ch_code), 0),
+    for syllabus in SC.get_syllabi(active_only=True):
+        papers_list = []
+        for paper in SC.get_papers(active_only=True,
+                                   syllabus_id=syllabus['id']):
+            paper_key = paper['paper_key']
+            subjects_list = []
+            for subj in SC.get_subjects(paper_key=paper_key, active_only=True):
+                subj_code = str(subj.get('chapter') or '').zfill(2)
+                chapters_list = []
+                for ch in SC.get_chapters(subject_id=subj['id'],
+                                          active_only=True):
+                    ch_code = str(ch.get('chapter_code') or '').zfill(2)
+                    chapters_list.append({
+                        'code': ch_code,
+                        'name': ch['name'],
+                        'description': ch.get('description') or '',
+                        'lecture_count': lecture_counts.get(
+                            (paper_key, subj_code, ch_code), 0),
+                        'question_count': question_counts.get(
+                            (paper_key, subj_code, ch_code), 0),
+                    })
+                subjects_list.append({
+                    'code': subj_code,
+                    'name': subj['name'],
+                    'chapters': chapters_list,
+                    'lecture_count': subject_totals.get(
+                        (paper_key, subj_code), 0),
                 })
-            subjects_list.append({
-                'code': subj_code,
-                'name': subj['name'],
-                'chapters': chapters_list,
-                'lecture_count': subject_totals.get((paper_key, subj_code), 0),
+            papers_list.append({
+                'paper_key': paper_key,
+                'display_name': paper['display_name'],
+                'folder_name': paper['folder_name'],
+                'subjects': subjects_list,
+                'lecture_count': paper_totals.get(paper_key, 0),
             })
+
         tree.append({
-            'paper_key': paper_key,
-            'display_name': paper['display_name'],
-            'folder_name': paper['folder_name'],
-            'subjects': subjects_list,
-            'lecture_count': paper_totals.get(paper_key, 0),
+            'syllabus_id': syllabus['id'],
+            'syllabus_key': syllabus['syllabus_key'],
+            'display_name': syllabus['display_name'],
+            'level': syllabus.get('level'),
+            'papers': papers_list,
+            'lecture_count': sum(p['lecture_count'] for p in papers_list),
         })
 
     return tree
@@ -183,6 +200,26 @@ def get_all_youtube_records():
     cursor.close()
     conn.close()
     return rows
+
+@app.context_processor
+def _inject_syllabus_helpers():
+    from . import syllabus_config as SC
+
+    def lookup_paper(paper_key):
+        """Return {'paper': ..., 'syllabus': ...} or None."""
+        if not paper_key:
+            return None
+        p = next((x for x in SC.get_papers(active_only=False)
+                  if x['paper_key'] == paper_key), None)
+        if not p:
+            return None
+        s = None
+        if p.get('syllabus_id'):
+            s = next((x for x in SC.get_syllabi(active_only=False)
+                      if x['id'] == p['syllabus_id']), None)
+        return {'paper': p, 'syllabus': s}
+
+    return {'lookup_paper': lookup_paper}
 
 @app.route('/instapaper')
 def instapaper_list():
@@ -250,9 +287,10 @@ def index():
                            total_fb=total_fb,
                            missing_fb=missing_fb,
                            orphan_fb=orphan_fb,
-                           orphan_yt=orphan_yt,       # pass orphan count
-                           tally=yt_tally,            # for backward compatibility with template
+                           orphan_yt=orphan_yt,
+                           tally=yt_tally,
                            papers=papers,
+                           syllabi=_build_syllabus_tree(),
                            playback_config=PLAYBACK_SOURCE)
 
 @app.route('/syllabus')

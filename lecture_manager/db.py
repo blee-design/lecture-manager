@@ -1060,6 +1060,65 @@ def migrate_table():
         else:
             print_colored("[i] Fresh install — no legacy papers to backfill.", COLORS.BLUE)
 
+    # ---------- Syllabi layer (multi-syllabus support) ----------
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS syllabi (
+        id             INT AUTO_INCREMENT PRIMARY KEY,
+        syllabus_key   VARCHAR(60)  NOT NULL UNIQUE,
+        display_name   VARCHAR(255) NOT NULL,
+        level          VARCHAR(20)  NULL,
+        description    TEXT         NULL,
+        active         BOOLEAN      DEFAULT TRUE,
+        display_order  INT          DEFAULT 0,
+        created_at     DATETIME     DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    """)
+
+    cursor.execute("SHOW COLUMNS FROM papers LIKE 'syllabus_id'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE papers ADD COLUMN syllabus_id INT NULL")
+        cursor.execute("ALTER TABLE papers ADD INDEX idx_papers_syllabus (syllabus_id)")
+        try:
+            cursor.execute("""
+                ALTER TABLE papers
+                ADD CONSTRAINT fk_papers_syllabus
+                FOREIGN KEY (syllabus_id) REFERENCES syllabi(id)
+                ON DELETE SET NULL
+            """)
+        except mysql.connector.Error as e:
+            print_colored(f"[!] Could not add FK on papers.syllabus_id: {e}", COLORS.YELLOW)
+        print_colored("[✓] Added 'syllabus_id' to papers.", COLORS.GREEN)
+
+    # One-time backfill: if any paper has no syllabus yet, and there is
+    # exactly one syllabus (or none), create a default and assign it.
+    cursor.execute("SELECT COUNT(*) FROM papers WHERE syllabus_id IS NULL")
+    orphan_count = cursor.fetchone()[0]
+    if orphan_count > 0:
+        cursor.execute("SELECT COUNT(*) FROM syllabi")
+        syll_count = cursor.fetchone()[0]
+
+        if syll_count == 0:
+            cursor.execute("""
+                INSERT INTO syllabi (syllabus_key, display_name, level, description, display_order)
+                VALUES ('legacy', 'Legacy (pre multi-syllabus)', NULL,
+                        'Auto-created when the syllabi layer was introduced.',
+                        0)
+            """)
+            cursor.execute("SELECT id FROM syllabi WHERE syllabus_key = 'legacy'")
+            default_id = cursor.fetchone()[0]
+            cursor.execute("UPDATE papers SET syllabus_id = %s WHERE syllabus_id IS NULL", (default_id,))
+            print_colored(
+                f"[✓] Created default syllabus 'legacy' and assigned "
+                f"{orphan_count} pre-existing paper(s) to it.", COLORS.GREEN
+            )
+        else:
+            # More than one syllabus already exists — user must decide.
+            print_colored(
+                f"[i] {orphan_count} paper(s) have no syllabus. "
+                f"Use '📚 Syllabus Setup → Assign papers to syllabus' to sort them.",
+                COLORS.YELLOW
+            )
+
     conn.commit()
     cursor.close()
     conn.close()

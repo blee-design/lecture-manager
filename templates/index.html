@@ -47,7 +47,7 @@
   </div>
 </div>
 
-<!-- ===== PAPER QUICK LINKS ===== -->
+<!-- ===== PAPER QUICK LINKS (grouped by syllabus) ===== -->
 <div class="row mt-4">
   <div class="col">
     <div class="card">
@@ -55,12 +55,25 @@
         📁 Quick Filter by Paper
       </div>
       <div class="card-body">
-        {% for p in papers %}
-          <a href="{{ url_for('lectures', paper=p.paper_key) }}" class="btn btn-outline-primary">{{ p.display_name }}</a>
+        <div class="mb-2">
+          <a href="{{ url_for('lectures') }}" class="btn btn-outline-secondary btn-sm">All papers</a>
+        </div>
+        {% for syll in syllabi %}
+        <div class="mb-3">
+          <div class="small text-muted mb-1">
+            <strong>{{ syll.display_name }}</strong>
+            {% if syll.level %}<span class="badge bg-info text-dark">Level {{ syll.level }}</span>{% endif %}
+          </div>
+          {% for p in syll.papers %}
+            <a href="{{ url_for('lectures', paper=p.paper_key) }}"
+               class="btn btn-outline-primary btn-sm me-1 mb-1">{{ p.display_name }}</a>
+          {% else %}
+            <span class="text-muted small fst-italic">(no papers)</span>
+          {% endfor %}
+        </div>
         {% else %}
-          <span class="text-muted">No papers configured. Run <code>📚 Syllabus Setup</code> from the CLI menu.</span>
+          <span class="text-muted">No syllabi configured.</span>
         {% endfor %}
-        <a href="{{ url_for('lectures') }}" class="btn btn-outline-secondary">All</a>
       </div>
     </div>
   </div>
