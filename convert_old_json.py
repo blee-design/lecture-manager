@@ -34,40 +34,175 @@ import argparse
 # ============================================================
 _SYLLABUS_CODE_RE = re.compile(r'\b(\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?:-\S+)?)\b')
 
+# Detects a leading "Reading Passage <id>:<br>" prefix
+_PASSAGE_PREFIX_RE = re.compile(
+    r'^\s*Reading\s+Passage\s+([A-Za-z0-9_\-]+)\s*:\s*(?:<br\s*/?>\s*)?(.*)$',
+    re.IGNORECASE | re.DOTALL,
+)
+
 
 def has_devanagari(text):
     """True if text contains Devanagari Unicode characters."""
     return bool(re.search(r'[\u0900-\u097F]', text))
 
 
+def _classify_part(s):
+    """Classify a text fragment as 'nep', 'eng', 'neutral', or 'empty'."""
+    s = s.strip()
+    if not s:
+        return 'empty'
+    dev = len(re.findall(r'[\u0900-\u097F]', s))
+    lat = len(re.findall(r'[a-zA-Z]', s))
+    total = dev + lat
+    if total == 0:
+        return 'neutral'
+    if dev / total >= 0.5:
+        return 'nep'
+    if lat / total >= 0.5:
+        return 'eng'
+    return 'neutral'
+
+
+def _smart_split_by_br(text):
+    """
+    Split text into (nepali, english) by finding the longest contiguous
+    run of English-dominant parts when split by <br> or newline.
+
+    This handles cases like:
+        Nepali question<br>English translation<br>more Nepali data
+    where a naive first-<br> split would put the Nepali data in the
+    English field.
+    """
+    if '<br' in text:
+        parts = re.split(r'<br\s*/?>', text)
+        sep = '<br>'
+    elif '\n' in text:
+        parts = text.split('\n')
+        sep = '\n'
+    else:
+        return None
+
+    if len(parts) < 2:
+        return None
+
+    classes = [_classify_part(p) for p in parts]
+
+    # Find the longest contiguous run of 'eng'
+    best_start = best_end = -1
+    cur_start = -1
+    for i, c in enumerate(classes):
+        if c == 'eng':
+            if cur_start == -1:
+                cur_start = i
+        else:
+            if cur_start != -1:
+                if (i - cur_start) > (best_end - best_start):
+                    best_start, best_end = cur_start, i
+                cur_start = -1
+    if cur_start != -1:
+        if (len(classes) - cur_start) > (best_end - best_start):
+            best_start, best_end = cur_start, len(classes)
+
+    if best_start == -1:
+        return None  # no English run found
+
+    nepali_parts = parts[:best_start] + parts[best_end:]
+    english_parts = parts[best_start:best_end]
+
+    nep = sep.join(nepali_parts).strip()
+    eng = sep.join(english_parts).strip()
+    if not nep and not eng:
+        return None
+    return nep, eng
+
+
+def extract_passage(text):
+    """
+    If `text` starts with 'Reading Passage <id>:<br>…', extract the
+    passage and the question. Returns (identifier, passage, question).
+    If no passage is detected, returns (None, None, text).
+
+    The question is found by looking for:
+      1. A trailing <p>…</p> block, or
+      2. A </table> boundary, or
+      3. The last <br> if the trailing part ends with '?'.
+    """
+    if not text:
+        return None, None, text
+    m = _PASSAGE_PREFIX_RE.match(text)
+    if not m:
+        return None, None, text
+
+    identifier = m.group(1)
+    rest = m.group(2).strip()
+    if not rest:
+        return identifier, '', ''
+
+    # 1. Trailing <p>…</p>
+    qm = re.search(r'<p>(.*?)</p>\s*$', rest, re.DOTALL | re.IGNORECASE)
+    if qm:
+        question = qm.group(1).strip()
+        passage = rest[:qm.start()].strip()
+        return identifier, passage, question
+
+    # 2. Boundary at last </table>
+    tm = re.search(r'</table>\s*(.*)$', rest, re.DOTALL | re.IGNORECASE)
+    if tm and tm.group(1).strip():
+        end = tm.start() + len('</table>')
+        passage = rest[:end].strip()
+        question = tm.group(1).strip()
+        return identifier, passage, question
+
+    # 3. Last <br> followed by a question mark
+    parts = re.split(r'<br\s*/?>', rest)
+    if len(parts) >= 2 and parts[-1].strip().endswith('?'):
+        passage = '<br>'.join(parts[:-1]).strip()
+        question = parts[-1].strip()
+        return identifier, passage, question
+
+    # Fallback: entire rest is the passage, no question text found
+    return identifier, rest, ''
+
+
 def split_nepali_english(text, auto_detect=True):
     """
-    Split text into (nepali, english) using these strategies, in order:
-      1. <br>, <br/>, <br />, or newline separator
-      2. Trailing parentheses: "Nepali (English)"
-      3. Devanagari presence (if auto_detect is on)
+    Split text into (nepali, english).
+
+    Strategy, in order:
+      1. If auto_detect is on, use language-aware <br> splitting —
+         find the longest contiguous run of English-only parts.
+         Handles cases like:
+             Nepali question<br>English translation<br>more Nepali data
+      2. Fall back to first <br> / newline split.
+      3. Trailing parentheses: "Nepali (English)".
+      4. Devanagari-presence heuristic (if auto_detect).
     """
     if not text:
         return "", ""
 
-    # 1. Explicit separators
+    # 1. Smart split (language-aware) — only when auto_detect is on
+    if auto_detect:
+        smart = _smart_split_by_br(text)
+        if smart:
+            return smart
+
+    # 2. Traditional first-<br> split
     for sep in ('<br>', '<br/>', '<br />', '\n'):
         if sep in text:
             parts = text.split(sep, 1)
             return parts[0].strip(), parts[1].strip()
 
-    # 2. Trailing parentheses
+    # 3. Trailing parentheses
     m = re.search(r'^(.*?)\s*\(([^)]+)\)\s*$', text, re.DOTALL)
     if m:
         return m.group(1).strip(), m.group(2).strip()
 
-    # 3. Auto-detect by Unicode block
+    # 4. Devanagari heuristic
     if auto_detect:
         if not has_devanagari(text):
             return "", text
         if not re.search(r'[a-zA-Z]', text):
             return text, ""
-        # Mixed: try to peel Latin-only words from the end
         words = text.split()
         eng_words = []
         for w in reversed(words):
@@ -205,15 +340,19 @@ def convert_old_json(input_file, output_file, defaults,
             raw_qno = item.get('question_number')
         question_no = pad_question_number(raw_qno)
 
+        # ---------- Passage extraction (before text splitting) ----------
+        raw_text = item.get('text', '') or ''
+        passage_id_hint, passage_content, cleaned_text = extract_passage(raw_text)
+        # If a passage was found, use the cleaned question text for splitting
+        effective_text = cleaned_text if passage_id_hint else raw_text
+
         # ---------- Text ----------
-        # If the source already has nepali_transcription / english_transcription,
-        # trust them. Otherwise split the combined `text`.
         src_nep = (item.get('nepali_transcription') or '').strip()
         src_eng = (item.get('english_transcription') or '').strip()
         if src_nep or src_eng:
             nepali, english = src_nep, src_eng
         else:
-            nepali, english = split_nepali_english(item.get('text', ''), auto_detect)
+            nepali, english = split_nepali_english(effective_text, auto_detect)
 
         # ---------- Type ----------
         qtype = (item.get('type') or 'essay').lower()
@@ -328,6 +467,10 @@ def convert_old_json(input_file, output_file, defaults,
             'subject': subject,
         }
 
+        # --- Passage link (only when a passage was extracted) ---
+        if passage_content:
+            new_q['_passage_text'] = passage_content
+
         # Drop None-only keys we don't want to persist
         if new_q['correct_answer'] is None:
             del new_q['correct_answer']
@@ -339,6 +482,9 @@ def convert_old_json(input_file, output_file, defaults,
         json.dump(new_data, f, indent=2, ensure_ascii=False)
 
     # ---------- Report ----------
+    n_passages = sum(1 for q in new_data if q.get('_passage_text'))
+    unique_passages = len({q['_passage_text'] for q in new_data if q.get('_passage_text')})
+
     print(f"✅ Converted {len(new_data)} questions → {output_file}")
     print(f"   Types: essay={type_counts['essay']}  mcq={type_counts['multichoice']}  "
           f"tf={type_counts['truefalse']}  matching={type_counts['matching']}"
@@ -347,6 +493,9 @@ def convert_old_json(input_file, output_file, defaults,
         print(f"   ℹ️  Derived `correct_answer` for {tf_fixed} True/False question(s)")
     if code_extracted:
         print(f"   ℹ️  Extracted syllabus code from `chapter` text for {code_extracted} question(s)")
+    if unique_passages:
+        print(f"   ℹ️  Extracted {unique_passages} unique passage(s) linked to "
+              f"{n_passages} question(s)")
 
 
 # ============================================================

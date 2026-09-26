@@ -32,6 +32,8 @@ def json_to_questions(input_file, verbose=False):
             "question_no": item.get("question_no", i),
             "question_date": item.get("question_date", ""),
             "institution": item.get("institution", ""),
+            # Transient passage text — resolved to passage_id by insert_question
+            "_passage_text": item.get("_passage_text"),
             "level": item.get("level", ""),
             "alias": item.get("alias"),
             "paper": item.get("paper", ""),
@@ -107,6 +109,10 @@ def json_to_questions(input_file, verbose=False):
             question["maxbytes"] = item.get("maxbytes", 2*1024*1024)
             if question["attachments"] > 0:
                 log(f"Question {i}: Essay with {question['attachments']} attachments", "INFO", verbose)
+
+        # Drop the transient field if it wasn't provided
+        if not question.get("_passage_text"):
+            question.pop("_passage_text", None)
 
         questions.append(question)
         log(f"Question {i}: Successfully parsed", "OK", verbose)
