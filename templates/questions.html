@@ -2,63 +2,101 @@
 {% block content %}
 <h2>📚 Question Bank</h2>
 
-<!-- Search and filter -->
+<!-- ============ Search + Source filter + Actions ============ -->
 <div class="row mb-4">
-  <div class="col-md-8">
-    <form method="get" class="row g-3" id="search-form">
-      <div class="col-auto" style="position: relative;">
+  <div class="col-lg-8">
+    <form method="get" class="row g-2 align-items-end" id="search-form">
+
+      <div class="col-md-5 position-relative">
+        <label for="search-input" class="form-label small text-muted mb-1">Search</label>
         <input type="text" id="search-input" name="search" value="{{ search }}"
                class="form-control" placeholder="Search all fields..."
                autocomplete="off">
-        <!-- Suggestions dropdown -->
-        <div id="suggestions" class="list-group" style="position: absolute; z-index: 1000; width: 100%; max-height: 200px; overflow-y: auto; display: none;">
+        <div id="suggestions" class="list-group"
+             style="position:absolute; z-index:1000; width:calc(100% - 24px);
+                    max-height:240px; overflow-y:auto; display:none;">
         </div>
       </div>
-      <div class="col-auto">
-        <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Search</button>
+
+      <div class="col-md-4">
+        <label for="source-filter" class="form-label small text-muted mb-1">Source</label>
+        <select name="source" id="source-filter" class="form-select">
+          <option value="">All sources</option>
+          {% for s in sources %}
+            <option value="{{ s }}" {% if s == source_filter %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+          {% if not sources %}
+            <option value="" disabled>(no source tags yet)</option>
+          {% endif %}
+        </select>
       </div>
-      <div class="col-auto">
+
+      <!-- Preserve current sort order across searches -->
+      <input type="hidden" name="sort"  value="{{ sort_by }}">
+      <input type="hidden" name="order" value="{{ order }}">
+
+      <div class="col-md-3 d-flex gap-2">
+        <button type="submit" class="btn btn-primary flex-grow-1">
+          <i class="bi bi-search"></i> Search
+        </button>
         <a href="{{ url_for('question_list') }}" class="btn btn-secondary">Clear</a>
       </div>
     </form>
   </div>
-  <div class="col-md-4 text-end">
-    <a href="{{ url_for('question_paper') }}" class="btn btn-outline-success"><i class="bi bi-file-text"></i> View Whole Paper</a>
+
+  <div class="col-lg-4 text-end mt-3 mt-lg-0 d-flex align-items-end justify-content-end gap-2">
+    <a href="{{ url_for('question_paper') }}" class="btn btn-outline-success">
+      <i class="bi bi-file-text"></i> Whole Paper
+    </a>
     <a href="{{ url_for('browse_chapters') }}" class="btn btn-outline-info">
-      <i class="bi bi-book"></i> Browse by Chapter
+      <i class="bi bi-book"></i> By Chapter
     </a>
   </div>
 </div>
 
-<!-- Table -->
+<!-- ============ Active filter indicator ============ -->
+{% if source_filter %}
+<div class="alert alert-info py-2 mb-3 d-flex justify-content-between align-items-center">
+  <span>
+    <i class="bi bi-funnel-fill"></i>
+    Filtering by source: <strong>{{ source_filter }}</strong>
+  </span>
+  <a href="{{ url_for('question_list', search=search, sort=sort_by, order=order) }}"
+     class="btn btn-sm btn-outline-secondary">
+    Clear source filter
+  </a>
+</div>
+{% endif %}
+
+<!-- ============ Table ============ -->
 <div class="table-responsive">
   <table class="table table-striped table-hover">
     <thead>
       <tr>
         <th>
           {% set new_order = 'desc' if sort_by == 'question_date' and order == 'asc' else 'asc' %}
-          <a href="{{ url_for('question_list', sort='question_date', order=new_order, search=search) }}">
+          <a href="{{ url_for('question_list', sort='question_date', order=new_order, search=search, source=source_filter) }}">
             Date
             {% if sort_by == 'question_date' %}{{ '▲' if order == 'asc' else '▼' }}{% endif %}
           </a>
         </th>
         <th>
           {% set new_order = 'desc' if sort_by == 'institution' and order == 'asc' else 'asc' %}
-          <a href="{{ url_for('question_list', sort='institution', order=new_order, search=search) }}">
+          <a href="{{ url_for('question_list', sort='institution', order=new_order, search=search, source=source_filter) }}">
             Institution
             {% if sort_by == 'institution' %}{{ '▲' if order == 'asc' else '▼' }}{% endif %}
           </a>
         </th>
         <th>
           {% set new_order = 'desc' if sort_by == 'level' and order == 'asc' else 'asc' %}
-          <a href="{{ url_for('question_list', sort='level', order=new_order, search=search) }}">
+          <a href="{{ url_for('question_list', sort='level', order=new_order, search=search, source=source_filter) }}">
             Level
             {% if sort_by == 'level' %}{{ '▲' if order == 'asc' else '▼' }}{% endif %}
           </a>
         </th>
         <th>
           {% set new_order = 'desc' if sort_by == 'subject' and order == 'asc' else 'asc' %}
-          <a href="{{ url_for('question_list', sort='subject', order=new_order, search=search) }}">
+          <a href="{{ url_for('question_list', sort='subject', order=new_order, search=search, source=source_filter) }}">
             Subject
             {% if sort_by == 'subject' %}{{ '▲' if order == 'asc' else '▼' }}{% endif %}
           </a>
@@ -66,16 +104,23 @@
         <th>Syllabus</th>
         <th>
           {% set new_order = 'desc' if sort_by == 'paper' and order == 'asc' else 'asc' %}
-          <a href="{{ url_for('question_list', sort='paper', order=new_order, search=search) }}">
+          <a href="{{ url_for('question_list', sort='paper', order=new_order, search=search, source=source_filter) }}">
             Paper
             {% if sort_by == 'paper' %}{{ '▲' if order == 'asc' else '▼' }}{% endif %}
           </a>
         </th>
         <th>
           {% set new_order = 'desc' if sort_by == 'syllabus_code' and order == 'asc' else 'asc' %}
-          <a href="{{ url_for('question_list', sort='syllabus_code', order=new_order, search=search) }}">
+          <a href="{{ url_for('question_list', sort='syllabus_code', order=new_order, search=search, source=source_filter) }}">
             Syllabus Code
             {% if sort_by == 'syllabus_code' %}{{ '▲' if order == 'asc' else '▼' }}{% endif %}
+          </a>
+        </th>
+        <th>
+          {% set new_order = 'desc' if sort_by == 'source' and order == 'asc' else 'asc' %}
+          <a href="{{ url_for('question_list', sort='source', order=new_order, search=search, source=source_filter) }}">
+            Source
+            {% if sort_by == 'source' %}{{ '▲' if order == 'asc' else '▼' }}{% endif %}
           </a>
         </th>
         <th>Group</th>
@@ -114,6 +159,13 @@
           {% endif %}
         </td>
         <td>{{ q.syllabus_code or '' }}</td>
+        <td>
+          {% if q.source %}
+            <span class="badge bg-info text-dark">{{ q.source }}</span>
+          {% else %}
+            <span class="text-muted small fst-italic">untagged</span>
+          {% endif %}
+        </td>
         <td>{{ q.group or '' }}</td>
         <td>{{ q.question_number }}</td>
         <td>{{ q.marks if q.marks else '' }}</td>
@@ -123,11 +175,21 @@
           {{ preview[:60] }}{% if preview|length > 60 %}…{% endif %}
         </td>
         <td>
-          <a href="{{ url_for('question_detail', id=q.id) }}" class="btn btn-sm btn-info"><i class="bi bi-eye"></i></a>
+          <a href="{{ url_for('question_detail', id=q.id) }}" class="btn btn-sm btn-info">
+            <i class="bi bi-eye"></i>
+          </a>
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="13" class="text-center text-muted">No questions found.</td></tr>
+      <tr>
+        <td colspan="14" class="text-center text-muted py-4">
+          No questions found.
+          {% if source_filter %}
+            <br>
+            <a href="{{ url_for('question_list') }}" class="small">Clear all filters</a>
+          {% endif %}
+        </td>
+      </tr>
       {% endfor %}
     </tbody>
   </table>

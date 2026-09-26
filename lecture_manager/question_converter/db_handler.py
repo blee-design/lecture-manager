@@ -282,6 +282,7 @@ def insert_question(q_dict, source=None, force=False):
                 'feedback_false': q_dict.get('feedback_false'),
                 'exam_type': q_dict.get('exam_type', 'open'),
                 'alias': (q_dict.get('alias') or None),
+                'source': (q_dict.get('source') or source),
             }
             # Remove None values so defaults are used
             update_kwargs = {k: v for k, v in update_kwargs.items() if v is not None}
@@ -337,6 +338,7 @@ def insert_question(q_dict, source=None, force=False):
         q_type=q_dict.get('type', 'essay'),
         feedback_true=q_dict.get('feedback_true'),
         feedback_false=q_dict.get('feedback_false'),
+        source=(q_dict.get('source') or source),
     )
     return 'inserted', qid
 

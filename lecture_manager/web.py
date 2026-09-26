@@ -866,11 +866,33 @@ def question_list():
     search = request.args.get('search', '')
     sort_by = request.args.get('sort', 'question_date')
     order = request.args.get('order', 'desc')
+    source_filter = request.args.get('source', '')
 
     if search:
         rows = search_questions_all_fields(search)
     else:
         rows = get_all_questions(sort_by=sort_by, order=order.upper())
+
+    # ---- Apply source filter ----
+    if source_filter:
+        if source_filter == '__untagged__':
+            rows = [r for r in rows if not (r.get('source') or '').strip()]
+        else:
+            target = source_filter.strip().lower()
+            rows = [r for r in rows
+                    if (r.get('source') or '').strip().lower() == target]
+
+    # ---- List distinct sources for the dropdown ----
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT DISTINCT source FROM questions
+        WHERE source IS NOT NULL AND source != ''
+        ORDER BY source
+    """)
+    sources = [row[0] for row in cursor.fetchall()]
+    cursor.close()
+    conn.close()
 
     # ---- Apply sorting (for search results as well) ----
     reverse = (order == 'desc')
@@ -893,7 +915,9 @@ def question_list():
                            questions=rows,
                            search=search,
                            sort_by=sort_by,
-                           order=order)
+                           order=order,
+                           sources=sources,
+                           source_filter=source_filter)
 
 @app.route('/question/<int:id>')
 def question_detail(id):

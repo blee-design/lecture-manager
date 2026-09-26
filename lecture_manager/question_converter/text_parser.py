@@ -515,6 +515,10 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
         question['subject'] = field_content
     elif field_name == 'notes':
         question['notes'] = field_content
+    elif field_name == 'source':
+        question['source'] = field_content
+        log(f"  Question {question.get('question_no', '?')}: Set source to {field_content}",
+            "INFO", True)
 
 def process_question_lines(question, lines, line_number_start, file_path):
     """Process lines for a question, handling multi-line fields"""

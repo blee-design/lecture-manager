@@ -413,6 +413,88 @@ def _short_preview(text, max_len=50):
         cut = cut[:sp]
     return cut.rstrip(' ,;:') + '…'
 
+def _list_question_sources(questions):
+    """
+    Return a sorted list of distinct source tags from a set of questions.
+    Empty sources appear as '(untagged)' and always sort last.
+    """
+    seen = set()
+    has_untagged = False
+    for q in questions:
+        s = (q.get('source') or '').strip()
+        if s:
+            seen.add(s)
+        else:
+            has_untagged = True
+    result = sorted(seen, key=str.lower)
+    if has_untagged:
+        result.append('(untagged)')
+    return result
+
+
+def _filter_by_source(questions, source_filter):
+    """
+    Filter questions by source. `source_filter` can be:
+      - None              : no filtering (return all)
+      - '(untagged)'      : questions with no source
+      - '<source string>' : case-insensitive exact match on source
+    """
+    if source_filter is None:
+        return questions
+    if source_filter == '(untagged)':
+        return [q for q in questions if not (q.get('source') or '').strip()]
+    target = source_filter.strip().lower()
+    return [q for q in questions
+            if (q.get('source') or '').strip().lower() == target]
+
+
+def _pick_source_filter(all_questions, current_filter):
+    """
+    Show a menu of source tags and return the chosen filter value.
+
+    Returns:
+      None              → "All sources" was chosen
+      '(untagged)'      → "Untagged only" was chosen
+      '<source string>' → a specific source was chosen
+      '__SKIP__'        → cancel, keep the current filter unchanged
+    """
+    sources = _list_question_sources(all_questions)
+    if not sources:
+        print_colored("[i] No source tags exist on any question yet.",
+                      COLORS.YELLOW)
+        input("Press Enter to continue...")
+        return '__SKIP__'
+
+    # Pre-compute counts so the menu shows impact
+    counts = {None: len(all_questions)}
+    for s in sources:
+        counts[s] = len(_filter_by_source(all_questions, s))
+
+    print()
+    print_colored("  🗂  FILTER BY SOURCE", COLORS.CYAN, bold=True)
+    print_colored("  " + "─" * 60, COLORS.CYAN)
+
+    marker_all = color_text("  ← active", COLORS.GREEN) if current_filter is None else ""
+    print(f"   1. All sources  {color_text(f'({counts[None]})', COLORS.WHITE)}{marker_all}")
+
+    for i, s in enumerate(sources, 2):
+        marker = color_text("  ← active", COLORS.GREEN) if s == current_filter else ""
+        label = s if s != '(untagged)' else color_text('(untagged)', COLORS.YELLOW)
+        print(f"   {i}. {label}  {color_text(f'({counts[s]})', COLORS.WHITE)}{marker}")
+
+    print("   0. Cancel (keep current filter)")
+    print_colored("  " + "─" * 60, COLORS.CYAN)
+
+    choice = input(color_text(f"Choose (0-{len(sources)+1}): ", COLORS.MAGENTA)).strip()
+    if not choice or choice == '0' or not choice.isdigit():
+        return '__SKIP__'
+    idx = int(choice)
+    if idx == 1:
+        return None
+    if 2 <= idx <= len(sources) + 1:
+        return sources[idx - 2]
+    return '__SKIP__'
+
 def _render_block(html_content, indent="     "):
     """
     Render HTML content to terminal text with a uniform left margin.
@@ -605,7 +687,7 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                  maxbytes=2097152, grader_info=None,
                  syllabus_code=None, q_type='essay',
                  feedback_true=None, feedback_false=None,
-                 penalty=0, exam_type='open', alias=None):
+                 penalty=0, exam_type='open', alias=None, source=None):
     # Convert empty strings to None for nullable fields
     if paper == '':
         paper = None
@@ -681,17 +763,18 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
          show_num_correct, correct_feedback, partially_correct_feedback,
          incorrect_feedback, response_lines, attachments, filetypes, maxbytes,
          grader_info, type, syllabus_code,
-         penalty, feedback_true, feedback_false, exam_type, alias)
+         penalty, feedback_true, feedback_false, exam_type, alias, source)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s)
+                %s, %s, %s, %s, %s, %s)
     """, (date, institution, subject, paper, group, marks, chapter,
           question_number, nepali, english, level, notes,
           general_feedback, fraction_correct, fraction_wrong,
           shuffle_answers, show_num_correct,
           correct_feedback, partially_correct_feedback, incorrect_feedback,
           response_lines, attachments, filetypes, maxbytes, grader_info, q_type, syllabus_code,
-          penalty, feedback_true, feedback_false, exam_type or 'open', alias))
+          penalty, feedback_true, feedback_false, exam_type or 'open', alias,
+          source if source and source.strip() else None))
     conn.commit()
     qid = cursor.lastrowid
 
@@ -1078,6 +1161,11 @@ def _display_single_question(q):
     exam_type = q.get('exam_type') or 'open'
     exam_label = EXAM_TYPE_LABELS.get(exam_type, exam_type)
     print(f"  {'Exam type':<14}: {color_text(exam_label, COLORS.YELLOW)}")
+
+    # NEW — show source tag
+    source_val = (q.get('source') or '').strip()
+    if source_val:
+        print(f"  {'Source':<14}: {color_text(source_val, COLORS.CYAN)}")
 
     # ---------- Syllabus context ----------
     info = resolve_question_syllabus(q)
@@ -1566,11 +1654,11 @@ def find_questions_for_chapter(paper_key, subj_code, chap_code):
             out.append(q)
     return out
 
-def _qb_syllabus_indexes():
+def _qb_syllabus_indexes(source_filter=None):
     """
     Return (by_triple, by_pair, by_paper) built fresh from the questions
-    table. Called by the syllabus browser on every navigation so edits
-    made during the session are immediately visible.
+    table. If `source_filter` is given, only questions matching that
+    source are indexed.
     """
     from collections import defaultdict
     conn = get_connection()
@@ -1578,6 +1666,9 @@ def _qb_syllabus_indexes():
     cursor.execute("SELECT * FROM questions")
     rows = cursor.fetchall()
     cursor.close(); conn.close()
+
+    if source_filter is not None:
+        rows = _filter_by_source(rows, source_filter)
 
     bt = defaultdict(list)
     bp = defaultdict(list)
@@ -1598,9 +1689,13 @@ def _qb_syllabus_indexes():
 
 def browse_by_syllabus_interactive():
     """
-    Syllabus → Paper → Subject → Chapter → Questions drill-down.
+    Syllabus → Paper → Subject → Chapter → Questions drill-down,
+    with an optional source filter that stays active until you exit.
     """
     from . import syllabus_config as SC
+
+    # Session-wide context, shared across drill-down levels
+    ctx = {'source_filter': None}      # None = All sources
 
     while True:
         syllabi = SC.get_syllabi(active_only=True)
@@ -1613,6 +1708,12 @@ def browse_by_syllabus_interactive():
         print()
         print_colored("  📖  BROWSE BY SYLLABUS", COLORS.CYAN, bold=True)
         print_colored("  " + _rule(), COLORS.CYAN)
+
+        # Show active filter chip at the top so it's never silent
+        filter_chip = ctx['source_filter'] or 'All sources'
+        print(f"  Source filter: {color_text(filter_chip, COLORS.GREEN)}"
+              f"   {color_text('[f to change]', COLORS.WHITE)}")
+
         print()
         print("  Syllabi:")
         for i, s in enumerate(syllabi, 1):
@@ -1624,31 +1725,62 @@ def browse_by_syllabus_interactive():
             print(line)
         print("     0. Back to question bank menu")
 
-        si = input(color_text("\n  Choose syllabus: ", COLORS.MAGENTA)).strip()
+        si = input(color_text("\n  Choose syllabus (or 'f' to filter by source): ",
+                              COLORS.MAGENTA)).strip().lower()
+
+        if si == 'f':
+            all_qs = _load_all_questions()
+            new_filter = _pick_source_filter(all_qs, ctx['source_filter'])
+            if new_filter != '__SKIP__':
+                ctx['source_filter'] = new_filter
+            continue
+
         if si == '0' or not si:
             return
         if not si.isdigit() or not (1 <= int(si) <= len(syllabi)):
             print_colored("[!] Invalid choice.", COLORS.RED)
             continue
 
-        selected_syllabus = syllabi[int(si) - 1]
-        _browse_papers_in_syllabus(selected_syllabus)
-        # When the inner function returns, loop back to the syllabus list.
+        _browse_papers_in_syllabus(syllabi[int(si) - 1], ctx)
 
 
-def _browse_papers_in_syllabus(syllabus):
+def _load_all_questions():
+    """Small helper: fetch every question for source-filter counting."""
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM questions")
+    rows = cursor.fetchall()
+    cursor.close(); conn.close()
+    return rows
+
+
+def _browse_papers_in_syllabus(syllabus, ctx):
     """
-    Paper → Subject → Chapter → Questions traversal, scoped to one syllabus.
-    Returns when the user backs out to the syllabus list.
+    Paper → Subject → Chapter → Questions traversal, scoped to one
+    syllabus and the current source filter stored in `ctx`.
     """
     from . import syllabus_config as SC
 
+    def _filter_line():
+        chip = ctx['source_filter'] or 'All sources'
+        return (f"  Source filter: {color_text(chip, COLORS.GREEN)}"
+                f"   {color_text('[f to change]', COLORS.WHITE)}")
+
+    def _maybe_change_filter():
+        all_qs = _load_all_questions()
+        new_filter = _pick_source_filter(all_qs, ctx['source_filter'])
+        if new_filter != '__SKIP__':
+            ctx['source_filter'] = new_filter
+            return True
+        return False
+
     while True:  # paper-selection loop
-        by_triple, by_pair, by_paper = _qb_syllabus_indexes()
+        by_triple, by_pair, by_paper = _qb_syllabus_indexes(ctx['source_filter'])
 
         print()
         print_colored(f"  📘  {syllabus['display_name']}", COLORS.CYAN, bold=True)
         print_colored("  " + _rule(), COLORS.CYAN)
+        print(_filter_line())
 
         papers = SC.get_papers(active_only=True, syllabus_id=syllabus['id'])
         if not papers:
@@ -1668,7 +1800,11 @@ def _browse_papers_in_syllabus(syllabus):
             print(line)
         print("     0. Back to syllabi")
 
-        pi = input(color_text("\n  Choose paper: ", COLORS.MAGENTA)).strip()
+        pi = input(color_text("\n  Choose paper (or 'f' to filter): ",
+                              COLORS.MAGENTA)).strip().lower()
+        if pi == 'f':
+            _maybe_change_filter()
+            continue
         if pi == '0' or not pi:
             return
         if not pi.isdigit() or not (1 <= int(pi) <= len(papers)):
@@ -1684,11 +1820,12 @@ def _browse_papers_in_syllabus(syllabus):
         # ==============================================================
         back_to_papers = False
         while not back_to_papers:
-            by_triple, by_pair, by_paper = _qb_syllabus_indexes()
+            by_triple, by_pair, by_paper = _qb_syllabus_indexes(ctx['source_filter'])
 
             print()
             print_colored(f"  📘  {paper_display}", COLORS.CYAN, bold=True)
             print_colored("  " + _rule(), COLORS.CYAN)
+            print(_filter_line())
 
             subjects = SC.get_subjects(paper_key=paper_key, active_only=True)
             if not subjects:
@@ -1707,7 +1844,11 @@ def _browse_papers_in_syllabus(syllabus):
                 print(line)
             print("     0. Back to papers")
 
-            si = input(color_text("\n  Choose subject: ", COLORS.MAGENTA)).strip()
+            si = input(color_text("\n  Choose subject (or 'f' to filter): ",
+                                  COLORS.MAGENTA)).strip().lower()
+            if si == 'f':
+                _maybe_change_filter()
+                continue
             if si == '0' or not si:
                 break
             if not si.isdigit() or not (1 <= int(si) <= len(subjects)):
@@ -1723,12 +1864,15 @@ def _browse_papers_in_syllabus(syllabus):
             # ==========================================================
             back_to_subjects = False
             while not back_to_subjects:
-                by_triple, by_pair, by_paper = _qb_syllabus_indexes()
+                by_triple, by_pair, by_paper = _qb_syllabus_indexes(ctx['source_filter'])
 
                 print()
-                print_colored(f"  📗  {paper_display}  ›  {subj_code} {subj_name}",
-                              COLORS.CYAN, bold=True)
+                print_colored(
+                    f"  📗  {paper_display}  ›  {subj_code} {subj_name}",
+                    COLORS.CYAN, bold=True,
+                )
                 print_colored("  " + _rule(), COLORS.CYAN)
+                print(_filter_line())
 
                 chapters = SC.get_chapters(subject_id=selected_subject['id'],
                                            active_only=True)
@@ -1748,7 +1892,11 @@ def _browse_papers_in_syllabus(syllabus):
                     print(line)
                 print("     0. Back to subjects")
 
-                ci = input(color_text("\n  Choose chapter: ", COLORS.MAGENTA)).strip()
+                ci = input(color_text("\n  Choose chapter (or 'f' to filter): ",
+                                      COLORS.MAGENTA)).strip().lower()
+                if ci == 'f':
+                    _maybe_change_filter()
+                    continue
                 if ci == '0' or not ci:
                     break
                 if not ci.isdigit() or not (1 <= int(ci) <= len(chapters)):
@@ -1763,7 +1911,7 @@ def _browse_papers_in_syllabus(syllabus):
                 # Question list (refreshes on every render)
                 # ======================================================
                 while True:
-                    by_triple, by_pair, by_paper = _qb_syllabus_indexes()
+                    by_triple, by_pair, by_paper = _qb_syllabus_indexes(ctx['source_filter'])
                     qs = by_triple.get((paper_key, subj_code, chap_code), [])
                     qs_sorted = sorted(
                         qs,
@@ -1775,34 +1923,39 @@ def _browse_papers_in_syllabus(syllabus):
                     print_colored(
                         f"  📄  {paper_display}  ›  {subj_code} {subj_name}  ›  "
                         f"{chap_code} {chap_name}",
-                        COLORS.CYAN, bold=True
+                        COLORS.CYAN, bold=True,
                     )
                     print_colored("  " + _rule(), COLORS.CYAN)
+                    print(_filter_line())
 
                     if not qs_sorted:
-                        print_colored("  [i] No questions in this chapter yet.",
-                                      COLORS.YELLOW)
+                        print_colored("  [i] No questions in this chapter "
+                                      "matching the current filter.", COLORS.YELLOW)
                     else:
                         print(f"\n  {len(qs_sorted)} question(s):")
                         print(f"  {'ID':>5}  {'Date':<10}  {'Qno':<4}  "
-                              f"{'Type':<12}  Preview")
-                        print("  " + "─" * 70)
+                              f"{'Type':<12}  {'Source':<22}  Preview")
+                        print("  " + "─" * 100)
                         for q in qs_sorted:
                             qno = (q.get('question_number') or '')[:4]
                             qtype = (q.get('type') or 'essay')[:12]
+                            src = (q.get('source') or '').strip() or '(untagged)'
+                            if len(src) > 20:
+                                src = src[:19] + '…'
                             preview = _short_preview(
                                 q.get('nepali_transcription')
                                 or q.get('english_transcription') or '',
-                                40
+                                40,
                             )
                             print(f"  {q['id']:>5}  "
                                   f"{(q.get('question_date') or ''):<10}  "
-                                  f"{qno:<4}  {qtype:<12}  {preview}")
+                                  f"{qno:<4}  {qtype:<12}  {src:<22}  {preview}")
 
                     print()
                     print_colored("  Options:", COLORS.WHITE, bold=True)
                     if qs_sorted:
                         print("    <ID>     view that question (stay on this list)")
+                    print("    f        filter by source")
                     print("    b        back to chapter list")
                     print("    0        back to subject list")
                     print("    q        back to syllabus list")
@@ -1810,15 +1963,15 @@ def _browse_papers_in_syllabus(syllabus):
                     cmd = input(color_text("  > ", COLORS.MAGENTA)).strip().lower()
 
                     if cmd == 'q':
-                        return      # unwind all the way to the syllabus picker
-
+                        return
+                    if cmd == 'f':
+                        _maybe_change_filter()
+                        continue
                     if cmd in ('', 'b', 'back'):
-                        break       # → chapter menu
-
+                        break
                     if cmd == '0':
                         back_to_subjects = True
-                        break       # → subject menu
-
+                        break
                     if cmd.isdigit():
                         q = get_question_by_id(int(cmd))
                         if q:
@@ -1828,11 +1981,10 @@ def _browse_papers_in_syllabus(syllabus):
                         print_colored(f"[!] Question {cmd} not found.", COLORS.RED)
                         input("\nPress Enter to continue...")
                         continue
-
                     print_colored(
-                        "[!] Enter a numeric ID, 'b' for chapters, "
+                        "[!] Enter a numeric ID, 'f' to filter, 'b' for chapters, "
                         "'0' for subjects, or 'q' to exit.",
-                        COLORS.RED
+                        COLORS.RED,
                     )
 
 def import_export_submenu():
