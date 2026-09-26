@@ -617,7 +617,20 @@ def create_moodle_xml(questions, output_file, verbose=False):
 
     log(f"Creating XML with {len(questions)} questions", "INFO", verbose)
 
+    from ..question_bank import get_passage
+
     for i, q in enumerate(questions, 1):
+        # ---- Expand passage inline (Moodle-safe; survives shuffle) ----
+        if q.get('passage_id'):
+            passage = get_passage(q['passage_id'])
+            if passage:
+                passage_html = passage['content'].replace('\n', '<br>')
+                q = dict(q)   # shallow copy — do not mutate caller's dict
+                q['text'] = (
+                    f"Reading Passage:<br>{passage_html}"
+                    f"<p>{q['text']}</p>"
+                )
+
         # Log question being processed
         text_preview = q.get('text', '')[:50] + "..." if len(q.get('text', '')) > 50 else q.get('text', '')
         log(f"Processing Question {i}: {text_preview}", "INFO", verbose)

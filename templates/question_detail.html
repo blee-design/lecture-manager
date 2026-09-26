@@ -80,6 +80,16 @@
           </dd>
         </dl>
 
+        {% if question.passage_id %}
+          {% set _passage = get_passage(question.passage_id) %}
+          {% if _passage %}
+          <div class="border-top pt-3 mt-3">
+            <h5><i class="bi bi-book"></i> Reading Passage</h5>
+            <div class="p-3 bg-light rounded" style="white-space: pre-wrap;">{{ _passage.content|safe }}</div>
+          </div>
+          {% endif %}
+        {% endif %}
+
         <!-- Question text combined -->
         <div class="border-top pt-3 mt-3">
           <h5><i class="bi bi-translate"></i> Question</h5>

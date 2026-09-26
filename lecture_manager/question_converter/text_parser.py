@@ -624,18 +624,26 @@ def parse_text_file(file_path, args):
         question_no += 1
         q_line = lines[question_line_idx]
 
-        # Extract question number and text
+        # ---- Strip (passage:N) marker; remember the passage text ----
+        q_line_clean, passage_id = remove_passage_marker(q_line, passages, args.verbose)
+        passage_text = passages.get(passage_id) if passage_id else None
+
+        # Extract question number and text (from the cleaned line)
         q_text = ""
         q_no = question_no
-        match = re.match(r'^Question\s+(No\.?\s*|Number\s*)?(\d+)\s*:\s*(.*)', q_line, re.IGNORECASE)
+        match = re.match(r'^Question\s+(No\.?\s*|Number\s*)?(\d+)\s*:\s*(.*)', q_line_clean, re.IGNORECASE)
         if match:
             q_no = int(match.group(2))
             q_text = match.group(3).strip()
         else:
-            if q_line.lower().startswith('question:'):
-                q_text = q_line.split(':', 1)[1].strip()
+            if q_line_clean.lower().startswith('question:'):
+                q_text = q_line_clean.split(':', 1)[1].strip()
             else:
-                q_text = re.sub(r'^Question\s+', '', q_line, flags=re.IGNORECASE).strip()
+                q_text = re.sub(r'^Question\s+', '', q_line_clean, flags=re.IGNORECASE).strip()
+
+        if passage_text and args.verbose:
+            log(f"  Q{q_no}: linked passage '{passage_id}' "
+                f"({len(passage_text)} chars)", "INFO", True)
 
         # Collect all field lines (before and after the question line)
         field_lines = lines[:question_line_idx] + lines[question_line_idx+1:]
@@ -680,6 +688,14 @@ def parse_text_file(file_path, args):
             "hints": [],
             "pairs": [],
         }
+
+        # Attach passage text as a transient field (consumed by insert_question)
+        if passage_text:
+            question_dict['_passage_text'] = passage_text
+
+        # Attach passage text as a transient field (consumed by insert_question)
+        if passage_text:
+            question_dict['_passage_text'] = passage_text
 
         # Ensure question_number is set from the line number if not provided later
         if not question_dict.get('question_number'):

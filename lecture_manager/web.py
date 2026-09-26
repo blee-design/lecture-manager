@@ -204,9 +204,9 @@ def get_all_youtube_records():
 @app.context_processor
 def _inject_syllabus_helpers():
     from . import syllabus_config as SC
+    from .question_bank import get_passage
 
     def lookup_paper(paper_key):
-        """Return {'paper': ..., 'syllabus': ...} or None."""
         if not paper_key:
             return None
         p = next((x for x in SC.get_papers(active_only=False)
@@ -219,7 +219,10 @@ def _inject_syllabus_helpers():
                       if x['id'] == p['syllabus_id']), None)
         return {'paper': p, 'syllabus': s}
 
-    return {'lookup_paper': lookup_paper}
+    return {
+        'lookup_paper': lookup_paper,
+        'get_passage': get_passage,
+    }
 
 @app.route('/instapaper')
 def instapaper_list():

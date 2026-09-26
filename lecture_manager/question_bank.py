@@ -12,6 +12,7 @@ import csv
 import json
 import re
 import shutil
+import hashlib
 from datetime import date, datetime
 from collections import defaultdict
 from decimal import Decimal
@@ -413,6 +414,52 @@ def _short_preview(text, max_len=50):
         cut = cut[:sp]
     return cut.rstrip(' ,;:') + '…'
 
+
+def get_or_create_passage(content, title=None):
+    """
+    Return the passage id for the given content, creating it if new.
+    Deduplicates by md5 of normalized content, so importing the same
+    passage from multiple files reuses one row.
+    """
+    if not content or not content.strip():
+        return None
+    normalized = content.strip().replace('\r\n', '\n').replace('\r', '\n')
+    h = hashlib.md5(normalized.encode('utf-8')).hexdigest()
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT id FROM passages WHERE content_hash = %s", (h,))
+        row = cursor.fetchone()
+        if row:
+            return row['id']
+        cursor.execute(
+            "INSERT INTO passages (content_hash, title, content) VALUES (%s, %s, %s)",
+            (h, title, normalized),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    except Exception as e:
+        print_colored(f"[!] get_or_create_passage failed: {e}", COLORS.RED)
+        return None
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def get_passage(passage_id):
+    """Fetch a passage row by id, or None."""
+    if not passage_id:
+        return None
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM passages WHERE id = %s", (passage_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return row
+
+
 def _list_question_sources(questions):
     """
     Return a sorted list of distinct source tags from a set of questions.
@@ -687,7 +734,8 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                  maxbytes=2097152, grader_info=None,
                  syllabus_code=None, q_type='essay',
                  feedback_true=None, feedback_false=None,
-                 penalty=0, exam_type='open', alias=None, source=None):
+                 penalty=0, exam_type='open', alias=None, source=None,
+                 passage_id=None):
     # Convert empty strings to None for nullable fields
     if paper == '':
         paper = None
@@ -763,10 +811,10 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
          show_num_correct, correct_feedback, partially_correct_feedback,
          incorrect_feedback, response_lines, attachments, filetypes, maxbytes,
          grader_info, type, syllabus_code,
-         penalty, feedback_true, feedback_false, exam_type, alias, source)
+         penalty, feedback_true, feedback_false, exam_type, alias, source, passage_id)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s)
+                %s, %s, %s, %s, %s, %s, %s)
     """, (date, institution, subject, paper, group, marks, chapter,
           question_number, nepali, english, level, notes,
           general_feedback, fraction_correct, fraction_wrong,
@@ -774,7 +822,8 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
           correct_feedback, partially_correct_feedback, incorrect_feedback,
           response_lines, attachments, filetypes, maxbytes, grader_info, q_type, syllabus_code,
           penalty, feedback_true, feedback_false, exam_type or 'open', alias,
-          source if source and source.strip() else None))
+          source if source and source.strip() else None,
+          passage_id))
     conn.commit()
     qid = cursor.lastrowid
 
@@ -1226,6 +1275,16 @@ def _display_single_question(q):
     english = html_to_terminal(q.get('english_transcription') or '').strip()
     marks = q.get('marks')
     notes = q.get('notes')
+
+    # ---------- Passage (if linked) ----------
+    if q.get('passage_id'):
+        _p = get_passage(q['passage_id'])
+        if _p:
+            print()
+            print_colored("  📖  Reading Passage", COLORS.CYAN, bold=True)
+            print("  " + "─" * (_QB_WIDTH - 4))
+            for _line in _p['content'].split('\n'):
+                print(f"     {_line}" if _line.strip() else "")
 
     print()
     print_colored("  📝  Question", COLORS.CYAN, bold=True)

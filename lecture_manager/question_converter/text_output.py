@@ -11,6 +11,24 @@ def create_text_output(questions, output_file, verbose=False):
     """
     log(f"Creating text output with {len(questions)} questions", "INFO", verbose)
 
+    # ---- Pass 1: collect unique passages and assign local numbers ----
+    from ..question_bank import get_passage
+
+    used_passages = {}   # passage_id -> local number (1, 2, 3, …)
+    next_num = 1
+    for q in questions:
+        pid = q.get('passage_id')
+        if pid and pid not in used_passages:
+            used_passages[pid] = next_num
+            next_num += 1
+
+    # Fetch passage content once per unique id
+    passage_content = {}
+    for pid in used_passages:
+        p = get_passage(pid)
+        if p:
+            passage_content[pid] = p['content']
+
     metadata_fields = [
         ('question_date', 'Date'),
         ('institution', 'Institution'),
@@ -28,7 +46,15 @@ def create_text_output(questions, output_file, verbose=False):
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write("# Exported Question Bank (Full Metadata)\n")
         f.write(f"# Total: {len(questions)} questions\n")
+        f.write(f"# Passages: {len(used_passages)}\n")
         f.write("# Each block is separated by '---'\n\n")
+
+        # ---- Emit passage blocks first ----
+        for pid, num in used_passages.items():
+            if pid not in passage_content:
+                continue
+            f.write(f"[passage:{num}]\n")
+            f.write(passage_content[pid].rstrip() + "\n\n")
 
         for idx, q in enumerate(questions, 1):
             if verbose and idx % 5 == 0:
@@ -42,10 +68,16 @@ def create_text_output(questions, output_file, verbose=False):
                 if val is not None and str(val).strip():
                     f.write(f"{label}: {val}\n")
 
-            # ---- Question number + text ----
+            # ---- Question number + text (with passage marker if linked) ----
             qno = q.get("question_no")
             text = q.get("text", "")
-            f.write(f"Question No. {qno}: {text}\n" if qno else f"Question: {text}\n")
+            marker = ""
+            if q.get("passage_id") and q["passage_id"] in used_passages:
+                marker = f" (passage:{used_passages[q['passage_id']]})"
+            if qno:
+                f.write(f"Question No. {qno}{marker}: {text}\n")
+            else:
+                f.write(f"Question{marker}: {text}\n")
 
             # ---- Type ----
             q_type = q.get("type", "multichoice")

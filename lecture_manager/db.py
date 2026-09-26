@@ -22,7 +22,7 @@ _APP_TABLES = [
     'facebook_entries',
     'pomodoro_settings', 'pomodoro_tasks', 'pomodoro_log',
     'pomodoro_state', 'pomodoro_badges', 'user_badges', 'pomodoro_pauses',
-    'subjects', 'chapters', 'papers', 'syllabi',
+    'subjects', 'chapters', 'papers', 'syllabi', 'passages',
     'questions', 'question_options', 'question_matching_pairs', 'question_hints',
     'oauth_credentials',
     'instapaper_credentials', 'instapaper_articles', 'instapaper_oauth',
@@ -307,6 +307,16 @@ def create_table():
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     """)
 
+    # ---------- Passages (linked reading passages for questions) ----------
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS passages (
+        id            INT AUTO_INCREMENT PRIMARY KEY,
+        content_hash  CHAR(32) NOT NULL UNIQUE,
+        title         VARCHAR(255) NULL,
+        content       LONGTEXT NOT NULL,
+        created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    """)
 
     # Insert a dummy row if not exists (for easier update)
     cursor.execute("INSERT IGNORE INTO pomodoro_state (id, current_phase, remaining_seconds) VALUES (1, 'work', 0)")
@@ -1118,6 +1128,23 @@ def migrate_table():
                 f"Use '📚 Syllabus Setup → Assign papers to syllabus' to sort them.",
                 COLORS.YELLOW
             )
+    # ---------- Passages: link questions.passage_id → passages.id ----------
+    cursor.execute("SHOW COLUMNS FROM questions LIKE 'passage_id'")
+    if not cursor.fetchone():
+        print_colored("[i] Adding 'passage_id' to questions...", COLORS.BLUE)
+        cursor.execute("ALTER TABLE questions ADD COLUMN passage_id INT NULL")
+        cursor.execute("ALTER TABLE questions ADD INDEX idx_passage (passage_id)")
+        try:
+            cursor.execute("""
+                ALTER TABLE questions
+                ADD CONSTRAINT fk_question_passage
+                FOREIGN KEY (passage_id) REFERENCES passages(id)
+                ON DELETE SET NULL
+            """)
+        except mysql.connector.Error as e:
+            print_colored(f"[!] Could not add FK on questions.passage_id: {e}",
+                          COLORS.YELLOW)
+        print_colored("[✓] Added 'passage_id' to questions.", COLORS.GREEN)
 
     conn.commit()
     cursor.close()
