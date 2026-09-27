@@ -41,73 +41,164 @@ def load_quotes():
 
 QUOTES = load_quotes()
 
+# ====================== STYLE CONFIGURATION ======================
+# ---- Modern palette (module-level so other functions can reuse) ----
+PALETTE = {
+    'bg':            '#0f1117',   # deep near-black
+    'card':          '#1a1d28',   # card surface
+    'card_hover':    '#232734',   # card hover / raised
+    'border':        '#2a2e3d',   # subtle divider
+    'text':          '#e8eaf0',   # primary text
+    'text_muted':    '#8b92a5',   # secondary text
+    'accent':        '#6366f1',   # indigo — primary action
+    'accent_hover':  '#7c7ff2',
+    'success':       '#10b981',
+    'warning':       '#f59e0b',
+    'danger':        '#ef4444',
+    'info':          '#06b6d4',
+}
+
 def _strip_syllabus_tag(text):
     """Remove a leading '[XX] ' prefix used for display in the subject dropdown."""
     import re as _re
     return _re.sub(r'^\[[^\]]+\]\s*', '', (text or '')).strip()
 
-# ====================== STYLE CONFIGURATION ======================
 def configure_styles():
     style = ttk.Style()
     style.theme_use('clam')
-    bg_dark = "#1e2a3a"
-    bg_medium = "#2c3e50"
-    bg_light = "#34495e"
-    accent = "#3498db"
-    accent_light = "#5dade2"
-    fg = "#ecf0f1"
 
-    style.configure('.', background=bg_medium, foreground=fg, fieldbackground=bg_light)
-    style.configure('TFrame', background=bg_medium)
-    style.configure('TLabel', background=bg_medium, foreground=fg)
-    style.configure('TLabelframe', background=bg_medium, foreground=fg, bordercolor=accent)
-    style.configure('TLabelframe.Label', background=bg_medium, foreground=fg)
-    style.configure('TButton', background=accent, foreground='white',
-                    bordercolor=accent, focuscolor='none', borderwidth=0)
-    style.map('TButton', background=[('active', accent_light)])
+    bg      = PALETTE['bg']
+    card    = PALETTE['card']
+    border  = PALETTE['border']
+    text    = PALETTE['text']
+    muted   = PALETTE['text_muted']
+    accent  = PALETTE['accent']
+    acc_h   = PALETTE['accent_hover']
 
-    style.configure('TEntry', fieldbackground=bg_light, foreground=fg, insertcolor=fg)
+    # ---- Base ----
+    style.configure('.', background=bg, foreground=text,
+                    fieldbackground=card, borderwidth=0, focuscolor=bg)
+    style.configure('TFrame',       background=bg)
+    style.configure('TLabel',       background=bg, foreground=text)
+    style.configure('Muted.TLabel', background=bg, foreground=muted)
+    style.configure('Card.TFrame',  background=card)
+    style.configure('Card.TLabel',  background=card, foreground=text)
 
-    style.configure('TCombobox',
-                    fieldbackground='#34495e',
-                    foreground='white',
-                    background='#2c3e50',
-                    arrowcolor='white')
-    style.map('TCombobox', fieldbackground=[('readonly', '#34495e')])
-    style.configure('TCombobox.listbox',
-                    background='#2c3e50', foreground='white',
-                    selectbackground='#3498db', selectforeground='white')
+    # ---- Borderless LabelFrame (kept for any leftover usage) ----
+    style.configure('TLabelframe',
+                    background=card, foreground=text,
+                    bordercolor=card, borderwidth=0, relief='flat')
+    style.configure('TLabelframe.Label',
+                    background=card, foreground=muted,
+                    font=('Helvetica Neue', 9))
 
-    style.configure('TProgressbar',
-                    background=accent, troughcolor=bg_light, bordercolor=bg_light)
+    # ---- Buttons ----
+    style.configure('TButton',
+                    background=card, foreground=text,
+                    bordercolor=border, focuscolor=bg,
+                    borderwidth=0, relief='flat',
+                    padding=(14, 8))
+    style.map('TButton',
+              background=[('active', PALETTE['card_hover']),
+                          ('pressed', PALETTE['border'])],
+              foreground=[('disabled', muted)])
 
-    style.configure('Vertical.TScrollbar',
-                    background=bg_light, troughcolor=bg_medium)
-
-    style.configure('TNotebook', background=bg_medium, bordercolor=accent)
-    style.configure('TNotebook.Tab', background=bg_light, foreground=fg, padding=[12, 6])
-    style.map('TNotebook.Tab',
-              background=[('selected', accent)],
-              foreground=[('selected', 'white')])
-
-    style.configure('Earned.TFrame', background='#2e7d32',
-                    bordercolor=accent, borderwidth=1, relief='solid')
-    style.configure('Locked.TFrame', background='#555555',
-                    bordercolor='#333333', borderwidth=1, relief='solid')
-
-    # Treeview — fixes the white-on-white bug in Today's Summary
-    style.configure('Treeview',
-                    background=bg_light, foreground=fg,
-                    fieldbackground=bg_light, bordercolor=accent, rowheight=26)
-    style.configure('Treeview.Heading',
+    # Primary (accent) button — for ▶ Start / Save Log
+    style.configure('Accent.TButton',
                     background=accent, foreground='white',
-                    bordercolor=accent, relief='flat')
+                    borderwidth=0, relief='flat', padding=(18, 10))
+    style.map('Accent.TButton',
+              background=[('active', acc_h), ('pressed', accent)])
+
+    # Ghost button — for secondary controls
+    style.configure('Ghost.TButton',
+                    background=card, foreground=muted,
+                    borderwidth=0, relief='flat', padding=(10, 6))
+    style.map('Ghost.TButton',
+              background=[('active', PALETTE['card_hover'])],
+              foreground=[('active', text)])
+
+    # ---- Inputs ----
+    style.configure('TEntry',
+                    fieldbackground=PALETTE['card_hover'],
+                    foreground=text, insertcolor=text,
+                    bordercolor=border, borderwidth=1, relief='flat',
+                    padding=6)
+    style.configure('TCombobox',
+                    fieldbackground=PALETTE['card_hover'],
+                    foreground=text, background=card,
+                    arrowcolor=muted, bordercolor=border,
+                    borderwidth=1, relief='flat', padding=6)
+    style.map('TCombobox',
+              fieldbackground=[('readonly', PALETTE['card_hover'])],
+              bordercolor=[('focus', accent)])
+    style.configure('TCombobox.listbox',
+                    background=card, foreground=text,
+                    selectbackground=accent, selectforeground='white',
+                    borderwidth=0)
+
+    # ---- Progressbar ----
+    style.configure('TProgressbar',
+                    background=accent, troughcolor=PALETTE['card_hover'],
+                    bordercolor=card, borderwidth=0, thickness=6)
+
+    # ---- Notebook (stats dialog) ----
+    style.configure('TNotebook', background=bg, bordercolor=border,
+                    borderwidth=0)
+    style.configure('TNotebook.Tab',
+                    background=card, foreground=muted,
+                    padding=[14, 8], borderwidth=0)
+    style.map('TNotebook.Tab',
+              background=[('selected', PALETTE['card_hover'])],
+              foreground=[('selected', text)])
+
+    # ---- Scrollbar ----
+    style.configure('Vertical.TScrollbar',
+                    background=card, troughcolor=bg,
+                    bordercolor=bg, arrowcolor=muted, borderwidth=0)
+    style.map('Vertical.TScrollbar',
+              background=[('active', PALETTE['card_hover'])])
+
+    # ---- Treeview ----
+    style.configure('Treeview',
+                    background=card, foreground=text,
+                    fieldbackground=card, bordercolor=border,
+                    borderwidth=0, rowheight=28)
+    style.configure('Treeview.Heading',
+                    background=bg, foreground=muted,
+                    borderwidth=0, relief='flat', padding=(8, 6))
     style.map('Treeview',
               background=[('selected', accent)],
               foreground=[('selected', 'white')])
     style.map('Treeview.Heading',
-              background=[('active', accent_light)],
-              foreground=[('active', 'white')])
+              background=[('active', PALETTE['card_hover'])],
+              foreground=[('active', text)])
+
+    # ---- Badge frames ----
+    style.configure('Earned.TFrame', background=PALETTE['success'],
+                    borderwidth=0, relief='flat')
+    style.configure('Locked.TFrame', background=PALETTE['card_hover'],
+                    borderwidth=0, relief='flat')
+
+def make_card(parent, title, **grid_kw):
+    """
+    Borderless card surface with a subtle title row.
+    Returns (card_frame, content_frame). Put child widgets inside content.
+    """
+    card = tk.Frame(parent, bg=PALETTE['card'], bd=0, highlightthickness=0)
+    if grid_kw:
+        card.grid(**grid_kw)
+
+    tk.Label(card, text=title, bg=PALETTE['card'],
+             fg=PALETTE['text_muted'],
+             font=('Helvetica Neue', 10, 'bold'),
+             anchor='w', padx=14, pady=8).pack(fill='x', pady=(8, 4))
+
+    tk.Frame(card, bg=PALETTE['border'], height=1).pack(fill='x', padx=14)
+
+    content = tk.Frame(card, bg=PALETTE['card'], padx=14, pady=12)
+    content.pack(fill='both', expand=True)
+    return card, content
 
 # ====================== PIE CHART HELPER ======================
 def _render_pie_chart(ax, data, labels, title):
@@ -269,7 +360,7 @@ class PomodoroApp:
         self.root.title("🍅 Pomodoro Study Timer")
         self.root.geometry("1000x780")
         self.root.minsize(850, 680)
-        self.root.configure(bg="#1e2a3a")
+        self.root.configure(bg="#0f1117")
         configure_styles()
 
         self.config = self.load_config()
@@ -503,7 +594,7 @@ class PomodoroApp:
         container = ttk.Frame(self.root)
         container.pack(fill=tk.BOTH, expand=True)
 
-        self.canvas = tk.Canvas(container, bg="#1e2a3a", highlightthickness=0)
+        self.canvas = tk.Canvas(container, bg="#0f1117", highlightthickness=0)
         scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=scrollbar.set)
 
@@ -554,256 +645,268 @@ class PomodoroApp:
         # ==============================================================
         # LEFT COLUMN: Timer · Session Type · Task · Notes
         # ==============================================================
-        left = ttk.Frame(main, padding="5")
-        left.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        left.rowconfigure(0, weight=0)   # timer (natural height)
-        left.rowconfigure(1, weight=0)   # session type
-        left.rowconfigure(2, weight=0)   # task select
-        left.rowconfigure(3, weight=1)   # notes (stretches)
+        left = tk.Frame(main, bg=PALETTE['bg'])
+        left.grid(row=0, column=0, sticky='nsew', padx=(0, 6))
+        left.rowconfigure(0, weight=0)
+        left.rowconfigure(1, weight=0)
+        left.rowconfigure(2, weight=0)
+        left.rowconfigure(3, weight=1)
         left.columnconfigure(0, weight=1)
 
-        # -- Timer Frame --
-        timer_frame = ttk.LabelFrame(left, text="⏱️ Timer", padding="15")
-        timer_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
-        timer_frame.columnconfigure(0, weight=1)
+        # ---------- Timer card ----------
+        _, tc = make_card(left, "⏱️  TIMER",
+                          row=0, column=0, sticky='ew', pady=(0, 8))
+        tc.columnconfigure(0, weight=1)
 
-        self.time_label = ttk.Label(timer_frame, font=("Helvetica", 56, "bold"),
-                                    foreground="#3498db")
-        self.time_label.grid(row=0, column=0, pady=10)
+        self.time_label = tk.Label(tc, text="25:00",
+                                   bg=PALETTE['card'], fg=PALETTE['accent'],
+                                   font=('Helvetica Neue', 56, 'bold'))
+        self.time_label.grid(row=0, column=0, pady=(4, 6))
 
-        self.progress_bar = ttk.Progressbar(timer_frame, orient=tk.HORIZONTAL,
+        self.progress_bar = ttk.Progressbar(tc, orient='horizontal',
                                             length=300, mode='determinate')
-        self.progress_bar.grid(row=1, column=0, pady=5, sticky=tk.W+tk.E)
+        self.progress_bar.grid(row=1, column=0, pady=(0, 8), sticky='ew')
 
-        self.phase_label = ttk.Label(timer_frame, font=("Helvetica", 14),
-                                     foreground="#ecf0f1")
-        self.phase_label.grid(row=2, column=0, pady=5)
+        self.phase_label = tk.Label(tc, text="Work",
+                                    bg=PALETTE['card'], fg=PALETTE['text_muted'],
+                                    font=('Helvetica Neue', 11))
+        self.phase_label.grid(row=2, column=0, pady=(0, 8))
 
-        ctrl_frame = ttk.Frame(timer_frame)
-        ctrl_frame.grid(row=3, column=0, pady=10)
-        self.start_btn = ttk.Button(ctrl_frame, text="▶ Start", command=self.start_timer)
-        self.start_btn.grid(row=0, column=0, padx=5)
-        self.pause_btn = ttk.Button(ctrl_frame, text="⏸ Pause",
-                                    command=self.pause_timer, state=tk.DISABLED)
-        self.pause_btn.grid(row=0, column=1, padx=5)
-        self.reset_btn = ttk.Button(ctrl_frame, text="⟳ Reset", command=self.reset_timer)
-        self.reset_btn.grid(row=0, column=2, padx=5)
-        # Settings moved off-screen into a dialog — small cog button here
-        ttk.Button(ctrl_frame, text="⚙", width=3,
-                   command=self.open_settings_dialog).grid(row=0, column=3, padx=5)
+        ctrl = tk.Frame(tc, bg=PALETTE['card'])
+        ctrl.grid(row=3, column=0, pady=(0, 8))
+        self.start_btn = ttk.Button(ctrl, text="▶  Start",
+                                    style='Accent.TButton',
+                                    command=self.start_timer)
+        self.start_btn.pack(side='left', padx=4)
+        self.pause_btn = ttk.Button(ctrl, text="⏸  Pause",
+                                    command=self.pause_timer,
+                                    state='disabled')
+        self.pause_btn.pack(side='left', padx=4)
+        self.reset_btn = ttk.Button(ctrl, text="⟳  Reset",
+                                    style='Ghost.TButton',
+                                    command=self.reset_timer)
+        self.reset_btn.pack(side='left', padx=4)
+        ttk.Button(ctrl, text="⚙", width=3,
+                   style='Ghost.TButton',
+                   command=self.open_settings_dialog).pack(side='left', padx=4)
 
-        progress_frame = ttk.Frame(timer_frame)
-        progress_frame.grid(row=4, column=0, pady=5, sticky=tk.W+tk.E)
-        self.progress_label = ttk.Label(progress_frame, text="Today: 0 / 12 Pomodoros")
-        self.progress_label.pack(side=tk.LEFT, padx=5)
-        self.daily_bar = ttk.Progressbar(progress_frame, orient=tk.HORIZONTAL,
+        # Daily progress row
+        daily = tk.Frame(tc, bg=PALETTE['card'])
+        daily.grid(row=4, column=0, sticky='ew', pady=(2, 2))
+        self.progress_label = tk.Label(daily, text="Today: 0 / 12",
+                                       bg=PALETTE['card'], fg=PALETTE['text'],
+                                       font=('Helvetica Neue', 10))
+        self.progress_label.pack(side='left', padx=(4, 8))
+        self.daily_bar = ttk.Progressbar(daily, orient='horizontal',
                                          length=200, mode='determinate',
                                          maximum=self.config["daily_goal"])
-        self.daily_bar.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
-        ttk.Button(progress_frame, text="📊 Summary",
-                   command=self.show_today_summary).pack(side=tk.LEFT, padx=5)
-        ttk.Button(progress_frame, text="📈 Analytics",
-                   command=self.show_overall_stats).pack(side=tk.LEFT, padx=5)
+        self.daily_bar.pack(side='left', padx=(0, 8), fill='x', expand=True)
+        ttk.Button(daily, text="📊", style='Ghost.TButton',
+                   command=self.show_today_summary).pack(side='left', padx=2)
+        ttk.Button(daily, text="📈", style='Ghost.TButton',
+                   command=self.show_overall_stats).pack(side='left', padx=2)
 
-        # Compact stats strip — inline block bars for Week and Month
-        # plus the streak label. One row, no scrolling needed.
-        stats_frame = ttk.Frame(timer_frame)
-        stats_frame.grid(row=5, column=0, sticky=tk.W+tk.E, pady=(6, 2))
+        # Inline stats strip (streak + week bar + month bar)
+        stats = tk.Frame(tc, bg=PALETTE['card'])
+        stats.grid(row=5, column=0, sticky='ew', pady=(6, 2))
 
-        # --- Streak ---
-        self.streak_label = ttk.Label(stats_frame, text="🔥 0-day",
-                                      foreground="#FFA500",
-                                      font=("Helvetica", 10, "bold"))
-        self.streak_label.pack(side=tk.LEFT, padx=(5, 14))
+        self.streak_label = tk.Label(stats, text="🔥 0-day",
+                                     bg=PALETTE['card'],
+                                     fg=PALETTE['warning'],
+                                     font=('Helvetica Neue', 10, 'bold'))
+        self.streak_label.pack(side='left', padx=(4, 14))
 
-        # --- Week inline bar ---
-        ttk.Label(stats_frame, text="📅", font=("Helvetica", 10)
-                  ).pack(side=tk.LEFT)
-        self.week_fill_lbl = tk.Label(stats_frame, text="",
-                                      fg="#e74c3c", bg="#2c3e50",
-                                      font=("DejaVu Sans Mono", 11, "bold"))
-        self.week_fill_lbl.pack(side=tk.LEFT, padx=(3, 0))
-        self.week_empty_lbl = tk.Label(stats_frame, text="",
-                                       fg="#5d6d7e", bg="#2c3e50",
-                                       font=("DejaVu Sans Mono", 11, "bold"))
-        self.week_empty_lbl.pack(side=tk.LEFT)
-        self.weekly_label = ttk.Label(stats_frame, text=" 0h/10h",
-                                      font=("Helvetica", 10))
-        self.weekly_label.pack(side=tk.LEFT, padx=(4, 14))
+        tk.Label(stats, text="📅", bg=PALETTE['card'],
+                 fg=PALETTE['text_muted']).pack(side='left')
+        self.week_fill_lbl = tk.Label(stats, text="",
+                                      fg=PALETTE['danger'], bg=PALETTE['card'],
+                                      font=('DejaVu Sans Mono', 11, 'bold'))
+        self.week_fill_lbl.pack(side='left', padx=(3, 0))
+        self.week_empty_lbl = tk.Label(stats, text="",
+                                       fg=PALETTE['border'], bg=PALETTE['card'],
+                                       font=('DejaVu Sans Mono', 11, 'bold'))
+        self.week_empty_lbl.pack(side='left')
+        self.weekly_label = tk.Label(stats, text=" 0h/10h",
+                                     bg=PALETTE['card'],
+                                     fg=PALETTE['text_muted'],
+                                     font=('Helvetica Neue', 10))
+        self.weekly_label.pack(side='left', padx=(4, 14))
 
-        # --- Month inline bar ---
-        ttk.Label(stats_frame, text="🗓️", font=("Helvetica", 10)
-                  ).pack(side=tk.LEFT)
-        self.month_fill_lbl = tk.Label(stats_frame, text="",
-                                       fg="#e74c3c", bg="#2c3e50",
-                                       font=("DejaVu Sans Mono", 11, "bold"))
-        self.month_fill_lbl.pack(side=tk.LEFT, padx=(3, 0))
-        self.month_empty_lbl = tk.Label(stats_frame, text="",
-                                        fg="#5d6d7e", bg="#2c3e50",
-                                        font=("DejaVu Sans Mono", 11, "bold"))
-        self.month_empty_lbl.pack(side=tk.LEFT)
-        self.monthly_label = ttk.Label(stats_frame, text=" 0h/40h",
-                                       font=("Helvetica", 10))
-        self.monthly_label.pack(side=tk.LEFT, padx=(4, 5))
+        tk.Label(stats, text="🗓️", bg=PALETTE['card'],
+                 fg=PALETTE['text_muted']).pack(side='left')
+        self.month_fill_lbl = tk.Label(stats, text="",
+                                       fg=PALETTE['danger'], bg=PALETTE['card'],
+                                       font=('DejaVu Sans Mono', 11, 'bold'))
+        self.month_fill_lbl.pack(side='left', padx=(3, 0))
+        self.month_empty_lbl = tk.Label(stats, text="",
+                                        fg=PALETTE['border'], bg=PALETTE['card'],
+                                        font=('DejaVu Sans Mono', 11, 'bold'))
+        self.month_empty_lbl.pack(side='left')
+        self.monthly_label = tk.Label(stats, text=" 0h/40h",
+                                      bg=PALETTE['card'],
+                                      fg=PALETTE['text_muted'],
+                                      font=('Helvetica Neue', 10))
+        self.monthly_label.pack(side='left', padx=(4, 4))
 
-        # Hidden progress bars — kept as attributes so any existing code
-        # that touches self.weekly_bar / self.monthly_bar doesn't crash.
-        # Never gridded, so they occupy zero pixels.
-        self.weekly_bar = ttk.Progressbar(timer_frame, mode='determinate')
-        self.monthly_bar = ttk.Progressbar(timer_frame, mode='determinate')
+        # Hidden progress bars (kept for compatibility, occupy zero pixels)
+        self.weekly_bar = ttk.Progressbar(left, mode='determinate')
+        self.monthly_bar = ttk.Progressbar(left, mode='determinate')
 
-        # -- Session Type --
-        type_frame = ttk.LabelFrame(left, text="📌 Session Type", padding="10")
-        type_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=5)
-        type_frame.columnconfigure(0, weight=1)
+        # ---------- Session Type ----------
+        _, stc = make_card(left, "📌  SESSION TYPE",
+                           row=1, column=0, sticky='ew', pady=(0, 8))
+        stc.columnconfigure(0, weight=1)
         self.type_var = tk.StringVar(value="study")
-        type_combo = ttk.Combobox(type_frame, textvariable=self.type_var,
-                                  state="readonly", values=SESSION_TYPES)
-        type_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
+        ttk.Combobox(stc, textvariable=self.type_var,
+                     state='readonly', values=SESSION_TYPES
+                     ).grid(row=0, column=0, sticky='ew')
 
-        # -- Task Selection --
-        task_select_frame = ttk.LabelFrame(left, text="🎯 Current Task", padding="10")
-        task_select_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=5)
-        task_select_frame.columnconfigure(0, weight=1)
-
-        self.task_combo = ttk.Combobox(task_select_frame, textvariable=self.task_var,
-                                       state="readonly", width=50)
-        self.root.option_add('*TCombobox*Listbox.background', '#2c3e50')
-        self.root.option_add('*TCombobox*Listbox.foreground', 'white')
-        self.task_combo['foreground'] = 'white'
-        self.task_combo['background'] = '#34495e'
-        self.task_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
+        # ---------- Current Task ----------
+        _, tkc = make_card(left, "🎯  CURRENT TASK",
+                           row=2, column=0, sticky='ew', pady=(0, 8))
+        tkc.columnconfigure(0, weight=1)
+        self.task_combo = ttk.Combobox(tkc, textvariable=self.task_var,
+                                       state='readonly', width=50)
+        self.root.option_add('*TCombobox*Listbox.background', PALETTE['card'])
+        self.root.option_add('*TCombobox*Listbox.foreground', PALETTE['text'])
+        self.task_combo.grid(row=0, column=0, sticky='ew')
         self.task_combo.bind('<<ComboboxSelected>>', self.on_task_combo_select)
 
-        # -- Notes --
-        notes_frame = ttk.LabelFrame(left, text="📝 Notes for this session", padding="10")
-        notes_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
-        notes_frame.columnconfigure(0, weight=1)
-        notes_frame.rowconfigure(0, weight=1)
+        # ---------- Notes ----------
+        _, nc = make_card(left, "📝  NOTES FOR THIS SESSION",
+                          row=3, column=0, sticky='nsew', pady=(0, 0))
+        nc.columnconfigure(0, weight=1)
+        nc.rowconfigure(0, weight=1)
         self.notes_text = scrolledtext.ScrolledText(
-            notes_frame, height=10, wrap=tk.WORD,
-            bg="#2c3e50", fg="#ecf0f1", insertbackground="#ecf0f1")
-        self.notes_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+            nc, height=8, wrap='word',
+            bg=PALETTE['card_hover'], fg=PALETTE['text'],
+            insertbackground=PALETTE['text'],
+            relief='flat', borderwidth=0, padx=8, pady=6)
+        self.notes_text.grid(row=0, column=0, sticky='nsew')
 
         # ==============================================================
         # RIGHT COLUMN: Subject · Task List · Study Log
         # ==============================================================
-        right = ttk.Frame(main, padding="5")
-        right.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
-        right.rowconfigure(0, weight=0)   # subject (natural height)
-        right.rowconfigure(1, weight=1)   # task list
-        right.rowconfigure(2, weight=1)   # study log
+        right = tk.Frame(main, bg=PALETTE['bg'])
+        right.grid(row=0, column=1, sticky='nsew', padx=(6, 0))
+        right.rowconfigure(0, weight=0)
+        right.rowconfigure(1, weight=1)
+        right.rowconfigure(2, weight=1)
         right.columnconfigure(0, weight=1)
 
-        # -- Subject (moved from left) --
-        subject_frame = ttk.LabelFrame(right, text="📌 Subject", padding="10")
-        subject_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
-        subject_frame.columnconfigure(0, weight=1)
+        # ---------- Subject ----------
+        _, sc = make_card(right, "📌  SUBJECT",
+                          row=0, column=0, sticky='ew', pady=(0, 8))
+        sc.columnconfigure(0, weight=1)
 
-        ttk.Label(subject_frame, text="Syllabus:",
-                  font=("Helvetica", 9)).grid(row=0, column=0, sticky=tk.W, padx=5)
+        tk.Label(sc, text="Syllabus", bg=PALETTE['card'],
+                 fg=PALETTE['text_muted'], font=('Helvetica Neue', 9),
+                 anchor='w').grid(row=0, column=0, sticky='ew', pady=(0, 2))
         self.syllabus_var = tk.StringVar()
-        self.syllabus_combo = ttk.Combobox(
-            subject_frame, textvariable=self.syllabus_var, state="readonly")
-        self.syllabus_combo.grid(row=1, column=0, sticky=(tk.W, tk.E),
-                                 padx=5, pady=(0, 6))
-        self.syllabus_combo.bind(
-            '<<ComboboxSelected>>', lambda e: self.on_syllabus_change())
+        self.syllabus_combo = ttk.Combobox(sc, textvariable=self.syllabus_var,
+                                           state='readonly')
+        self.syllabus_combo.grid(row=1, column=0, sticky='ew', pady=(0, 8))
+        self.syllabus_combo.bind('<<ComboboxSelected>>',
+                                 lambda e: self.on_syllabus_change())
         self._syllabus_map = {}
 
-        ttk.Label(subject_frame, text="Subject:",
-                  font=("Helvetica", 9)).grid(row=2, column=0, sticky=tk.W, padx=5)
+        tk.Label(sc, text="Subject", bg=PALETTE['card'],
+                 fg=PALETTE['text_muted'], font=('Helvetica Neue', 9),
+                 anchor='w').grid(row=2, column=0, sticky='ew', pady=(0, 2))
         self.subject_var = tk.StringVar()
-        self.subject_combo = ttk.Combobox(
-            subject_frame, textvariable=self.subject_var, state="readonly")
-        self.subject_combo.grid(row=3, column=0, sticky=(tk.W, tk.E),
-                                padx=5, pady=(0, 5))
+        self.subject_combo = ttk.Combobox(sc, textvariable=self.subject_var,
+                                          state='readonly')
+        self.subject_combo.grid(row=3, column=0, sticky='ew')
 
         self.load_syllabus_list()
         self.refresh_subject_list()
 
-        # -- Task List --
-        tasks_frame = ttk.LabelFrame(right, text="📋 Task List", padding="10")
-        tasks_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
-        tasks_frame.columnconfigure(0, weight=1)
-        tasks_frame.rowconfigure(1, weight=1)
+        # ---------- Task List ----------
+        _, tlc = make_card(right, "📋  TASK LIST",
+                           row=1, column=0, sticky='nsew', pady=(0, 8))
+        tlc.columnconfigure(0, weight=1)
+        tlc.rowconfigure(2, weight=1)
 
-        add_frame = ttk.Frame(tasks_frame)
-        add_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
-        self.task_entry = ttk.Entry(add_frame, width=20)
-        self.task_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        ttk.Button(add_frame, text="➕ Add", command=self.add_task).pack(side=tk.LEFT, padx=2)
-        ttk.Button(add_frame, text="📋 Bulk", command=self.bulk_add_tasks).pack(side=tk.LEFT, padx=2)
+        add = tk.Frame(tlc, bg=PALETTE['card'])
+        add.grid(row=0, column=0, sticky='ew', pady=(0, 6))
+        self.task_entry = ttk.Entry(add)
+        self.task_entry.pack(side='left', fill='x', expand=True, padx=(0, 4))
+        ttk.Button(add, text="➕", style='Ghost.TButton',
+                   command=self.add_task).pack(side='left', padx=2)
+        ttk.Button(add, text="📋", style='Ghost.TButton',
+                   command=self.bulk_add_tasks).pack(side='left', padx=2)
 
-        priority_frame = ttk.Frame(tasks_frame)
-        priority_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
-        ttk.Label(priority_frame, text="Priority:").pack(side=tk.LEFT, padx=(0, 5))
+        pri = tk.Frame(tlc, bg=PALETTE['card'])
+        pri.grid(row=1, column=0, sticky='ew', pady=(0, 6))
+        tk.Label(pri, text="Priority", bg=PALETTE['card'],
+                 fg=PALETTE['text_muted'], font=('Helvetica Neue', 9)
+                 ).pack(side='left', padx=(0, 6))
         self.priority_var = tk.StringVar(value="3")
-        ttk.Spinbox(priority_frame, from_=0, to=9, textvariable=self.priority_var,
-                    width=5).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Label(priority_frame, text="(1=highest, 9=high, 0=lowest)",
-                  font=("Helvetica", 8)).pack(side=tk.LEFT)
+        ttk.Spinbox(pri, from_=0, to=9, textvariable=self.priority_var,
+                    width=4).pack(side='left', padx=(0, 6))
+        tk.Label(pri, text="(1=high, 9=low, 0=lowest)",
+                 bg=PALETTE['card'], fg=PALETTE['text_muted'],
+                 font=('Helvetica Neue', 8)).pack(side='left')
 
-        listbox_frame = ttk.Frame(tasks_frame)
-        listbox_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
-        listbox_frame.columnconfigure(0, weight=1)
-        listbox_frame.rowconfigure(0, weight=1)
+        lb_wrap = tk.Frame(tlc, bg=PALETTE['card'])
+        lb_wrap.grid(row=2, column=0, sticky='nsew', pady=(0, 6))
+        lb_wrap.columnconfigure(0, weight=1)
+        lb_wrap.rowconfigure(0, weight=1)
 
-        self.task_listbox = tk.Listbox(listbox_frame, height=6, bg="#2c3e50",
-                                       fg="#ecf0f1", selectbackground="#3498db",
-                                       selectforeground="white")
-        self.task_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        scrollbar2 = ttk.Scrollbar(listbox_frame, orient=tk.VERTICAL,
-                                   command=self.task_listbox.yview)
-        scrollbar2.grid(row=0, column=1, sticky=(tk.N, tk.S))
-        self.task_listbox.config(yscrollcommand=scrollbar2.set)
+        self.task_listbox = tk.Listbox(
+            lb_wrap, height=6,
+            bg=PALETTE['card_hover'], fg=PALETTE['text'],
+            selectbackground=PALETTE['accent'], selectforeground='white',
+            relief='flat', borderwidth=0, highlightthickness=0,
+            activestyle='none')
+        self.task_listbox.grid(row=0, column=0, sticky='nsew')
+        sb2 = ttk.Scrollbar(lb_wrap, orient='vertical',
+                            command=self.task_listbox.yview)
+        sb2.grid(row=0, column=1, sticky='ns')
+        self.task_listbox.config(yscrollcommand=sb2.set)
         self.task_listbox.bind('<<ListboxSelect>>', self.on_task_select)
         self.task_listbox.bind('<Double-Button-1>', lambda e: self.edit_task())
 
-        task_btn_frame = ttk.Frame(tasks_frame)
-        task_btn_frame.grid(row=3, column=0, pady=5, sticky=tk.W)
-        ttk.Button(task_btn_frame, text="🗑 Remove",
-                   command=self.remove_task).pack(side=tk.LEFT, padx=2)
-        ttk.Button(task_btn_frame, text="✏️ Edit",
-                   command=self.edit_task).pack(side=tk.LEFT, padx=2)
-        ttk.Button(task_btn_frame, text="✅ Toggle Done",
-                   command=self.toggle_complete).pack(side=tk.LEFT, padx=2)
-        ttk.Button(task_btn_frame, text="🔢 Set Priority",
-                   command=self.set_priority).pack(side=tk.LEFT, padx=2)
-        ttk.Button(task_btn_frame, text="🗑 Clear All",
-                   command=self.clear_all_tasks).pack(side=tk.LEFT, padx=2)
+        btns = tk.Frame(tlc, bg=PALETTE['card'])
+        btns.grid(row=3, column=0, sticky='ew')
+        for txt, cmd in [
+            ("🗑", self.remove_task),
+            ("✏️", self.edit_task),
+            ("✅", self.toggle_complete),
+            ("🔢", self.set_priority),
+            ("🧹", self.clear_all_tasks),
+        ]:
+            ttk.Button(btns, text=txt, width=3, style='Ghost.TButton',
+                       command=cmd).pack(side='left', padx=2)
         self.show_completed_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(task_btn_frame, text="Show completed",
+        ttk.Checkbutton(btns, text="Show done",
                         variable=self.show_completed_var,
-                        command=self.refresh_task_list).pack(side=tk.LEFT, padx=10)
+                        command=self.refresh_task_list).pack(side='right',
+                                                             padx=4)
 
-        # -- Study Log --
-        log_frame = ttk.LabelFrame(right, padding="10")
-        log_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=0)
-        log_frame.rowconfigure(1, weight=1)
-        log_frame.rowconfigure(2, weight=0)
+        # ---------- Study Log ----------
+        _, lc = make_card(right, "📜  STUDY LOG",
+                          row=2, column=0, sticky='nsew')
+        lc.columnconfigure(0, weight=1)
+        lc.rowconfigure(1, weight=1)
 
-        header_frame = ttk.Frame(log_frame)
-        header_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        header_frame.columnconfigure(0, weight=0)
-        header_frame.columnconfigure(1, weight=1)
-        ttk.Label(header_frame, text="📜 Study Log",
-                  font=("Helvetica", 10, "bold")).grid(row=0, column=0, sticky=tk.W)
-        self.edit_log_cb = ttk.Checkbutton(
-            header_frame, text="✏️ Edit logs",
-            variable=self.edit_log_var, command=self.toggle_edit_mode)
-        self.edit_log_cb.grid(row=0, column=1, sticky=tk.E)
+        head = tk.Frame(lc, bg=PALETTE['card'])
+        head.grid(row=0, column=0, sticky='ew', pady=(0, 6))
+        self.edit_log_cb = ttk.Checkbutton(head, text="✏️ Edit",
+                                           variable=self.edit_log_var,
+                                           command=self.toggle_edit_mode)
+        self.edit_log_cb.pack(side='right')
 
         self.log_text = scrolledtext.ScrolledText(
-            log_frame, height=8, wrap=tk.WORD, state=tk.DISABLED,
-            bg="#2c3e50", fg="#ecf0f1")
-        self.log_text.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+            lc, height=8, wrap='word', state='disabled',
+            bg=PALETTE['card_hover'], fg=PALETTE['text'],
+            relief='flat', borderwidth=0, padx=8, pady=6)
+        self.log_text.grid(row=1, column=0, sticky='nsew')
 
-        self.save_log_btn = ttk.Button(log_frame, text="💾 Save Log Changes",
+        self.save_log_btn = ttk.Button(lc, text="💾  Save Log Changes",
+                                       style='Accent.TButton',
                                        command=self.save_log_changes)
-        self.save_log_btn.grid(row=2, column=0, pady=5, sticky=tk.E)
+        self.save_log_btn.grid(row=2, column=0, sticky='e', pady=(6, 0))
         self.save_log_btn.grid_remove()
 
     # ---------- TASK MANAGEMENT (unchanged from original) ----------
