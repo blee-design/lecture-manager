@@ -536,22 +536,30 @@ class PomodoroApp:
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-    # ---------- UI Construction ----------
     def build_ui(self):
         main = self._create_scrollable_container()
-        main.columnconfigure(0, weight=3)
-        main.columnconfigure(1, weight=2)
+        main.columnconfigure(0, weight=1)
+        main.columnconfigure(1, weight=1)
         main.rowconfigure(0, weight=1)
-        main.rowconfigure(1, weight=1)
 
-        # ----- LEFT COLUMN -----
+        # --- Settings StringVars (used by the settings dialog) ---
+        self.work_var         = tk.StringVar(value=str(self.config["work_min"]))
+        self.short_var        = tk.StringVar(value=str(self.config["short_break_min"]))
+        self.long_var         = tk.StringVar(value=str(self.config["long_break_min"]))
+        self.cycles_var       = tk.StringVar(value=str(self.config["cycles_before_long"]))
+        self.goal_var         = tk.StringVar(value=str(self.config["daily_goal"]))
+        self.weekly_goal_var  = tk.StringVar(value=str(self.config["weekly_goal_hours"]))
+        self.monthly_goal_var = tk.StringVar(value=str(self.config["monthly_goal_hours"]))
+
+        # ==============================================================
+        # LEFT COLUMN: Timer · Session Type · Task · Notes
+        # ==============================================================
         left = ttk.Frame(main, padding="5")
         left.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        left.rowconfigure(0, weight=1)   # timer
-        left.rowconfigure(1, weight=0)   # subject
-        left.rowconfigure(2, weight=0)   # session type
-        left.rowconfigure(3, weight=0)   # task combo
-        left.rowconfigure(4, weight=3)   # notes # Here also can be resized default is 3
+        left.rowconfigure(0, weight=0)   # timer (natural height)
+        left.rowconfigure(1, weight=0)   # session type
+        left.rowconfigure(2, weight=0)   # task select
+        left.rowconfigure(3, weight=1)   # notes (stretches)
         left.columnconfigure(0, weight=1)
 
         # -- Timer Frame --
@@ -559,170 +567,139 @@ class PomodoroApp:
         timer_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         timer_frame.columnconfigure(0, weight=1)
 
-        self.time_label = ttk.Label(timer_frame, font=("Helvetica", 56, "bold"), foreground="#3498db")
+        self.time_label = ttk.Label(timer_frame, font=("Helvetica", 56, "bold"),
+                                    foreground="#3498db")
         self.time_label.grid(row=0, column=0, pady=10)
 
-        self.progress_bar = ttk.Progressbar(timer_frame, orient=tk.HORIZONTAL, length=300, mode='determinate')
+        self.progress_bar = ttk.Progressbar(timer_frame, orient=tk.HORIZONTAL,
+                                            length=300, mode='determinate')
         self.progress_bar.grid(row=1, column=0, pady=5, sticky=tk.W+tk.E)
 
-        self.phase_label = ttk.Label(timer_frame, font=("Helvetica", 14), foreground="#ecf0f1")
+        self.phase_label = ttk.Label(timer_frame, font=("Helvetica", 14),
+                                     foreground="#ecf0f1")
         self.phase_label.grid(row=2, column=0, pady=5)
 
         ctrl_frame = ttk.Frame(timer_frame)
         ctrl_frame.grid(row=3, column=0, pady=10)
         self.start_btn = ttk.Button(ctrl_frame, text="▶ Start", command=self.start_timer)
         self.start_btn.grid(row=0, column=0, padx=5)
-        self.pause_btn = ttk.Button(ctrl_frame, text="⏸ Pause", command=self.pause_timer, state=tk.DISABLED)
+        self.pause_btn = ttk.Button(ctrl_frame, text="⏸ Pause",
+                                    command=self.pause_timer, state=tk.DISABLED)
         self.pause_btn.grid(row=0, column=1, padx=5)
         self.reset_btn = ttk.Button(ctrl_frame, text="⟳ Reset", command=self.reset_timer)
         self.reset_btn.grid(row=0, column=2, padx=5)
+        # Settings moved off-screen into a dialog — small cog button here
+        ttk.Button(ctrl_frame, text="⚙", width=3,
+                   command=self.open_settings_dialog).grid(row=0, column=3, padx=5)
 
         progress_frame = ttk.Frame(timer_frame)
         progress_frame.grid(row=4, column=0, pady=5, sticky=tk.W+tk.E)
         self.progress_label = ttk.Label(progress_frame, text="Today: 0 / 12 Pomodoros")
         self.progress_label.pack(side=tk.LEFT, padx=5)
-        self.daily_bar = ttk.Progressbar(progress_frame, orient=tk.HORIZONTAL, length=200, mode='determinate', maximum=self.config["daily_goal"])
+        self.daily_bar = ttk.Progressbar(progress_frame, orient=tk.HORIZONTAL,
+                                         length=200, mode='determinate',
+                                         maximum=self.config["daily_goal"])
         self.daily_bar.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
-        ttk.Button(progress_frame, text="📊 Summary", command=self.show_today_summary).pack(side=tk.LEFT, padx=5)
-        ttk.Button(progress_frame, text="📈 Analytics", command=self.show_overall_stats).pack(side=tk.LEFT, padx=5)
+        ttk.Button(progress_frame, text="📊 Summary",
+                   command=self.show_today_summary).pack(side=tk.LEFT, padx=5)
+        ttk.Button(progress_frame, text="📈 Analytics",
+                   command=self.show_overall_stats).pack(side=tk.LEFT, padx=5)
 
-        # Weekly progress
-        weekly_frame = ttk.Frame(timer_frame)
-        weekly_frame.grid(row=5, column=0, sticky=tk.W+tk.E, pady=2)
-        self.weekly_label = ttk.Label(weekly_frame, text="Week: 0 / 10h")
-        self.weekly_label.pack(side=tk.LEFT, padx=5)
-        self.weekly_bar = ttk.Progressbar(weekly_frame, orient=tk.HORIZONTAL, length=200, mode='determinate')
-        self.weekly_bar.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+        # Compact stats strip — streak, week, month on one line
+        # (progress bars removed for compactness; use the values instead)
+        stats_frame = ttk.Frame(timer_frame)
+        stats_frame.grid(row=5, column=0, sticky=tk.W+tk.E, pady=(6, 2))
+        stats_frame.columnconfigure(0, weight=1)
+        stats_frame.columnconfigure(1, weight=1)
+        stats_frame.columnconfigure(2, weight=1)
 
-        # Monthly progress
-        monthly_frame = ttk.Frame(timer_frame)
-        monthly_frame.grid(row=6, column=0, sticky=tk.W+tk.E, pady=2)
-        self.monthly_label = ttk.Label(monthly_frame, text="Month: 0 / 40h")
-        self.monthly_label.pack(side=tk.LEFT, padx=5)
-        self.monthly_bar = ttk.Progressbar(monthly_frame, orient=tk.HORIZONTAL, length=200, mode='determinate')
-        self.monthly_bar.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+        self.streak_label = ttk.Label(stats_frame, text="🔥 0-day",
+                                      foreground="#FFA500",
+                                      font=("Helvetica", 10, "bold"))
+        self.streak_label.grid(row=0, column=0, sticky=tk.W, padx=(5, 5))
 
-        # Streak label (after the progress bars)
-        self.streak_label = ttk.Label(timer_frame, font=("Helvetica", 12), foreground="#FFA500")
-        self.streak_label.grid(row=7, column=0, pady=5)
+        self.weekly_label = ttk.Label(stats_frame, text="📅 Week 0h / 10h",
+                                      font=("Helvetica", 10))
+        self.weekly_label.grid(row=0, column=1, sticky=tk.W, padx=5)
 
-        # -- Subject (dropdown) with syllabus picker --
-        subject_frame = ttk.LabelFrame(left, text="📌 Subject", padding="10")
-        subject_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=5)
-        subject_frame.columnconfigure(0, weight=1)
+        self.monthly_label = ttk.Label(stats_frame, text="🗓️ Month 0h / 40h",
+                                       font=("Helvetica", 10))
+        self.monthly_label.grid(row=0, column=2, sticky=tk.W, padx=5)
 
-        # Syllabus selector (filters the Subject list below)
-        ttk.Label(subject_frame, text="Syllabus:",
-                  font=("Helvetica", 9)).grid(row=0, column=0, sticky=tk.W, padx=5)
-        self.syllabus_var = tk.StringVar()
-        self.syllabus_combo = ttk.Combobox(
-            subject_frame, textvariable=self.syllabus_var, state="readonly"
-        )
-        self.syllabus_combo.grid(
-            row=1, column=0, sticky=(tk.W, tk.E), padx=5, pady=(0, 6)
-        )
-        self.syllabus_combo.bind(
-            '<<ComboboxSelected>>', lambda e: self.on_syllabus_change()
-        )
-        self._syllabus_map = {}   # display_name -> syllabus_key
-
-        # Subject dropdown
-        ttk.Label(subject_frame, text="Subject:",
-                  font=("Helvetica", 9)).grid(row=2, column=0, sticky=tk.W, padx=5)
-        self.subject_var = tk.StringVar()
-        self.subject_combo = ttk.Combobox(
-            subject_frame, textvariable=self.subject_var, state="readonly"
-        )
-        self.subject_combo.grid(
-            row=3, column=0, sticky=(tk.W, tk.E), padx=5, pady=(0, 5)
-        )
-
-        self.load_syllabus_list()
-        self.refresh_subject_list()
+        # Dummy bars kept for compatibility — not gridded, so zero height.
+        # Their update in update_weekly_monthly_progress() still works.
+        self.weekly_bar = ttk.Progressbar(timer_frame, mode='determinate')
+        self.monthly_bar = ttk.Progressbar(timer_frame, mode='determinate')
 
         # -- Session Type --
         type_frame = ttk.LabelFrame(left, text="📌 Session Type", padding="10")
-        type_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=5)
+        type_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=5)
         type_frame.columnconfigure(0, weight=1)
         self.type_var = tk.StringVar(value="study")
-        type_combo = ttk.Combobox(type_frame, textvariable=self.type_var, state="readonly",
-                            values=SESSION_TYPES)
+        type_combo = ttk.Combobox(type_frame, textvariable=self.type_var,
+                                  state="readonly", values=SESSION_TYPES)
         type_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
 
         # -- Task Selection --
         task_select_frame = ttk.LabelFrame(left, text="🎯 Current Task", padding="10")
-        task_select_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=5)
+        task_select_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=5)
         task_select_frame.columnconfigure(0, weight=1)
 
-        self.task_combo = ttk.Combobox(task_select_frame, textvariable=self.task_var, state="readonly", width=50)
+        self.task_combo = ttk.Combobox(task_select_frame, textvariable=self.task_var,
+                                       state="readonly", width=50)
         self.root.option_add('*TCombobox*Listbox.background', '#2c3e50')
         self.root.option_add('*TCombobox*Listbox.foreground', 'white')
         self.task_combo['foreground'] = 'white'
         self.task_combo['background'] = '#34495e'
         self.task_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
-
         self.task_combo.bind('<<ComboboxSelected>>', self.on_task_combo_select)
 
         # -- Notes --
         notes_frame = ttk.LabelFrame(left, text="📝 Notes for this session", padding="10")
-        notes_frame.grid(row=4, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        notes_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         notes_frame.columnconfigure(0, weight=1)
         notes_frame.rowconfigure(0, weight=1)
-        self.notes_text = scrolledtext.ScrolledText(notes_frame, height=10, wrap=tk.WORD, bg="#2c3e50", fg="#ecf0f1", insertbackground="#ecf0f1") # Note frame size hight can be reduced and increased here Default is 4
+        self.notes_text = scrolledtext.ScrolledText(
+            notes_frame, height=10, wrap=tk.WORD,
+            bg="#2c3e50", fg="#ecf0f1", insertbackground="#ecf0f1")
         self.notes_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        # ----- RIGHT COLUMN (unchanged) -----
+        # ==============================================================
+        # RIGHT COLUMN: Subject · Task List · Study Log
+        # ==============================================================
         right = ttk.Frame(main, padding="5")
-        right.grid(row=0, column=1, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
-        right.rowconfigure(0, weight=1)
-        right.rowconfigure(1, weight=2)
-        right.rowconfigure(2, weight=1)
+        right.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
+        right.rowconfigure(0, weight=0)   # subject (natural height)
+        right.rowconfigure(1, weight=1)   # task list
+        right.rowconfigure(2, weight=1)   # study log
         right.columnconfigure(0, weight=1)
 
-        # -- Settings --
-        settings_frame = ttk.LabelFrame(right, text="⚙️ Settings", padding="10")
-        settings_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
-        settings_frame.columnconfigure(0, weight=1)
+        # -- Subject (moved from left) --
+        subject_frame = ttk.LabelFrame(right, text="📌 Subject", padding="10")
+        subject_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
+        subject_frame.columnconfigure(0, weight=1)
 
-        row = 0
-        ttk.Label(settings_frame, text="Work (min):").grid(row=row, column=0, sticky=tk.W, pady=2)
-        self.work_var = tk.StringVar(value=str(self.config["work_min"]))
-        ttk.Entry(settings_frame, textvariable=self.work_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
-        row += 1
+        ttk.Label(subject_frame, text="Syllabus:",
+                  font=("Helvetica", 9)).grid(row=0, column=0, sticky=tk.W, padx=5)
+        self.syllabus_var = tk.StringVar()
+        self.syllabus_combo = ttk.Combobox(
+            subject_frame, textvariable=self.syllabus_var, state="readonly")
+        self.syllabus_combo.grid(row=1, column=0, sticky=(tk.W, tk.E),
+                                 padx=5, pady=(0, 6))
+        self.syllabus_combo.bind(
+            '<<ComboboxSelected>>', lambda e: self.on_syllabus_change())
+        self._syllabus_map = {}
 
-        ttk.Label(settings_frame, text="Short break (min):").grid(row=row, column=0, sticky=tk.W, pady=2)
-        self.short_var = tk.StringVar(value=str(self.config["short_break_min"]))
-        ttk.Entry(settings_frame, textvariable=self.short_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
-        row += 1
+        ttk.Label(subject_frame, text="Subject:",
+                  font=("Helvetica", 9)).grid(row=2, column=0, sticky=tk.W, padx=5)
+        self.subject_var = tk.StringVar()
+        self.subject_combo = ttk.Combobox(
+            subject_frame, textvariable=self.subject_var, state="readonly")
+        self.subject_combo.grid(row=3, column=0, sticky=(tk.W, tk.E),
+                                padx=5, pady=(0, 5))
 
-        ttk.Label(settings_frame, text="Long break (min):").grid(row=row, column=0, sticky=tk.W, pady=2)
-        self.long_var = tk.StringVar(value=str(self.config["long_break_min"]))
-        ttk.Entry(settings_frame, textvariable=self.long_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
-        row += 1
-
-        ttk.Label(settings_frame, text="Cycles before long:").grid(row=row, column=0, sticky=tk.W, pady=2)
-        self.cycles_var = tk.StringVar(value=str(self.config["cycles_before_long"]))
-        ttk.Entry(settings_frame, textvariable=self.cycles_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
-        row += 1
-
-        ttk.Label(settings_frame, text="Daily goal:").grid(row=row, column=0, sticky=tk.W, pady=2)
-        self.goal_var = tk.StringVar(value=str(self.config["daily_goal"]))
-        ttk.Entry(settings_frame, textvariable=self.goal_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
-        row += 1
-
-        # --- Weekly and Monthly goals moved UP before the Save button ---
-        ttk.Label(settings_frame, text="Weekly goal (hours):").grid(row=row, column=0, sticky=tk.W, pady=2)
-        self.weekly_goal_var = tk.StringVar(value=str(self.config["weekly_goal_hours"]))
-        ttk.Entry(settings_frame, textvariable=self.weekly_goal_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
-        row += 1
-
-        ttk.Label(settings_frame, text="Monthly goal (hours):").grid(row=row, column=0, sticky=tk.W, pady=2)
-        self.monthly_goal_var = tk.StringVar(value=str(self.config["monthly_goal_hours"]))
-        ttk.Entry(settings_frame, textvariable=self.monthly_goal_var, width=6).grid(row=row, column=1, sticky=tk.W, pady=2)
-        row += 1
-
-        # --- Save button now at the bottom ---
-        ttk.Button(settings_frame, text="💾 Save Settings", command=self.save_settings).grid(row=row, column=0, columnspan=2, pady=10)
+        self.load_syllabus_list()
+        self.refresh_subject_list()
 
         # -- Task List --
         tasks_frame = ttk.LabelFrame(right, text="📋 Task List", padding="10")
@@ -733,25 +710,30 @@ class PomodoroApp:
         add_frame = ttk.Frame(tasks_frame)
         add_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
         self.task_entry = ttk.Entry(add_frame, width=20)
-        self.task_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,5))
+        self.task_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         ttk.Button(add_frame, text="➕ Add", command=self.add_task).pack(side=tk.LEFT, padx=2)
         ttk.Button(add_frame, text="📋 Bulk", command=self.bulk_add_tasks).pack(side=tk.LEFT, padx=2)
 
         priority_frame = ttk.Frame(tasks_frame)
         priority_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
-        ttk.Label(priority_frame, text="Priority:").pack(side=tk.LEFT, padx=(0,5))
+        ttk.Label(priority_frame, text="Priority:").pack(side=tk.LEFT, padx=(0, 5))
         self.priority_var = tk.StringVar(value="3")
-        ttk.Spinbox(priority_frame, from_=0, to=9, textvariable=self.priority_var, width=5).pack(side=tk.LEFT, padx=(0,10))
-        ttk.Label(priority_frame, text="(1=highest, 9=high, 0=lowest)", font=("Helvetica", 8)).pack(side=tk.LEFT)
+        ttk.Spinbox(priority_frame, from_=0, to=9, textvariable=self.priority_var,
+                    width=5).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(priority_frame, text="(1=highest, 9=high, 0=lowest)",
+                  font=("Helvetica", 8)).pack(side=tk.LEFT)
 
         listbox_frame = ttk.Frame(tasks_frame)
         listbox_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         listbox_frame.columnconfigure(0, weight=1)
         listbox_frame.rowconfigure(0, weight=1)
 
-        self.task_listbox = tk.Listbox(listbox_frame, height=8, bg="#2c3e50", fg="#ecf0f1", selectbackground="#3498db", selectforeground="white")
+        self.task_listbox = tk.Listbox(listbox_frame, height=8, bg="#2c3e50",
+                                       fg="#ecf0f1", selectbackground="#3498db",
+                                       selectforeground="white")
         self.task_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        scrollbar2 = ttk.Scrollbar(listbox_frame, orient=tk.VERTICAL, command=self.task_listbox.yview)
+        scrollbar2 = ttk.Scrollbar(listbox_frame, orient=tk.VERTICAL,
+                                   command=self.task_listbox.yview)
         scrollbar2.grid(row=0, column=1, sticky=(tk.N, tk.S))
         self.task_listbox.config(yscrollcommand=scrollbar2.set)
         self.task_listbox.bind('<<ListboxSelect>>', self.on_task_select)
@@ -759,41 +741,49 @@ class PomodoroApp:
 
         task_btn_frame = ttk.Frame(tasks_frame)
         task_btn_frame.grid(row=3, column=0, pady=5, sticky=tk.W)
-        ttk.Button(task_btn_frame, text="🗑 Remove", command=self.remove_task).pack(side=tk.LEFT, padx=2)
-        ttk.Button(task_btn_frame, text="✏️ Edit", command=self.edit_task).pack(side=tk.LEFT, padx=2)   # NEW
-        ttk.Button(task_btn_frame, text="✅ Toggle Done", command=self.toggle_complete).pack(side=tk.LEFT, padx=2)
-        ttk.Button(task_btn_frame, text="🔢 Set Priority", command=self.set_priority).pack(side=tk.LEFT, padx=2)
-        ttk.Button(task_btn_frame, text="🗑 Clear All", command=self.clear_all_tasks).pack(side=tk.LEFT, padx=2)
+        ttk.Button(task_btn_frame, text="🗑 Remove",
+                   command=self.remove_task).pack(side=tk.LEFT, padx=2)
+        ttk.Button(task_btn_frame, text="✏️ Edit",
+                   command=self.edit_task).pack(side=tk.LEFT, padx=2)
+        ttk.Button(task_btn_frame, text="✅ Toggle Done",
+                   command=self.toggle_complete).pack(side=tk.LEFT, padx=2)
+        ttk.Button(task_btn_frame, text="🔢 Set Priority",
+                   command=self.set_priority).pack(side=tk.LEFT, padx=2)
+        ttk.Button(task_btn_frame, text="🗑 Clear All",
+                   command=self.clear_all_tasks).pack(side=tk.LEFT, padx=2)
         self.show_completed_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(task_btn_frame, text="Show completed", variable=self.show_completed_var, command=self.refresh_task_list).pack(side=tk.LEFT, padx=10)
+        ttk.Checkbutton(task_btn_frame, text="Show completed",
+                        variable=self.show_completed_var,
+                        command=self.refresh_task_list).pack(side=tk.LEFT, padx=10)
 
         # -- Study Log --
         log_frame = ttk.LabelFrame(right, padding="10")
         log_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=0)   # header row – fixed height
-        log_frame.rowconfigure(1, weight=1)   # log text – expands
-        log_frame.rowconfigure(2, weight=0)   # save button – fixed height
+        log_frame.rowconfigure(0, weight=0)
+        log_frame.rowconfigure(1, weight=1)
+        log_frame.rowconfigure(2, weight=0)
 
-        # Header with checkbox
         header_frame = ttk.Frame(log_frame)
-        header_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0,5))
+        header_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
         header_frame.columnconfigure(0, weight=0)
         header_frame.columnconfigure(1, weight=1)
-        ttk.Label(header_frame, text="📜 Study Log", font=("Helvetica", 10, "bold")).grid(row=0, column=0, sticky=tk.W)
-        self.edit_log_cb = ttk.Checkbutton(header_frame, text="✏️ Edit logs", variable=self.edit_log_var,
-                                           command=self.toggle_edit_mode)
+        ttk.Label(header_frame, text="📜 Study Log",
+                  font=("Helvetica", 10, "bold")).grid(row=0, column=0, sticky=tk.W)
+        self.edit_log_cb = ttk.Checkbutton(
+            header_frame, text="✏️ Edit logs",
+            variable=self.edit_log_var, command=self.toggle_edit_mode)
         self.edit_log_cb.grid(row=0, column=1, sticky=tk.E)
 
-        # Log text widget (initially disabled)
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=12, wrap=tk.WORD, state=tk.DISABLED,
-                                                  bg="#2c3e50", fg="#ecf0f1")
+        self.log_text = scrolledtext.ScrolledText(
+            log_frame, height=12, wrap=tk.WORD, state=tk.DISABLED,
+            bg="#2c3e50", fg="#ecf0f1")
         self.log_text.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        # Save button (hidden initially)
-        self.save_log_btn = ttk.Button(log_frame, text="💾 Save Log Changes", command=self.save_log_changes)
+        self.save_log_btn = ttk.Button(log_frame, text="💾 Save Log Changes",
+                                       command=self.save_log_changes)
         self.save_log_btn.grid(row=2, column=0, pady=5, sticky=tk.E)
-        self.save_log_btn.grid_remove()  # hidden by default
+        self.save_log_btn.grid_remove()
 
     # ---------- TASK MANAGEMENT (unchanged from original) ----------
     def load_tasks(self):
@@ -2143,6 +2133,91 @@ class PomodoroApp:
         """Run the rollover check every 30 seconds, forever."""
         self._check_day_rollover()
         self._rollover_after_id = self.root.after(30_000, self._schedule_day_rollover_check)
+
+    def open_settings_dialog(self):
+        """Open Pomodoro settings in a modal dialog."""
+        win = tk.Toplevel(self.root)
+        win.title("⚙️ Pomodoro Settings")
+        win.geometry("400x420")
+        win.resizable(False, False)
+        win.configure(bg="#1e2a3a")
+        win.transient(self.root)
+        win.grab_set()
+
+        outer = ttk.LabelFrame(win, text="⚙️ Settings", padding="15")
+        outer.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+        outer.columnconfigure(1, weight=1)
+
+        # Working copies of the values so Cancel is truly a cancel
+        d_work   = tk.StringVar(value=str(self.config["work_min"]))
+        d_short  = tk.StringVar(value=str(self.config["short_break_min"]))
+        d_long   = tk.StringVar(value=str(self.config["long_break_min"]))
+        d_cycles = tk.StringVar(value=str(self.config["cycles_before_long"]))
+        d_goal   = tk.StringVar(value=str(self.config["daily_goal"]))
+        d_weekly = tk.StringVar(value=str(self.config["weekly_goal_hours"]))
+        d_month  = tk.StringVar(value=str(self.config["monthly_goal_hours"]))
+
+        row = 0
+        def _add(label, var):
+            nonlocal row
+            ttk.Label(outer, text=label).grid(row=row, column=0,
+                                              sticky=tk.W, pady=4, padx=(0, 15))
+            ttk.Entry(outer, textvariable=var, width=10).grid(
+                row=row, column=1, sticky=tk.W, pady=4)
+            row += 1
+
+        _add("Work (min):", d_work)
+        _add("Short break (min):", d_short)
+        _add("Long break (min):", d_long)
+        _add("Cycles before long:", d_cycles)
+        _add("Daily goal:", d_goal)
+        _add("Weekly goal (hours):", d_weekly)
+        _add("Monthly goal (hours):", d_month)
+
+        def save_and_close():
+            try:
+                work   = int(d_work.get())
+                short  = int(d_short.get())
+                long_  = int(d_long.get())
+                cycles = int(d_cycles.get())
+                goal   = int(d_goal.get())
+                weekly = int(d_weekly.get())
+                month  = int(d_month.get())
+                if min(work, short, long_, cycles, goal, weekly, month) <= 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Error",
+                                     "Please enter valid positive integers.")
+                return
+
+            self.config.update({
+                "work_min": work,
+                "short_break_min": short,
+                "long_break_min": long_,
+                "cycles_before_long": cycles,
+                "daily_goal": goal,
+                "weekly_goal_hours": weekly,
+                "monthly_goal_hours": month,
+            })
+            self.save_config(self.config)
+
+            # Live-update anything the timer shows
+            if not self.timer_running:
+                self.remaining_seconds = work * 60
+                self.update_display()
+            self.daily_bar['maximum'] = goal
+            self.daily_bar['value'] = self.today_count
+            self.update_progress()
+
+            messagebox.showinfo("Settings", "Settings saved successfully.")
+            win.destroy()
+
+        btn_frame = ttk.Frame(outer)
+        btn_frame.grid(row=row, column=0, columnspan=2, pady=(20, 0))
+        ttk.Button(btn_frame, text="💾 Save",
+                   command=save_and_close).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel",
+                   command=win.destroy).pack(side=tk.LEFT, padx=5)
 
     # ---------- SETTINGS ----------
     def save_settings(self):
