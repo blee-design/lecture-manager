@@ -605,29 +605,50 @@ class PomodoroApp:
         ttk.Button(progress_frame, text="📈 Analytics",
                    command=self.show_overall_stats).pack(side=tk.LEFT, padx=5)
 
-        # Compact stats strip — streak, week, month on one line
-        # (progress bars removed for compactness; use the values instead)
+        # Compact stats strip — inline block bars for Week and Month
+        # plus the streak label. One row, no scrolling needed.
         stats_frame = ttk.Frame(timer_frame)
         stats_frame.grid(row=5, column=0, sticky=tk.W+tk.E, pady=(6, 2))
-        stats_frame.columnconfigure(0, weight=1)
-        stats_frame.columnconfigure(1, weight=1)
-        stats_frame.columnconfigure(2, weight=1)
 
+        # --- Streak ---
         self.streak_label = ttk.Label(stats_frame, text="🔥 0-day",
                                       foreground="#FFA500",
                                       font=("Helvetica", 10, "bold"))
-        self.streak_label.grid(row=0, column=0, sticky=tk.W, padx=(5, 5))
+        self.streak_label.pack(side=tk.LEFT, padx=(5, 14))
 
-        self.weekly_label = ttk.Label(stats_frame, text="📅 Week 0h / 10h",
+        # --- Week inline bar ---
+        ttk.Label(stats_frame, text="📅", font=("Helvetica", 10)
+                  ).pack(side=tk.LEFT)
+        self.week_fill_lbl = tk.Label(stats_frame, text="",
+                                      fg="#e74c3c", bg="#2c3e50",
+                                      font=("DejaVu Sans Mono", 11, "bold"))
+        self.week_fill_lbl.pack(side=tk.LEFT, padx=(3, 0))
+        self.week_empty_lbl = tk.Label(stats_frame, text="",
+                                       fg="#5d6d7e", bg="#2c3e50",
+                                       font=("DejaVu Sans Mono", 11, "bold"))
+        self.week_empty_lbl.pack(side=tk.LEFT)
+        self.weekly_label = ttk.Label(stats_frame, text=" 0h/10h",
                                       font=("Helvetica", 10))
-        self.weekly_label.grid(row=0, column=1, sticky=tk.W, padx=5)
+        self.weekly_label.pack(side=tk.LEFT, padx=(4, 14))
 
-        self.monthly_label = ttk.Label(stats_frame, text="🗓️ Month 0h / 40h",
+        # --- Month inline bar ---
+        ttk.Label(stats_frame, text="🗓️", font=("Helvetica", 10)
+                  ).pack(side=tk.LEFT)
+        self.month_fill_lbl = tk.Label(stats_frame, text="",
+                                       fg="#e74c3c", bg="#2c3e50",
+                                       font=("DejaVu Sans Mono", 11, "bold"))
+        self.month_fill_lbl.pack(side=tk.LEFT, padx=(3, 0))
+        self.month_empty_lbl = tk.Label(stats_frame, text="",
+                                        fg="#5d6d7e", bg="#2c3e50",
+                                        font=("DejaVu Sans Mono", 11, "bold"))
+        self.month_empty_lbl.pack(side=tk.LEFT)
+        self.monthly_label = ttk.Label(stats_frame, text=" 0h/40h",
                                        font=("Helvetica", 10))
-        self.monthly_label.grid(row=0, column=2, sticky=tk.W, padx=5)
+        self.monthly_label.pack(side=tk.LEFT, padx=(4, 5))
 
-        # Dummy bars kept for compatibility — not gridded, so zero height.
-        # Their update in update_weekly_monthly_progress() still works.
+        # Hidden progress bars — kept as attributes so any existing code
+        # that touches self.weekly_bar / self.monthly_bar doesn't crash.
+        # Never gridded, so they occupy zero pixels.
         self.weekly_bar = ttk.Progressbar(timer_frame, mode='determinate')
         self.monthly_bar = ttk.Progressbar(timer_frame, mode='determinate')
 
@@ -728,7 +749,7 @@ class PomodoroApp:
         listbox_frame.columnconfigure(0, weight=1)
         listbox_frame.rowconfigure(0, weight=1)
 
-        self.task_listbox = tk.Listbox(listbox_frame, height=8, bg="#2c3e50",
+        self.task_listbox = tk.Listbox(listbox_frame, height=6, bg="#2c3e50",
                                        fg="#ecf0f1", selectbackground="#3498db",
                                        selectforeground="white")
         self.task_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -776,7 +797,7 @@ class PomodoroApp:
         self.edit_log_cb.grid(row=0, column=1, sticky=tk.E)
 
         self.log_text = scrolledtext.ScrolledText(
-            log_frame, height=12, wrap=tk.WORD, state=tk.DISABLED,
+            log_frame, height=8, wrap=tk.WORD, state=tk.DISABLED,
             bg="#2c3e50", fg="#ecf0f1")
         self.log_text.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
@@ -1330,6 +1351,33 @@ class PomodoroApp:
                 label = f"[P{task['priority']}] {task['task_text']}"
                 self.combo_label_to_id[label] = task['id']
 
+    def _render_inline_bar(self, pct, fill_lbl, empty_lbl, width=10):
+        """
+        Update an inline Unicode block bar. The bar is `width` characters
+        wide (each `█` = filled block, each `░` = empty block). The filled
+        portion's colour shifts as progress increases:
+
+            < 33%  red      — barely started
+            < 66%  orange   — making progress
+            < 100% blue     — nearly there
+            >= 100% green   — goal reached
+        """
+        pct = max(0, min(100, float(pct)))
+        filled = int(round(width * pct / 100.0))
+        empty = width - filled
+
+        if pct >= 100:
+            color = "#2ecc71"   # green
+        elif pct >= 66:
+            color = "#3498db"   # blue
+        elif pct >= 33:
+            color = "#f39c12"   # orange
+        else:
+            color = "#e74c3c"   # red
+
+        fill_lbl.config(text="█" * filled, fg=color)
+        empty_lbl.config(text="░" * empty)
+
     def update_weekly_monthly_progress(self):
         now = datetime.now()
         # ---- Weekly: Sunday start ----
@@ -1359,16 +1407,34 @@ class PomodoroApp:
         cursor.close()
         conn.close()
 
-        week_goal = self.config.get('weekly_goal_hours', 10) * 60
+        week_goal  = self.config.get('weekly_goal_hours', 10) * 60
         month_goal = self.config.get('monthly_goal_hours', 40) * 60
 
+        # Keep the hidden bars in sync (harmless, useful for any external reader)
         self.weekly_bar['maximum'] = week_goal
         self.weekly_bar['value'] = min(weekly, week_goal)
-        self.weekly_label.config(text=f"Week: {weekly//60}h {weekly%60}m / {week_goal//60}h")
-
         self.monthly_bar['maximum'] = month_goal
         self.monthly_bar['value'] = min(monthly, month_goal)
-        self.monthly_label.config(text=f"Month: {monthly//60}h {monthly%60}m / {month_goal//60}h")
+
+        # Percent complete
+        weekly_f  = float(weekly  or 0)
+        monthly_f = float(monthly or 0)
+        week_pct  = (weekly_f  / week_goal  * 100.0) if week_goal  > 0 else 0.0
+        month_pct = (monthly_f / month_goal * 100.0) if month_goal > 0 else 0.0
+
+        # Refresh the inline block bars
+        self._render_inline_bar(week_pct,
+                                self.week_fill_lbl, self.week_empty_lbl)
+        self._render_inline_bar(month_pct,
+                                self.month_fill_lbl, self.month_empty_lbl)
+
+        # Refresh the numeric text next to each bar
+        wh, wm = divmod(int(weekly_f), 60)
+        mh, mm = divmod(int(monthly_f), 60)
+        self.weekly_label.config(
+            text=f" {wh}h {wm}m/{week_goal//60}h")
+        self.monthly_label.config(
+            text=f" {mh}h {mm}m/{month_goal//60}h")
 
     def get_weekly_daily_totals(self):
         """Return a dict mapping weekday names to minutes studied for the current week (Sun-Sat)."""
@@ -1520,11 +1586,9 @@ class PomodoroApp:
     def update_streak_display(self):
         streak = self.get_current_streak()
         if streak == 0:
-            msg = "Start your streak today! 🔥"
+            self.streak_label.config(text="🔥 0-day")
         else:
-            msg = f"🔥 {streak}-day streak! Keep going!"
-        self.streak_label.config(text=msg)
-
+            self.streak_label.config(text=f"🔥 {streak}-day")
     # ---------- DATABASE HELPERS ----------
     def load_config(self):
         conn = get_connection()
