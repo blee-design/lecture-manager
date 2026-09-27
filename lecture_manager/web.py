@@ -206,17 +206,26 @@ def _inject_syllabus_helpers():
     from . import syllabus_config as SC
     from .question_bank import get_passage
 
+    # ---- Fetch once per request ----
+    try:
+        papers_list = SC.get_papers(active_only=False)
+        syllabi_list = SC.get_syllabi(active_only=False)
+    except Exception:
+        papers_list = []
+        syllabi_list = []
+
+    syllabi_by_id = {s['id']: s for s in syllabi_list}
+    papers_by_key = {p['paper_key']: p for p in papers_list}
+
     def lookup_paper(paper_key):
         if not paper_key:
             return None
-        p = next((x for x in SC.get_papers(active_only=False)
-                  if x['paper_key'] == paper_key), None)
+        p = papers_by_key.get(paper_key)
         if not p:
             return None
         s = None
         if p.get('syllabus_id'):
-            s = next((x for x in SC.get_syllabi(active_only=False)
-                      if x['id'] == p['syllabus_id']), None)
+            s = syllabi_by_id.get(p['syllabus_id'])
         return {'paper': p, 'syllabus': s}
 
     return {
@@ -863,7 +872,6 @@ def facebook_delete(id):
     return redirect(url_for('facebook_entries'))
 
 # ---------- Question Bank Routes ----------
-
 @app.route('/questions')
 def question_list():
     search = request.args.get('search', '')
@@ -871,56 +879,96 @@ def question_list():
     order = request.args.get('order', 'desc')
     source_filter = request.args.get('source', '')
 
-    if search:
-        rows = search_questions_all_fields(search)
-    else:
-        rows = get_all_questions(sort_by=sort_by, order=order.upper())
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except (ValueError, TypeError):
+        page = 1
 
-    # ---- Apply source filter ----
+    try:
+        per_page = int(request.args.get('per_page', 50))
+        if per_page not in (25, 50, 100, 200):
+            per_page = 50
+    except (ValueError, TypeError):
+        per_page = 50
+
+    # ---- Build WHERE clause ----
+    where_clauses = []
+    params = []
+
+    if search:
+        like = f"%{search}%"
+        where_clauses.append("""
+            (subject LIKE %s OR institution LIKE %s OR chapter LIKE %s
+             OR nepali_transcription LIKE %s OR english_transcription LIKE %s
+             OR notes LIKE %s OR paper LIKE %s OR source LIKE %s
+             OR syllabus_code LIKE %s OR level LIKE %s)
+        """)
+        params.extend([like] * 10)
+
     if source_filter:
         if source_filter == '__untagged__':
-            rows = [r for r in rows if not (r.get('source') or '').strip()]
+            where_clauses.append("(source IS NULL OR source = '')")
         else:
-            target = source_filter.strip().lower()
-            rows = [r for r in rows
-                    if (r.get('source') or '').strip().lower() == target]
+            where_clauses.append("source = %s")
+            params.append(source_filter)
 
-    # ---- List distinct sources for the dropdown ----
+    where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+    # ---- Validate sort column (prevent SQL injection) ----
+    allowed_sort = {
+        'id', 'question_date', 'institution', 'level', 'subject',
+        'paper', 'syllabus_code', 'source', 'question_number',
+        'marks', 'type',
+    }
+    if sort_by not in allowed_sort:
+        sort_by = 'question_date'
+    order_sql = 'DESC' if order.lower() == 'desc' else 'ASC'
+
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
+
+    # ---- Total count for pagination ----
+    cursor.execute(f"SELECT COUNT(*) AS n FROM questions {where_sql}", params)
+    total = cursor.fetchone()['n']
+
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    if page > total_pages:
+        page = total_pages
+    offset = (page - 1) * per_page
+
+    # ---- Fetch just this page ----
+    cursor.execute(
+        f"SELECT * FROM questions {where_sql} "
+        f"ORDER BY {sort_by} {order_sql} "
+        f"LIMIT %s OFFSET %s",
+        params + [per_page, offset],
+    )
+    rows = cursor.fetchall()
+
+    # ---- Distinct sources for the dropdown (cached list) ----
     cursor.execute("""
         SELECT DISTINCT source FROM questions
         WHERE source IS NOT NULL AND source != ''
         ORDER BY source
     """)
-    sources = [row[0] for row in cursor.fetchall()]
+    sources = [row['source'] for row in cursor.fetchall()]
+
     cursor.close()
     conn.close()
 
-    # ---- Apply sorting (for search results as well) ----
-    reverse = (order == 'desc')
-    if sort_by == 'question_date':
-        rows.sort(key=lambda x: x.get('question_date') or '', reverse=reverse)
-    elif sort_by == 'institution':
-        rows.sort(key=lambda x: x.get('institution') or '', reverse=reverse)
-    elif sort_by == 'level':
-        rows.sort(key=lambda x: x.get('level') or '', reverse=reverse)
-    elif sort_by == 'subject':
-        rows.sort(key=lambda x: x.get('subject') or '', reverse=reverse)
-    elif sort_by == 'paper':
-        rows.sort(key=lambda x: x.get('paper') or '', reverse=reverse)
-    elif sort_by == 'syllabus_code':
-        rows.sort(key=lambda x: x.get('syllabus_code') or '', reverse=reverse)
-    else:
-        rows.sort(key=lambda x: x.get('question_date') or '', reverse=True)
-
-    return render_template('questions.html',
-                           questions=rows,
-                           search=search,
-                           sort_by=sort_by,
-                           order=order,
-                           sources=sources,
-                           source_filter=source_filter)
+    return render_template(
+        'questions.html',
+        questions=rows,
+        search=search,
+        sort_by=sort_by,
+        order=order,
+        sources=sources,
+        source_filter=source_filter,
+        page=page,
+        per_page=per_page,
+        total=total,
+        total_pages=total_pages,
+    )
 
 @app.route('/question/<int:id>')
 def question_detail(id):
