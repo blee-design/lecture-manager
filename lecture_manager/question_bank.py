@@ -586,28 +586,58 @@ def _print_labeled(label, html_content, indent="     ", cont_indent=None):
         for line in text.split("\n"):
             print(f"{cont_indent}{line}" if line.strip() else "")
 
+def _parse_id_list(text):
+    """
+    Parse an ID filter string into a set of integers.
+
+    Supported forms:
+        5            → {5}
+        5,10,20      → {5,10,20}
+        5..10        → {5,6,7,8,9,10}
+        5,10..15,20  → {5,10,11,...,15,20}
+
+    Malformed parts are silently ignored. Returns an empty set if nothing
+    valid was parsed. Used by:
+      - the export filter menu (Option 13 → 8)
+      - the advanced search (Option 5)
+    """
+    out = set()
+    if not text:
+        return out
+    for part in str(text).split(','):
+        part = part.strip()
+        if not part:
+            continue
+        if '..' in part:
+            a_str, _, b_str = part.partition('..')
+            try:
+                a, b = int(a_str.strip()), int(b_str.strip())
+                if a > b:
+                    a, b = b, a
+                out.update(range(a, b + 1))
+            except ValueError:
+                continue
+        else:
+            try:
+                out.add(int(part))
+            except ValueError:
+                continue
+    return out
+
 def _get_filtered_questions_interactive():
     """
-    Show the filter menu, let the user set filters, and return the filtered questions.
-    Returns: (filtered_questions, cancelled)
-    - filtered_questions: list of question dicts matching the filters, or [] if none
-    - cancelled: True if user chose 0 to cancel
+    Interactive filter menu. Shows live counts via SQL COUNT, but only
+    fetches rows when the user hits Execute. Never loads the full bank.
     """
-    from .question_converter.db_handler import get_questions
+    from .question_converter.db_handler import get_questions, count_questions
 
     filters = {
-        'date': '',
-        'institution': '',
-        'level': '',
-        'alias': '',
-        'paper': '',
-        'group': '',
-        'subject': '',
-        'chapter': '',
-        'type': ''
+        'id': '', 'date': '', 'institution': '', 'level': '', 'alias': '',
+        'paper': '', 'group': '', 'subject': '', 'chapter': '', 'type': '',
     }
 
     display_labels = {
+        'id': 'Question IDs  (e.g. 5,10..15,20)',
         'date': 'Question Date',
         'institution': 'Institution',
         'level': 'Level',
@@ -616,8 +646,21 @@ def _get_filtered_questions_interactive():
         'group': 'Group',
         'subject': 'Subject',
         'chapter': 'Chapter',
-        'type': 'Type'
+        'type': 'Type',
     }
+
+    def _filters_to_query(f):
+        """Translate the interactive filters dict to db_handler filter keys."""
+        q = {}
+        if f.get('id'):
+            ids = _parse_id_list(f['id'])
+            if ids:
+                q['id_list'] = ids
+        for k in ('date', 'institution', 'level', 'alias',
+                  'paper', 'group', 'subject', 'chapter', 'type'):
+            if f.get(k):
+                q[k] = f[k]
+        return q
 
     def show_filters():
         print("\n" + "─" * 60)
@@ -626,91 +669,76 @@ def _get_filtered_questions_interactive():
         for i, (key, value) in enumerate(filters.items(), 1):
             display = value if value else color_text("(not set)", COLORS.RED)
             label = display_labels.get(key, key.replace('_', ' ').title())
-            print(f"  {i}. {label:15}: {display}")
+            print(f"  {i:2}. {label:28}: {display}")
         print("─" * 60)
-
-    all_questions = get_questions()
-    filtered = all_questions
 
     while True:
         show_filters()
 
-        # Apply filters (substring for text, exact for date/type)
-        filtered = all_questions
-        for key, value in filters.items():
-            if not value:
-                continue
-            if key == 'type':
-                filtered = [q for q in filtered
-                            if (q.get('type') or '').lower() == value.lower()]
-            elif key == 'date':
-                filtered = [q for q in filtered
-                            if (q.get('date') or '') == value]
-            elif key == 'paper':
-                # Exact match — 'paper_i' must not match 'paper_ii'
-                filtered = [q for q in filtered
-                            if (q.get('paper') or '').lower() == value.lower()]
-            elif key == 'question_number':
-                # Family match: '1' → 1, 01, 1a, 1b (never 10, 11)
-                want = canonical_qno(value)
-                if want is not None:
-                    def _in_family(qno):
-                        c = canonical_qno(qno) or ''
-                        if not c.startswith(want):
-                            return False
-                        tail = c[len(want):]
-                        return (not tail) or (not tail[0].isdigit())
-                    filtered = [q for q in filtered
-                                if _in_family(q.get('question_no'))]
-            else:
-                # Text fields remain substring matches (subject, institution, etc.)
-                filtered = [q for q in filtered
-                            if value.lower() in (q.get(key) or '').lower()]
+        query = _filters_to_query(filters)
 
-        print_colored(f"[i] {len(filtered)} questions match current filters.", COLORS.BLUE)
+        # ---- Fast SQL count (no rows fetched) ----
+        try:
+            total = count_questions(query)
+        except Exception as e:
+            print_colored(f"[!] Query failed: {e}", COLORS.RED)
+            total = 0
 
-        # Show preview of matches
-        if filtered:
-            print(f"\n  {color_text('Preview (first 5):', COLORS.CYAN)}")
-            for q in filtered[:5]:
-                qid = q.get('id', '?')
-                date = q.get('date', '')
-                inst = q.get('institution', '')[:25]
-                subj = q.get('subject', '')[:25]
-                paper = q.get('paper', '')[:15]
-                level = q.get('level', '')[:12]
-                qno = q.get('question_no', '')
-                print(f"  [{date}] {qid} | {inst} | {subj} | {paper} | {level} | Q{qno}")
-            if len(filtered) > 5:
-                print(f"  ... and {len(filtered) - 5} more")
+        print_colored(f"[i] {total} question(s) match current filters.", COLORS.BLUE)
+
+        # Small preview — only fetch if the result set is tiny
+        if 0 < total <= 5:
+            try:
+                preview = get_questions(query)
+            except Exception:
+                preview = []
+            if preview:
+                print(f"\n  {color_text('Preview:', COLORS.CYAN)}")
+                for q in preview:
+                    qid = q.get('id', '?')
+                    date = q.get('question_date', '')
+                    inst = (q.get('institution') or '')[:22]
+                    subj = (q.get('subject') or '')[:22]
+                    qno = q.get('question_number', '')
+                    print(f"  {qid:>5} | {date} | {inst:<22} | {subj:<22} | Q{qno}")
 
         print("\n  " + color_text("OPTIONS:", COLORS.WHITE, bold=True))
-        print("  1-9. Edit filter (by number)")
-        print("  9.  " + color_text("Execute with current filters", COLORS.GREEN, bold=True))
-        print("  0.  " + color_text("Cancel", COLORS.RED))
-        print("  c.  " + color_text("Clear all filters", COLORS.YELLOW))
+        print("  1-10. Edit filter (by number)")
+        print("   9.  " + color_text("Execute with current filters", COLORS.GREEN, bold=True))
+        print("  (9 or 90 — both work)")
+        print("   0.  " + color_text("Cancel", COLORS.RED))
+        print("   c.  " + color_text("Clear all filters", COLORS.YELLOW))
         print("─" * 60)
 
         choice = input(color_text("Choose an option: ", COLORS.MAGENTA)).strip().lower()
 
-        if choice == '9':
+        if choice in ('9', '90'):
+            # Fetch only now — on demand
+            try:
+                filtered = get_questions(query)
+            except Exception as e:
+                print_colored(f"[!] Fetch failed: {e}", COLORS.RED)
+                return [], True
             return filtered, False
 
-        elif choice == '0':
+        if choice == '0':
             return [], True
 
-        elif choice == 'c':
+        if choice == 'c':
             for key in filters:
                 filters[key] = ''
             print_colored("[✓] All filters cleared.", COLORS.GREEN)
             continue
 
-        elif choice.isdigit() and 1 <= int(choice) <= 9:
+        if choice.isdigit() and 1 <= int(choice) <= len(filters):
             idx = int(choice) - 1
             key = list(filters.keys())[idx]
             current = filters[key]
             label = display_labels.get(key, key.replace('_', ' ').title())
-            new_val = input(color_text(f"New value for {label} [{current}]: ", COLORS.MAGENTA)).strip()
+            hint = " (list/range OK)" if key == 'id' else ""
+            new_val = input(color_text(
+                f"New value for {label}{hint} [{current}]: ",
+                COLORS.MAGENTA)).strip()
             if new_val:
                 filters[key] = new_val
                 print_colored(f"[✓] {label} set to: {new_val}", COLORS.GREEN)
@@ -718,9 +746,7 @@ def _get_filtered_questions_interactive():
                 print_colored("[i] No change.", COLORS.YELLOW)
             continue
 
-        else:
-            print_colored("[!] Invalid choice.", COLORS.RED)
-            continue
+        print_colored("[!] Invalid choice.", COLORS.RED)
 
 def add_question(date, institution, subject, paper, group, marks, chapter,
                  question_number, nepali, english, level, notes=None,
@@ -2955,7 +2981,7 @@ def advanced_search_interactive():
     fields = ['id', 'date', 'institution', 'level', 'alias', 'paper', 'group', 'subject',
             'question_number', 'chapter', 'syllabus_code', 'type', 'exam_type']
     display_names = {
-        'id':              'question ID',
+        'id':              'question IDs',
         'date':            'question_date',
         'institution':     'institution',
         'level': 'level',
@@ -2998,18 +3024,95 @@ def advanced_search_interactive():
                     kwargs[field] = val
 
             # ---- Direct ID lookup takes precedence ----
-            # If the user typed a question ID, jump straight to that question
-            # and skip the rest of the filtering pipeline.
+            # Accepts single IDs, comma lists, and ranges:
+            #     5,  5,10,20,  5..10,  5,10..15,20
             if 'id' in kwargs:
-                id_val = kwargs.pop('id')
-                if id_val.isdigit():
-                    q = get_question_by_id(int(id_val))
-                    if q:
-                        _display_single_question(q)
-                    else:
-                        print_colored(f"[!] Question ID {id_val} not found.", COLORS.RED)
+                id_set = _parse_id_list(kwargs.pop('id'))
+                if id_set:
+                    # Single ID → show detail directly (existing shortcut)
+                    if len(id_set) == 1:
+                        only_id = next(iter(id_set))
+                        q = get_question_by_id(only_id)
+                        if q:
+                            _display_single_question(q)
+                        else:
+                            print_colored(
+                                f"[!] Question ID {only_id} not found.",
+                                COLORS.RED,
+                            )
+                        continue
+
+                    # Multiple IDs → collect rows, report missing ones
+                    found = []
+                    missing = []
+                    for qid in sorted(id_set):
+                        q = get_question_by_id(qid)
+                        if q:
+                            found.append(q)
+                        else:
+                            missing.append(qid)
+
+                    if not found:
+                        print_colored(
+                            f"[!] None of the {len(id_set)} ID(s) were found.",
+                            COLORS.RED,
+                        )
+                        continue
+
+                    # Apply any remaining criteria on top of the ID selection
+                    for key, value in kwargs.items():
+                        if not value:
+                            continue
+                        if key == 'type':
+                            found = [q for q in found
+                                     if (q.get('type') or '').lower() == value.lower()]
+                        elif key == 'date':
+                            found = [q for q in found
+                                     if (q.get('question_date') or '') == value]
+                        elif key == 'paper':
+                            found = [q for q in found
+                                     if (q.get('paper') or '').lower() == value.lower()]
+                        else:
+                            found = [q for q in found
+                                     if value.lower() in (q.get(key) or '').lower()]
+
+                    print(f"\n--- {len(found)} QUESTION(S) SELECTED ---")
+                    for r in found:
+                        preview = _short_preview(
+                            r.get('nepali_transcription')
+                            or r.get('english_transcription') or '', 55
+                        )
+                        print(f"  {r['id']:>5} | "
+                              f"{(r.get('question_date') or ''):<10} | "
+                              f"{(r.get('institution') or '')[:20]:<20} | "
+                              f"{(r.get('subject') or '')[:25]:<25} | "
+                              f"Q{r.get('question_number') or ''}")
+                        print(f"        {preview}")
+
+                    if missing:
+                        print_colored(
+                            f"[!] Not found: {missing[:20]}"
+                            + (" ..." if len(missing) > 20 else ""),
+                            COLORS.YELLOW,
+                        )
+
+                    while True:
+                        cid = input(color_text(
+                            "\nEnter ID to view (Enter to return): ",
+                            COLORS.MAGENTA)).strip()
+                        if cid in ('', 'b', 'q'):
+                            break
+                        if not cid.isdigit():
+                            print_colored("[!] Enter a numeric ID.", COLORS.RED)
+                            continue
+                        q = get_question_by_id(int(cid))
+                        if q:
+                            _display_single_question(q)
+                        else:
+                            print_colored(f"[!] ID {cid} not found.", COLORS.RED)
                     continue
-                # Non-numeric → silently ignore, fall through to normal filters
+                # Malformed ID → ignore and fall through to normal filters
+
 
             # Family mode is always on — '1' matches 1, 01, 1a, 1b, 1(a), 1.5
             family_mode = True

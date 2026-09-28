@@ -407,39 +407,101 @@ def delete_question(qid):
     return delete_q(qid)
 
 # -------------------- Get Questions --------------------
+def _build_question_where(filters):
+    """
+    Build (where_sql, params) for the given filter dict.
+    Used by both get_questions() and count_questions() so the WHERE
+    logic lives in one place.
+    """
+    if not filters:
+        return "", []
+
+    clauses = []
+    params = []
+
+    # --- ID list (set of ints) ---
+    if filters.get('id_list'):
+        ids = list(filters['id_list'])
+        placeholders = ','.join(['%s'] * len(ids))
+        clauses.append(f"q.id IN ({placeholders})")
+        params.extend(ids)
+
+    # --- Exact matches ---
+    if filters.get('date'):
+        clauses.append("q.question_date = %s")
+        params.append(filters['date'])
+    if filters.get('paper'):
+        clauses.append("q.paper = %s")
+        params.append(filters['paper'])
+    if filters.get('type'):
+        clauses.append("q.type = %s")
+        params.append(filters['type'])
+
+    # --- LIKE prefix matches ---
+    if filters.get('institution'):
+        clauses.append("q.institution LIKE %s")
+        params.append(f"{filters['institution']}%")
+    if filters.get('level'):
+        clauses.append("q.level LIKE %s")
+        params.append(f"{filters['level']}%")
+    if filters.get('group'):
+        clauses.append("q.`group` LIKE %s")
+        params.append(f"{filters['group']}%")
+    if filters.get('subject'):
+        clauses.append("q.subject LIKE %s")
+        params.append(f"{filters['subject']}%")
+
+    # --- LIKE substring matches ---
+    if filters.get('alias'):
+        clauses.append("q.alias LIKE %s")
+        params.append(f"%{filters['alias']}%")
+    if filters.get('chapter'):
+        clauses.append("LOWER(q.chapter) LIKE LOWER(%s)")
+        params.append(f"%{filters['chapter']}%")
+
+    # --- Legacy keys kept for backward compatibility ---
+    if filters.get('source'):
+        clauses.append("q.source = %s")
+        params.append(filters['source'])
+    if filters.get('group_name'):
+        clauses.append("q.`group` = %s")
+        params.append(filters['group_name'])
+    if filters.get('question_nos'):
+        placeholders = ','.join(['%s'] * len(filters['question_nos']))
+        clauses.append(f"q.question_number IN ({placeholders})")
+        params.extend(filters['question_nos'])
+
+    where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    return where_sql, params
+
+
+def count_questions(filters=None):
+    """
+    Return the count of questions matching the filters — no row fetching.
+    This is what the interactive filter menu uses to show live counts.
+    """
+    where, params = _build_question_where(filters)
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"SELECT COUNT(*) FROM questions q {where}", params)
+    n = cursor.fetchone()[0]
+    cursor.close()
+    conn.close()
+    return n
+
+
 def get_questions(filters=None):
     """
     Fetch questions from the unified `questions` table,
     including options, matching pairs, and hints.
     Returns a list of question dicts in the converter's internal format.
+    Only rows matching the filters are fetched.
     """
+    where, params = _build_question_where(filters)
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
 
-    # Base query
-    sql = """
-        SELECT q.*
-        FROM questions q
-        WHERE 1=1
-    """
-    params = []
-
-    # Apply filters if provided
-    if filters:
-        if 'source' in filters and filters['source']:
-            sql += " AND q.source = %s"
-            params.append(filters['source'])
-        if 'group_name' in filters and filters['group_name']:
-            sql += " AND q.`group` = %s"
-            params.append(filters['group_name'])
-        if 'type' in filters and filters['type']:
-            # We don't have a type column; we'll handle this by checking options/pairs existence later
-            pass
-        if 'question_nos' in filters and filters['question_nos']:
-            placeholders = ','.join(['%s'] * len(filters['question_nos']))
-            sql += f" AND q.question_number IN ({placeholders})"
-            params.extend(filters['question_nos'])
-
+    sql = f"SELECT q.* FROM questions q {where}"
     sql += " ORDER BY q.question_date DESC, q.question_number ASC"
     cursor.execute(sql, params)
     rows = cursor.fetchall()
