@@ -539,6 +539,7 @@ def _manage_syllabi_submenu(SC, current_id):
         print("   2. Edit syllabus")
         print("   3. Delete syllabus")
         print("   4. Reassign orphan papers to a syllabus")
+        print("   5. " + color_text("Move a paper between syllabi", COLORS.GREEN))
         print("   0. Back")
         print_colored("  " + "─" * 62, COLORS.CYAN)
 
@@ -659,6 +660,136 @@ def _manage_syllabi_submenu(SC, current_id):
                 SC.update_paper(p['id'], syllabus_id=target['id'])
             print_colored(f"[✓] Reassigned {len(orphans)} paper(s).", COLORS.GREEN)
             reload_paper_cache()
+
+                # ---------- 5. Move a paper between syllabi ----------
+        elif choice == "5":
+            if not syllabi:
+                print_colored("No syllabi to move from.", COLORS.YELLOW)
+                continue
+
+            # --- Show all papers grouped by syllabus ---
+            from .file_manager import _papers
+            all_papers = list(_papers().values())
+            if not all_papers:
+                print_colored("No papers configured.", COLORS.YELLOW)
+                continue
+
+            syll_by_id = {s['id']: s for s in syllabi}
+
+            print()
+            print_colored("  📄  Papers by syllabus:", COLORS.CYAN, bold=True)
+            flat = []   # (paper_key, paper_display, syllabus_id)
+            for s in syllabi:
+                lvl = f"  L{s['level']}" if s.get('level') else ""
+                print(f"\n    📚 {s['display_name']}{lvl}")
+                papers_here = [p for p in all_papers
+                               if p.get('syllabus_id') == s['id']]
+                if not papers_here:
+                    print("       (no papers)")
+                    continue
+                for p in papers_here:
+                    idx = len(flat) + 1
+                    flat.append((p['paper_key'], p['display_name'], s['id']))
+                    print(f"      {idx:>2}. [{p['paper_key']}]  {p['display_name']}")
+            print("       0. Cancel")
+
+            pi = input(color_text(
+                f"\n  Move which paper? (1-{len(flat)}, 0=cancel): ",
+                COLORS.MAGENTA)).strip()
+            if not pi.isdigit():
+                continue
+            pidx = int(pi)
+            if pidx == 0 or pidx > len(flat):
+                continue
+            pkey, pdisplay, current_syllabus_id = flat[pidx - 1]
+
+            # --- Show destination syllabi (excluding current) ---
+            print()
+            print_colored("  📚  Move to which syllabus?", COLORS.CYAN, bold=True)
+            destinations = [s for s in syllabi if s['id'] != current_syllabus_id]
+            if not destinations:
+                print_colored("  Only one syllabus exists — nothing to move to.",
+                              COLORS.YELLOW)
+                continue
+            for i, s in enumerate(destinations, 1):
+                lvl = f"  (Level {s['level']})" if s.get('level') else ""
+                n_here = sum(1 for p in all_papers
+                             if p.get('syllabus_id') == s['id'])
+                print(f"    {i:>2}. {s['display_name']}{lvl}  —  "
+                      f"{n_here} paper(s)")
+            print("     0. Cancel")
+
+            di = input(color_text(
+                f"\n  Choose destination (1-{len(destinations)}, 0=cancel): ",
+                COLORS.MAGENTA)).strip()
+            if not di.isdigit():
+                continue
+            didx = int(di)
+            if didx == 0 or didx > len(destinations):
+                continue
+            target = destinations[didx - 1]
+
+            # --- Level-mismatch awareness ---
+            src = syll_by_id[current_syllabus_id]
+            src_lvl = (src.get('level') or '').strip()
+            tgt_lvl = (target.get('level') or '').strip()
+            if src_lvl and tgt_lvl and src_lvl != tgt_lvl:
+                print()
+                print_colored(
+                    f"  ⚠  Level mismatch: paper is on Level {src_lvl}, "
+                    f"destination is Level {tgt_lvl}.",
+                    COLORS.YELLOW,
+                )
+                print_colored(
+                    "     This is allowed — but be aware the questions "
+                    "and lectures will now appear under a different exam programme.",
+                    COLORS.YELLOW,
+                )
+
+            # --- Show what's actually moving ---
+            n_subjects = len([s for s in SC.get_subjects(
+                paper_key=pkey, active_only=False)])
+            n_chapters = 0
+            for subj in SC.get_subjects(paper_key=pkey, active_only=False):
+                n_chapters += len(SC.get_chapters(
+                    subject_id=subj['id'], active_only=False))
+
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM questions WHERE paper = %s",
+                           (pkey,))
+            n_questions = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM youtube_lectures WHERE paper = %s",
+                           (pkey,))
+            n_lectures = cursor.fetchone()[0]
+            cursor.close()
+            conn.close()
+
+            print()
+            print_colored("  Move summary:", COLORS.CYAN, bold=True)
+            print(f"    Paper     : [{pkey}]  {pdisplay}")
+            print(f"    From      : {src['display_name']}")
+            print(f"    To        : {target['display_name']}")
+            print(f"    Subjects  : {n_subjects}")
+            print(f"    Chapters  : {n_chapters}")
+            print(f"    Questions : {n_questions}")
+            print(f"    Lectures  : {n_lectures}")
+
+            confirm = input(color_text(
+                "\n  Confirm move? (y/n): ", COLORS.MAGENTA)).strip().lower()
+            if confirm != 'y':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                continue
+
+            if SC.move_paper_to_syllabus(pkey, target['id']):
+                print_colored(
+                    f"[✓] Moved '{pdisplay}' from {src['display_name']} "
+                    f"to {target['display_name']}.",
+                    COLORS.GREEN,
+                )
+                reload_paper_cache()
+            else:
+                print_colored("[!] Move failed.", COLORS.RED)
 
         # ---------- 0. Back ----------
         elif choice == "0":

@@ -105,6 +105,26 @@ def delete_syllabus(syllabus_id, cascade_papers=False):
     cursor.close(); conn.close()
     return ok
 
+def move_paper_to_syllabus(paper_key, target_syllabus_id):
+    """
+    Move a paper to a different syllabus. Everything downstream
+    (subjects, chapters, questions, lectures) is unaffected — they
+    reference the paper by key, not by syllabus.
+    Returns True if a row was updated.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE papers SET syllabus_id = %s WHERE paper_key = %s",
+            (target_syllabus_id, paper_key),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        cursor.close()
+        conn.close()
+
 # ---------- READ ----------
 def get_papers(active_only=True, syllabus_id=None):
     conn = get_connection()
