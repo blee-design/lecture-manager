@@ -4512,10 +4512,215 @@ def question_statistics_interactive():
     print(f"\n  Top subjects:")
     for r in by_subj: print(f"    {(r['subject'] or '')[:40]:<40}: {r['n']}")
 
+def _bulk_update_filtered():
+    """
+    Filter questions via the interactive filter menu, then apply an
+    UPDATE on a chosen field to all matching rows.
+    """
+    from .question_converter.db_handler import _build_question_where
+
+    # ---------- Step 1: filter ----------
+    print()
+    print_colored("  Step 1 — Build the filter", COLORS.CYAN, bold=True)
+    filtered, cancelled = _get_filtered_questions_interactive()
+    if cancelled or not filtered:
+        print_colored("Cancelled.", COLORS.YELLOW)
+        return
+
+    ids = [q['id'] for q in filtered]
+    print_colored(f"\n[✓] {len(ids)} question(s) selected.", COLORS.GREEN)
+
+    # ---------- Step 2: pick field ----------
+    UPDATABLE = [
+        ('source',          'text'),
+        ('institution',     'text'),
+        ('subject',         'text'),
+        ('paper',           'text'),
+        ('group',           'text'),
+        ('chapter',         'text'),
+        ('syllabus_code',   'text'),
+        ('level',           'text'),
+        ('alias',           'text'),
+        ('notes',           'text'),
+        ('question_date',   'text'),
+        ('exam_type',       'menu_exam'),
+        ('type',            'menu_qtype'),
+        ('marks',           'number'),
+        ('penalty',         'float'),
+        ('fraction_correct','float'),
+        ('fraction_wrong',  'float'),
+        ('response_lines',  'number'),
+    ]
+
+    print()
+    print_colored("  Step 2 — Field to update", COLORS.CYAN, bold=True)
+    print_colored("  " + "─" * 56, COLORS.CYAN)
+    for i, (f, kind) in enumerate(UPDATABLE, 1):
+        hint = {
+            'menu_exam':  ' (menu)',
+            'menu_qtype': ' (menu)',
+            'number':     ' (integer)',
+            'float':      ' (decimal)',
+        }.get(kind, '')
+        print(f"   {i:>2}. {f}{hint}")
+    print("    0. Cancel")
+
+    fi = input(color_text(f"\nChoose field (0-{len(UPDATABLE)}): ",
+                          COLORS.MAGENTA)).strip()
+    if not fi.isdigit():
+        return
+    fidx = int(fi)
+    if fidx == 0 or fidx > len(UPDATABLE):
+        return
+
+    field_name, kind = UPDATABLE[fidx - 1]
+
+    # ---------- Step 3: new value ----------
+    if kind == 'menu_exam':
+        print()
+        for i, (k, lbl) in enumerate(EXAM_TYPES, 1):
+            print(f"   {i}. {lbl}")
+        ei = input(color_text("Choose exam type: ", COLORS.MAGENTA)).strip()
+        if not ei.isdigit() or not (1 <= int(ei) <= len(EXAM_TYPES)):
+            print_colored("Cancelled.", COLORS.YELLOW)
+            return
+        new_value = EXAM_TYPES[int(ei) - 1][0]
+
+    elif kind == 'menu_qtype':
+        opts = ['essay', 'multichoice', 'truefalse', 'matching']
+        print()
+        for i, t in enumerate(opts, 1):
+            print(f"   {i}. {t}")
+        ti = input(color_text("Choose type: ", COLORS.MAGENTA)).strip()
+        if not ti.isdigit() or not (1 <= int(ti) <= 4):
+            print_colored("Cancelled.", COLORS.YELLOW)
+            return
+        new_value = opts[int(ti) - 1]
+
+    elif kind == 'number':
+        nv = input(color_text(
+            f"New {field_name} (integer, or 'clear' for NULL): ",
+            COLORS.MAGENTA)).strip()
+        if not nv:
+            return
+        if nv.lower() == 'clear':
+            new_value = None
+        elif nv.lstrip('-').isdigit():
+            new_value = int(nv)
+        else:
+            print_colored("[!] Must be an integer.", COLORS.RED)
+            return
+
+    elif kind == 'float':
+        nv = input(color_text(
+            f"New {field_name} (decimal, or 'clear' for NULL): ",
+            COLORS.MAGENTA)).strip()
+        if not nv:
+            return
+        if nv.lower() == 'clear':
+            new_value = None
+        else:
+            try:
+                new_value = float(nv)
+            except ValueError:
+                print_colored("[!] Must be a number.", COLORS.RED)
+                return
+
+    else:  # text
+        nv = input(color_text(
+            f"New {field_name} (or 'clear' for NULL): ",
+            COLORS.MAGENTA)).strip()
+        if not nv:
+            return
+        new_value = None if nv.lower() == 'clear' else nv
+
+    # ---------- Special warning: paper is a foreign-key-like string ----------
+    if field_name == 'paper' and new_value is not None:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT paper_key FROM papers")
+        valid = {row[0] for row in cursor.fetchall()}
+        cursor.close()
+        conn.close()
+        if new_value not in valid:
+            print_colored(
+                f"[!] Warning: '{new_value}' is not a configured paper key.",
+                COLORS.YELLOW,
+            )
+            print_colored(
+                f"    Valid keys: {', '.join(sorted(valid))}",
+                COLORS.YELLOW,
+            )
+            if input(color_text("    Continue anyway? (y/n): ",
+                                COLORS.MAGENTA)).strip().lower() != 'y':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                return
+
+    # ---------- Step 4: confirm ----------
+    print()
+    print_colored("  Step 3 — Confirm", COLORS.CYAN, bold=True)
+    print_colored("  " + "─" * 56, COLORS.CYAN)
+    print(f"   Questions matched : {len(ids)}")
+    print(f"   Field             : {field_name}")
+    print(f"   New value         : "
+          f"{new_value if new_value is not None else '(NULL)'}")
+    print_colored("  " + "─" * 56, COLORS.CYAN)
+
+    confirm = input(color_text(
+        "Apply to all matching questions? (y/n): ",
+        COLORS.MAGENTA)).strip().lower()
+    if confirm != 'y':
+        print_colored("Cancelled.", COLORS.YELLOW)
+        return
+
+    # ---------- Step 5: execute ----------
+    col_expr = f"`{field_name}`" if field_name in ('group', 'type') else field_name
+    placeholders = ','.join(['%s'] * len(ids))
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            f"UPDATE questions SET {col_expr} = %s "
+            f"WHERE id IN ({placeholders})",
+            [new_value] + ids,
+        )
+        conn.commit()
+        updated = cursor.rowcount
+        print_colored(f"\n[✓] Updated {updated} question(s).", COLORS.GREEN)
+    except Exception as e:
+        conn.rollback()
+        print_colored(f"\n[!] Update failed: {e}", COLORS.RED)
+    finally:
+        cursor.close()
+        conn.close()
 
 def bulk_rename_interactive():
-    """Bulk-rename a field across matching questions."""
+    """
+    Bulk operations on questions. Two modes:
+      1. Simple rename — replace one field's value everywhere it appears
+      2. Filtered update — filter questions by any criteria, then set
+         a chosen field on all matching rows
+    """
+    print()
+    print_colored("  🔧  BULK UPDATE", COLORS.CYAN, bold=True)
+    print_colored("  " + "─" * 56, COLORS.CYAN)
+    print("   1. Rename a field value  (simple: one value → one new value)")
+    print("   2. " + color_text("Filtered update", COLORS.GREEN)
+          + "  (filter by date/source/etc, then update any field)")
+    print("   0. Cancel")
+    mode = input(color_text("Choose (1/2/0): ", COLORS.MAGENTA)).strip()
 
+    if mode == '0' or not mode:
+        return
+    if mode == '2':
+        _bulk_update_filtered()
+        return
+    if mode != '1':
+        print_colored("[!] Invalid choice.", COLORS.RED)
+        return
+
+    # ---------- Mode 1: existing simple rename ----------
     # (display label, db column, kind)
     # kind: 'text' | 'number' | 'exam_type' | 'q_type'
     FIELDS = [
