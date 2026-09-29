@@ -754,7 +754,8 @@ def _manage_syllabi_submenu(SC, current_id):
                 n_chapters += len(SC.get_chapters(
                     subject_id=subj['id'], active_only=False))
 
-            conn = get_connection()
+            from .db import get_connection as _get_conn
+            conn = _get_conn()
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM questions WHERE paper = %s",
                            (pkey,))
