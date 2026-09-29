@@ -704,15 +704,14 @@ def _get_filtered_questions_interactive():
 
         print("\n  " + color_text("OPTIONS:", COLORS.WHITE, bold=True))
         print("  1-10. Edit filter (by number)")
-        print("   9.  " + color_text("Execute with current filters", COLORS.GREEN, bold=True))
-        print("  (9 or 90 — both work)")
+        print("  90.  " + color_text("Execute with current filters", COLORS.GREEN, bold=True))
         print("   0.  " + color_text("Cancel", COLORS.RED))
         print("   c.  " + color_text("Clear all filters", COLORS.YELLOW))
         print("─" * 60)
 
         choice = input(color_text("Choose an option: ", COLORS.MAGENTA)).strip().lower()
 
-        if choice in ('9', '90'):
+        if choice == '90':
             # Fetch only now — on demand
             try:
                 filtered = get_questions(query)
@@ -4686,8 +4685,25 @@ def _bulk_update_filtered():
             [new_value] + ids,
         )
         conn.commit()
-        updated = cursor.rowcount
-        print_colored(f"\n[✓] Updated {updated} question(s).", COLORS.GREEN)
+
+        # MariaDB reports `rowcount` as "rows changed", not "rows matched".
+        # Setting a value that's already the current value reports 0 even
+        # though the row matched the WHERE clause. Ask the DB directly for
+        # the true matched count.
+        cursor.execute(
+            f"SELECT COUNT(*) FROM questions WHERE id IN ({placeholders})",
+            ids,
+        )
+        matched = cursor.fetchone()[0] or 0
+
+        if matched == 0:
+            print_colored(
+                "\n[!] The filter matched rows, but they no longer exist. "
+                "Nothing was updated.",
+                COLORS.YELLOW,
+            )
+        else:
+            print_colored(f"\n[✓] Updated {matched} question(s).", COLORS.GREEN)
     except Exception as e:
         conn.rollback()
         print_colored(f"\n[!] Update failed: {e}", COLORS.RED)
