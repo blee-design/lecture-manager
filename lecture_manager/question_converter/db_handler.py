@@ -451,13 +451,25 @@ def _build_question_where(filters):
         clauses.append("q.subject LIKE %s")
         params.append(f"{filters['subject']}%")
 
-    # --- LIKE substring matches ---
+    # --- LIKE substring matches (support `*` = has value, `-` = empty/null) ---
     if filters.get('alias'):
-        clauses.append("q.alias LIKE %s")
-        params.append(f"%{filters['alias']}%")
+        v = filters['alias']
+        if v == '*':
+            clauses.append("q.alias IS NOT NULL AND q.alias != ''")
+        elif v == '-':
+            clauses.append("(q.alias IS NULL OR q.alias = '')")
+        else:
+            clauses.append("q.alias LIKE %s")
+            params.append(f"%{v}%")
     if filters.get('chapter'):
-        clauses.append("LOWER(q.chapter) LIKE LOWER(%s)")
-        params.append(f"%{filters['chapter']}%")
+        v = filters['chapter']
+        if v == '*':
+            clauses.append("q.chapter IS NOT NULL AND q.chapter != ''")
+        elif v == '-':
+            clauses.append("(q.chapter IS NULL OR q.chapter = '')")
+        else:
+            clauses.append("LOWER(q.chapter) LIKE LOWER(%s)")
+            params.append(f"%{v}%")
 
     # --- Legacy keys kept for backward compatibility ---
     if filters.get('source'):

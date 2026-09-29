@@ -734,7 +734,13 @@ def _get_filtered_questions_interactive():
             key = list(filters.keys())[idx]
             current = filters[key]
             label = display_labels.get(key, key.replace('_', ' ').title())
-            hint = " (list/range OK)" if key == 'id' else ""
+            if key == 'id':
+                hint = " (list/range OK)"
+            elif key in ('alias', 'chapter', 'institution', 'subject',
+                         'level', 'paper', 'group', 'type'):
+                hint = " (*=has any value, -=empty)"
+            else:
+                hint = ""
             new_val = input(color_text(
                 f"New value for {label}{hint} [{current}]: ",
                 COLORS.MAGENTA)).strip()
