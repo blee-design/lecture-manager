@@ -104,6 +104,20 @@ def resolve_question_syllabus(q):
 
     paper_key = out['paper_key']
 
+    # ---- Prefer the P-prefix inside the chapter text when present ----
+    # When the `paper` field and the code prefix disagree, the code prefix
+    # wins — the paper field records which *exam paper* the question came
+    # from, but the code tells us where in the syllabus tree it belongs.
+    # Example: 'Paper: Paper I' + 'Chapter: X (P3-C3.1)' → use paper_iii.
+    chapter_text = q.get('chapter') or ''
+    prefix_match = re.search(r'\(P(\d)-', chapter_text)
+    if prefix_match:
+        inferred = {'1': 'paper_i', '2': 'paper_ii', '3': 'paper_iii'}.get(prefix_match.group(1))
+        if inferred and inferred in _papers():
+            paper_key = inferred
+            out['paper_key'] = inferred
+            out['reason'] = 'inferred from chapter code prefix'
+
     # Paper display
     if paper_key:
         papers = _papers()
@@ -121,21 +135,9 @@ def resolve_question_syllabus(q):
             break
 
     if not paper_key:
-        chapter_text = q.get('chapter') or ''
-        m = re.search(r'\(P(\d)-', chapter_text)
-        if m:
-            inferred = {'1': 'paper_i', '2': 'paper_ii', '3': 'paper_iii'}.get(m.group(1))
-            if inferred and inferred in _papers():
-                paper_key = inferred
-                out['paper_key'] = inferred
-                out['reason'] = 'inferred from chapter'
-                # fall through to code resolution below
-            else:
-                out['code_display'] = candidate or (q.get('syllabus_code') or '').strip() or None
-                return out
-        else:
-            out['code_display'] = candidate or (q.get('syllabus_code') or '').strip() or None
-            return out
+        # No paper at all → can't resolve a code against anything
+        out['code_display'] = candidate or (q.get('syllabus_code') or '').strip() or None
+        return out
 
     if candidate:
         out['code_display'] = candidate
