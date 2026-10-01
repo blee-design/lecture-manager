@@ -509,6 +509,22 @@ def sanitize_for_json(obj):
         return [sanitize_for_json(v) for v in obj]
     return obj
 
+def looks_like_syllabus_code(s):
+    """
+    Return True only if `s` matches a recognizable syllabus code form:
+      - Numeric:     04, 04.02, 04.02.03, 04.02-1
+      - Legacy:      P1-B6.3, P3-C3.10
+    Rejects everything else (Tippani, KYC, English, NBA, ...).
+    """
+    if not s:
+        return False
+    s = str(s).strip()
+    if re.fullmatch(r'\d{1,2}(?:\.\d{1,2}){0,2}(?:-\d+)?', s):
+        return True
+    if re.fullmatch(r'P\d-[A-C]\d+\.\d+', s, re.IGNORECASE):
+        return True
+    return False
+
 def normalize_syllabus_code(raw):
     """
     Convert a legacy syllabus code to the numeric XX.YY form the resolver

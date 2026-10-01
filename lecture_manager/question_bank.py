@@ -1739,12 +1739,65 @@ def find_questions_for_chapter(paper_key, subj_code, chap_code):
 
     out = []
     for q in rows:
-        info = resolve_question_syllabus(q)
-        if (info['paper_key'] == paper_key
-                and info['subject_code'] == subj_code
-                and info['chapter_code'] == chap_code):
-            out.append(q)
+        # Match against every (paper, code) pair the question references
+        for code_paper, code in _extract_all_syllabus_codes(q):
+            if code_paper != paper_key:
+                continue
+            m = re.match(r'^(\d{2})\.(\d{2})', code)
+            if m and m.group(1) == subj_code and m.group(2) == chap_code:
+                out.append(q)
+                break
     return out
+
+def _extract_all_syllabus_codes(q):
+    """
+    Return a list of (paper_key, code) tuples for every syllabus code
+    found in the question. Each code's paper is inferred from its
+    P-prefix (P1→paper_i, P2→paper_ii, P3→paper_iii); codes without a
+    prefix inherit the question's resolved primary paper.
+
+    Non-code parens like (KYC) are ignored. Duplicates are removed.
+    """
+    from .utils import normalize_syllabus_code, looks_like_syllabus_code
+
+    # Fallback paper for codes without a P-prefix
+    primary_paper = q.get('paper') or None
+
+    results = []
+    seen = set()
+
+    def _add(candidate):
+        c = candidate.strip()
+        if not c or not looks_like_syllabus_code(c):
+            return
+        # Infer paper from P-prefix
+        pm = re.match(r'^P(\d)-', c, re.IGNORECASE)
+        if pm:
+            paper = {'1': 'paper_i', '2': 'paper_ii',
+                     '3': 'paper_iii'}.get(pm.group(1), primary_paper)
+        else:
+            paper = primary_paper
+        norm = normalize_syllabus_code(c)
+        if not norm:
+            return
+        key = (paper, norm)
+        if key not in seen:
+            seen.add(key)
+            results.append(key)
+
+    # From syllabus_code column
+    raw_sc = (q.get('syllabus_code') or '').strip()
+    if raw_sc:
+        for token in re.split(r'[\s,]+', raw_sc):
+            _add(token)
+
+    # From chapter text
+    chapter_text = q.get('chapter') or ''
+    for group in re.findall(r'\(([^)]+)\)', chapter_text):
+        for candidate in re.split(r'\s*[&/,]\s*', group.strip()):
+            _add(candidate)
+
+    return results
 
 def _qb_syllabus_indexes(source_filter=None):
     """
@@ -1771,12 +1824,30 @@ def _qb_syllabus_indexes(source_filter=None):
         if not pk:
             continue
         bpp[pk].append(q)
-        subj = info['subject_code']
-        chap = info['chapter_code']
-        if subj:
-            bp[(pk, subj)].append(q)
-            if chap:
-                bt[(pk, subj, chap)].append(q)
+
+        # Index into every chapter this question references
+        all_pairs = _extract_all_syllabus_codes(q)
+        if not all_pairs and info['subject_code']:
+            all_pairs = [(pk, f"{info['subject_code']}.{info['chapter_code'] or '00'}")]
+
+        seen_triples = set()
+        for paper, code in all_pairs:
+            if not paper:
+                paper = pk
+            m = re.match(r'^(\d{2})(?:\.(\d{2}))?', code)
+            if not m:
+                continue
+            subj = m.group(1)
+            chap = m.group(2) or info['chapter_code']
+            if not subj or not chap:
+                continue
+            t = (paper, subj, chap)
+            if t in seen_triples:
+                continue
+            seen_triples.add(t)
+            bp[(paper, subj)].append(q)
+            bt[t].append(q)
+
     return bt, bp, bpp
 
 def browse_by_syllabus_interactive():

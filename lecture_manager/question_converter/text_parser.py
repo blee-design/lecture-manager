@@ -472,24 +472,29 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
         # Always preserve the full text as the human description
         question['chapter'] = field_content
 
-        # Extract all codes inside parentheses. A single parenthesis group may
-        # contain multiple codes separated by &, /, or , — split them out.
+        # Extract all codes inside parentheses. A single parenthesis group
+        # may contain multiple codes separated by &, /, or , — split them
+        # out. Non-code parens like (KYC) or (Tippani) are ignored.
+        from ..utils import normalize_syllabus_code, looks_like_syllabus_code
         paren_groups = re.findall(r'\(([^)]+)\)', field_content)
         all_codes = []
         for group in paren_groups:
-            all_codes.extend(re.split(r'\s*[&/,]\s*', group.strip()))
-        all_codes = [c.strip() for c in all_codes if c.strip()]
+            for candidate in re.split(r'\s*[&/,]\s*', group.strip()):
+                c = candidate.strip()
+                if c and looks_like_syllabus_code(c):
+                    all_codes.append(c)
 
         if all_codes:
-            from ..utils import normalize_syllabus_code
             primary = normalize_syllabus_code(all_codes[0])
             question['syllabus_code'] = primary
             log(f"  Question {question.get('question_no', '?')}: "
                 f"Extracted '{all_codes[0]}' → '{primary}'", "INFO", True)
             if len(all_codes) > 1:
                 extras = ', '.join(normalize_syllabus_code(c) for c in all_codes[1:])
-                log(f"     Additional codes (kept in chapter only): {extras}",
-                    "INFO", True)
+                log(f"     Additional codes: {extras}", "INFO", True)
+        else:
+            log(f"  Question {question.get('question_no', '?')}: "
+                f"No valid syllabus code found in chapter", "INFO", True)
     elif field_name == 'syllabus code':
         question['syllabus_code'] = field_content
         log(f"  Question {question.get('question_no', '?')}: Set syllabus code to {field_content}", "INFO", True)

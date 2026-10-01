@@ -552,26 +552,33 @@ def migrate_table():
     updated = 0
 
     def _extract_primary_code(chapter_text):
-        """Return the first syllabus code found in a chapter description,
-        normalised to numeric XX.YY form. Returns None if nothing matches."""
+        """Return the first valid syllabus code found in a chapter description,
+        normalised to numeric XX.YY form. Returns None if nothing matches.
+        Rejects non-code parens like (KYC), (Tippani), (NBA)."""
         if not chapter_text:
             return None
+
+        from .utils import normalize_syllabus_code, looks_like_syllabus_code
+
         # 1) Codes inside parentheses (any separator: &, /, comma)
         paren_groups = re.findall(r'\(([^)]+)\)', chapter_text)
         for group in paren_groups:
             for candidate in re.split(r'\s*[&/,]\s*', group.strip()):
                 c = candidate.strip()
-                if c:
+                if c and looks_like_syllabus_code(c):
                     return normalize_syllabus_code(c)
+
         # 2) Bare legacy code in the text (e.g. "P1-B6.3" without parens)
         m = re.search(r'P\d-[A-C]\d+\.\d+', chapter_text)
         if m:
             return normalize_syllabus_code(m.group(0))
+
         # 3) Bare numeric code (already in XX.YY form)
         m = re.search(r'\b(\d{1,2}\.\d{1,2})\b', chapter_text)
         if m:
             parts = m.group(1).split('.')
             return '.'.join(p.zfill(2) for p in parts)
+
         return None
 
     for qid, chapter in rows:
