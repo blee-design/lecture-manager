@@ -3154,25 +3154,28 @@ def advanced_search_interactive():
                             found = [q for q in found
                                      if value.lower() in (q.get(key) or '').lower()]
 
-                    print(f"\n--- {len(found)} QUESTION(S) SELECTED ---")
-                    for r in found:
-                        preview = _short_preview(
-                            r.get('nepali_transcription')
-                            or r.get('english_transcription') or '', 55
-                        )
-                        print(f"  {r['id']:>5} | "
-                              f"{(r.get('question_date') or ''):<10} | "
-                              f"{(r.get('institution') or '')[:20]:<20} | "
-                              f"{(r.get('subject') or '')[:25]:<25} | "
-                              f"Q{r.get('question_number') or ''}")
-                        print(f"        {preview}")
+                    def _print_search_list():
+                        print(f"\n--- {len(found)} QUESTION(S) SELECTED ---")
+                        for r in found:
+                            preview = _short_preview(
+                                r.get('nepali_transcription')
+                                or r.get('english_transcription') or '', 55
+                            )
+                            print(f"  {r['id']:>5} | "
+                                  f"{(r.get('question_date') or ''):<10} | "
+                                  f"{(r.get('institution') or '')[:20]:<20} | "
+                                  f"{(r.get('subject') or '')[:25]:<25} | "
+                                  f"Q{r.get('question_number') or ''}")
+                            print(f"        {preview}")
 
-                    if missing:
-                        print_colored(
-                            f"[!] Not found: {missing[:20]}"
-                            + (" ..." if len(missing) > 20 else ""),
-                            COLORS.YELLOW,
-                        )
+                        if missing:
+                            print_colored(
+                                f"[!] Not found: {missing[:20]}"
+                                + (" ..." if len(missing) > 20 else ""),
+                                COLORS.YELLOW,
+                            )
+
+                    _print_search_list()
 
                     while True:
                         cid = input(color_text(
@@ -3186,6 +3189,12 @@ def advanced_search_interactive():
                         q = get_question_by_id(int(cid))
                         if q:
                             _display_single_question(q)
+                            # Pause so the user can read the question, then
+                            # re-print the results list before the next prompt.
+                            input(color_text(
+                                "\nPress Enter to return to the list...",
+                                COLORS.MAGENTA))
+                            _print_search_list()
                         else:
                             print_colored(f"[!] ID {cid} not found.", COLORS.RED)
                     continue
