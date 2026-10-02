@@ -3050,6 +3050,112 @@ def view_whole_paper_interactive():
                             COLORS.MAGENTA)).strip().lower() == 'y'
     _display_paper(results, show_answers=show)
 
+def _search_results_view_loop(results):
+    """
+    Show a numbered list of search results, let the user view any by ID.
+    After viewing a question, press Enter and the list re-prints so the
+    user doesn't have to remember IDs.
+    """
+    def _print_list():
+        print(f"\n--- SEARCH RESULTS ({len(results)} matches) ---")
+        for r in results:
+            preview = _short_preview(
+                r.get('nepali_transcription') or r.get('english_transcription') or '',
+                55,
+            )
+            print(f"  {r['id']:>5} | "
+                  f"{(r.get('question_date') or ''):<10} | "
+                  f"{(r.get('institution') or '')[:20]:<20} | "
+                  f"{(r.get('subject') or '')[:20]:<20} | "
+                  f"Q{r.get('question_number') or ''}")
+            print(f"        {preview}")
+        print(f"  Total: {len(results)} match"
+              f"{'es' if len(results) != 1 else ''}.")
+        print_colored(
+            "  Commands: <ID> view  ·  Enter/b back  ·  q quit",
+            COLORS.WHITE,
+        )
+
+    _print_list()
+    while True:
+        choice_id = input(color_text(
+            "\nEnter ID to view (Enter/b/q = back to search): ",
+            COLORS.MAGENTA)).strip().lower()
+        if choice_id in ('', 'b', 'back', 'q', 'quit'):
+            return
+        if choice_id == '0':
+            return
+        if not choice_id.isdigit():
+            print_colored("[!] Enter a numeric ID, or press Enter to return.",
+                          COLORS.RED)
+            continue
+        q = get_question_by_id(int(choice_id))
+        if not q:
+            print_colored(f"[!] ID {choice_id} not found.", COLORS.RED)
+            continue
+        _display_single_question(q)
+        # Pause, then re-print the list so the user can pick the next ID
+        input(color_text("\nPress Enter to return to the list...",
+                         COLORS.MAGENTA))
+        _print_list()
+
+def _advanced_search_preview(criteria, max_preview=3):
+    """
+    Show live count + small preview of the current advanced-search criteria.
+    Runs the same filter pipeline that the Search action will run, so what
+    you see is exactly what will match.
+    """
+    preview_kwargs = {}
+    for f in ('date', 'institution', 'level', 'alias', 'paper',
+              'group', 'subject', 'question_number', 'chapter',
+              'syllabus_code'):
+        v = (criteria.get(f) or '').strip()
+        if v:
+            preview_kwargs[f] = v
+
+    has_id   = bool((criteria.get('id') or '').strip())
+    has_type = bool((criteria.get('type') or '').strip())
+    has_exam = bool((criteria.get('exam_type') or '').strip())
+
+    if not (preview_kwargs or has_id or has_type or has_exam):
+        print_colored("[i] No criteria set.", COLORS.BLUE)
+        return
+
+    try:
+        results = get_questions_by_criteria(**preview_kwargs)
+    except Exception as e:
+        print_colored(f"[i] Preview unavailable: {e}", COLORS.YELLOW)
+        return
+
+    if has_type:
+        results = [r for r in results
+                   if (r.get('type') or '').lower() == criteria['type'].lower()]
+    if has_exam:
+        results = [r for r in results
+                   if (r.get('exam_type') or 'open').lower() == criteria['exam_type'].lower()]
+    if has_id:
+        id_set = _parse_id_list(criteria['id'])
+        results = [r for r in results if r.get('id') in id_set]
+
+    total = len(results)
+    print_colored(f"[i] {total} question(s) match current criteria.", COLORS.BLUE)
+
+    if 0 < total <= 5:
+        print(f"\n  {color_text('Preview:', COLORS.CYAN)}")
+        for r in results[:max_preview]:
+            preview = _short_preview(
+                r.get('nepali_transcription') or r.get('english_transcription') or '',
+                50,
+            )
+            print(f"  {r['id']:>5} | "
+                  f"{(r.get('question_date') or ''):<10} | "
+                  f"{(r.get('institution') or '')[:22]:<22} | "
+                  f"{(r.get('subject') or '')[:22]:<22} | "
+                  f"Q{r.get('question_number') or ''}")
+            print(f"        {preview}")
+        if total > max_preview:
+            print_colored(f"  ... and {total - max_preview} more", COLORS.YELLOW)
+
 def advanced_search_interactive():
     print("\n" + "═" * 50)
     print_colored("  ADVANCED SEARCH", COLORS.CYAN, bold=True)
@@ -3092,6 +3198,9 @@ def advanced_search_interactive():
                 display = color_text(display_val, COLORS.GREEN)
             print(f"  {i:2}. {display_name:18}: {display}")
         print("─" * 50)
+        # Live preview — count + sample of matching questions
+        _advanced_search_preview(criteria)
+        print()
         print("  90. " + color_text("Search with current criteria", COLORS.CYAN, bold=True))
         print("  0. " + color_text("Return to Question Bank menu", COLORS.YELLOW))
         choice = input(color_text(f"\nChoose a field to edit (1-{len(fields)}), 90 to search, or 0 to return: ", COLORS.MAGENTA)).strip()
@@ -3115,6 +3224,8 @@ def advanced_search_interactive():
                         q = get_question_by_id(only_id)
                         if q:
                             _display_single_question(q)
+                            input(color_text("\nPress Enter to continue...",
+                                             COLORS.MAGENTA))
                         else:
                             print_colored(
                                 f"[!] Question ID {only_id} not found.",
@@ -3250,31 +3361,10 @@ def advanced_search_interactive():
             if len(results) == 1:
                 full_q = get_question_by_id(results[0]['id'])
                 _display_single_question(full_q)
+                input(color_text("\nPress Enter to continue...",
+                                 COLORS.MAGENTA))
             else:
-                print(f"\n--- SEARCH RESULTS ({len(results)} matches) ---")
-                for r in results:
-                    preview = _short_preview(
-                        r.get('nepali_transcription') or r.get('english_transcription') or '', 55
-                    )
-                    print(f"  {r['id']:3} | {r['question_date']} | {r['institution'][:20]:20} | {r['subject'][:20]:20} | {r['chapter'][:15]:15} | Q{r['question_number']} | {r.get('type', 'essay'):10}")
-                    print(f"      {preview}")
-                print(f"  Total: {len(results)} matches.")
-                while True:
-                    choice_id = input(color_text(
-                        "\nEnter ID to view (Enter/b/q = back to search): ",
-                        COLORS.MAGENTA)).strip().lower()
-                    if choice_id in ('', 'b', 'back', 'q', 'quit'):
-                        break
-                    if not choice_id.isdigit():
-                        print_colored("[!] Enter a numeric ID, or press Enter to return.", COLORS.RED)
-                        continue
-                    if int(choice_id) == 0:
-                        break
-                    q = get_question_by_id(int(choice_id))
-                    if q:
-                        _display_single_question(q)
-                    else:
-                        print_colored(f"[!] ID {choice_id} not found.", COLORS.RED)
+                _search_results_view_loop(results)
             continue
 
         elif choice == '0':
