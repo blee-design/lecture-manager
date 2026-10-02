@@ -3079,12 +3079,14 @@ def _search_results_view_loop(results):
     _print_list()
     while True:
         choice_id = input(color_text(
-            "\nEnter ID to view (Enter/b/q = back to search): ",
+            "\nEnter ID to view (Enter/b = back, q = quit): ",
             COLORS.MAGENTA)).strip().lower()
-        if choice_id in ('', 'b', 'back', 'q', 'quit'):
-            return
+        if choice_id in ('', 'b', 'back'):
+            return 'back'
+        if choice_id in ('q', 'quit', 'exit'):
+            return 'quit'
         if choice_id == '0':
-            return
+            return 'back'
         if not choice_id.isdigit():
             print_colored("[!] Enter a numeric ID, or press Enter to return.",
                           COLORS.RED)
@@ -3292,10 +3294,12 @@ def advanced_search_interactive():
 
                     while True:
                         cid = input(color_text(
-                            "\nEnter ID to view (Enter to return): ",
-                            COLORS.MAGENTA)).strip()
-                        if cid in ('', 'b', 'q'):
+                            "\nEnter ID to view (Enter/b = back, q = quit): ",
+                            COLORS.MAGENTA)).strip().lower()
+                        if cid in ('', 'b', 'back'):
                             break
+                        if cid in ('q', 'quit', 'exit'):
+                            return
                         if not cid.isdigit():
                             print_colored("[!] Enter a numeric ID.", COLORS.RED)
                             continue
@@ -3359,7 +3363,9 @@ def advanced_search_interactive():
                 input(color_text("\nPress Enter to continue...",
                                  COLORS.MAGENTA))
             else:
-                _search_results_view_loop(results)
+                action = _search_results_view_loop(results)
+                if action == 'quit':
+                    return
             continue
 
         elif choice == '0':
