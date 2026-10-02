@@ -635,7 +635,8 @@ def _get_filtered_questions_interactive():
 
     filters = {
         'id': '', 'date': '', 'institution': '', 'level': '', 'alias': '',
-        'paper': '', 'group': '', 'subject': '', 'chapter': '', 'type': '',
+        'paper': '', 'source': '', 'group': '', 'subject': '',
+        'chapter': '', 'type': '',
     }
 
     display_labels = {
@@ -645,6 +646,7 @@ def _get_filtered_questions_interactive():
         'level': 'Level',
         'alias': 'Alias (role)',
         'paper': 'Paper',
+        'source': 'Source  (e.g. NRB L6 Paper I)',
         'group': 'Group',
         'subject': 'Subject',
         'chapter': 'Chapter',
@@ -659,7 +661,7 @@ def _get_filtered_questions_interactive():
             if ids:
                 q['id_list'] = ids
         for k in ('date', 'institution', 'level', 'alias',
-                  'paper', 'group', 'subject', 'chapter', 'type'):
+                  'paper', 'source', 'group', 'subject', 'chapter', 'type'):
             if f.get(k):
                 q[k] = f[k]
         return q
@@ -4599,6 +4601,70 @@ def question_statistics_interactive():
     print(f"\n  Top subjects:")
     for r in by_subj: print(f"    {(r['subject'] or '')[:40]:<40}: {r['n']}")
 
+def _show_current_values(field_name, ids):
+    """
+    Display the distinct current values of `field_name` across the given
+    question IDs, with counts. Keeps the list short (top 10 by default).
+    """
+    if not ids:
+        return
+
+    # Backtick reserved words
+    col_expr = f"`{field_name}`" if field_name in ('group', 'type') else field_name
+    placeholders = ','.join(['%s'] * len(ids))
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            f"SELECT {col_expr} AS v, COUNT(*) AS n "
+            f"FROM questions WHERE id IN ({placeholders}) "
+            f"GROUP BY {col_expr} "
+            f"ORDER BY n DESC",
+            ids,
+        )
+        rows = cursor.fetchall()
+    except Exception as e:
+        print_colored(f"[i] Could not read current values: {e}", COLORS.YELLOW)
+        return
+    finally:
+        cursor.close()
+        conn.close()
+
+    print()
+    print_colored(f"  Current values of '{field_name}':", COLORS.CYAN, bold=True)
+    print_colored("  " + "─" * 60, COLORS.CYAN)
+
+    if not rows:
+        print_colored("  (no rows)", COLORS.YELLOW)
+    else:
+        # If everything is one value, show it inline
+        if len(rows) == 1:
+            v = rows[0]['v']
+            v_str = str(v) if v not in (None, '') else '(NULL / empty)'
+            print(f"  {v_str}   ({rows[0]['n']} row"
+                  f"{'s' if rows[0]['n'] != 1 else ''})")
+        else:
+            shown = 0
+            for r in rows:
+                v = r['v']
+                v_str = str(v) if v not in (None, '') else '(NULL / empty)'
+                if len(v_str) > 60:
+                    v_str = v_str[:57] + '…'
+                print(f"  • {v_str:<60}  {r['n']:>4}")
+                shown += 1
+                if shown >= 15:
+                    remaining = len(rows) - shown
+                    if remaining > 0:
+                        print_colored(
+                            f"  … and {remaining} more distinct value(s)",
+                            COLORS.YELLOW,
+                        )
+                    break
+
+    print_colored("  " + "─" * 60, COLORS.CYAN)
+    print()
+
 def _bulk_update_filtered():
     """
     Filter questions via the interactive filter menu, then apply an
@@ -4661,6 +4727,9 @@ def _bulk_update_filtered():
         return
 
     field_name, kind = UPDATABLE[fidx - 1]
+
+    # ---------- Show current value distribution ----------
+    _show_current_values(field_name, ids)
 
     # ---------- Step 3: new value ----------
     if kind == 'menu_exam':
