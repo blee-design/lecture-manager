@@ -3302,16 +3302,11 @@ def advanced_search_interactive():
                         q = get_question_by_id(int(cid))
                         if q:
                             _display_single_question(q)
-                            # Pause so the user can read the question, then
-                            # re-print the results list before the next prompt.
-                            input(color_text(
-                                "\nPress Enter to return to the list...",
-                                COLORS.MAGENTA))
-                            _print_search_list()
+                            input(color_text("\nPress Enter to continue...",
+                                             COLORS.MAGENTA))
                         else:
                             print_colored(f"[!] ID {cid} not found.", COLORS.RED)
                     continue
-                # Malformed ID → ignore and fall through to normal filters
 
 
             # Family mode is always on — '1' matches 1, 01, 1a, 1b, 1(a), 1.5
