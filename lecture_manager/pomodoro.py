@@ -26,6 +26,7 @@ SESSION_TYPES = [
     "pretest",
     "exam",
     "quiz",
+    "newspaper",
 ]
 
 def load_quotes():
