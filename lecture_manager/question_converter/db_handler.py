@@ -636,6 +636,14 @@ def import_from_file(file_path, format, source=None, args=None):
     else:
         raise ValueError(f"Unsupported import format: {format}")
 
+    # --- Sort by date (oldest first) so DB ids follow chronology ---
+    # Questions with no date fall to the end, keeping their file order.
+    def _date_sort_key(q):
+        d = (q.get('question_date') or '').strip()
+        return (d == '', d)   # non-empty dates first, then empty
+
+    questions.sort(key=_date_sort_key)
+
     # --- Apply question filter if specified ---
     if args.questions:
         original_count = len(questions)
