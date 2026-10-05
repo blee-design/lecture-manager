@@ -215,10 +215,18 @@ def insert_question(q_dict, source=None, force=False):
         get_or_create_passage,
     )
 
-    # Resolve passage first (transient _passage_text → passage_id)
+    # Resolve passage first.
+    # Preferred: _passage_text (deduped via content hash; TXT/JSON/XML path).
+    # Fallback: numeric passage_id from a CSV restore — trusting it points
+    # at a passage row that exists in this DB.
     passage_id = None
     if q_dict.get('_passage_text'):
         passage_id = get_or_create_passage(q_dict['_passage_text'])
+    elif q_dict.get('passage_id'):
+        try:
+            passage_id = int(q_dict['passage_id'])
+        except (ValueError, TypeError):
+            passage_id = None
 
     def clean_value(val):
         if val is None:
@@ -538,7 +546,7 @@ def get_questions(filters=None):
             'type': row.get('type', 'essay'),  # default – will be overridden if options/pairs exist
             'general_feedback': row.get('general_feedback') or '',
             'grade': row.get('marks') or 1,
-            'penalty': 0,
+            'penalty': row.get('penalty') or 0,
             'fraction_correct': row.get('fraction_correct', 100),
             'fraction_wrong': row.get('fraction_wrong', -20),
             'shuffle_answers': row.get('shuffle_answers', True),

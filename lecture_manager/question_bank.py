@@ -4073,6 +4073,7 @@ def import_questions_csv():
             'english_transcription': row.get('english_transcription'),
             'notes': row.get('notes'),
             'source': row.get('source'),
+            'syllabus_code': row.get('syllabus_code'),
             'type': row.get('type', 'essay'),
             'grade': row.get('grade', 1),
             'lines': row.get('lines', 15),
