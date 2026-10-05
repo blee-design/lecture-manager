@@ -205,6 +205,16 @@ def create_json_output(questions, output_file, verbose=False):
         else:  # essay
             log(f"Writing Question {i}: Essay (Grade: {json_q['grade']})", "INFO", verbose)
 
+        # ---- Inline passage text so JSON round-trips keep the link ----
+        pid = q.get('passage_id')
+        if pid:
+            from ..question_bank import get_passage
+            _p = get_passage(pid)
+            if _p:
+                json_q['_passage_text'] = _p['content']
+                if _p.get('title'):
+                    json_q['_passage_title'] = _p['title']
+
         # Convert Decimal, datetime, etc. to JSON-safe types
         json_q = sanitize_for_json(json_q)
         json_data.append(json_q)

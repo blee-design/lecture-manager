@@ -1511,6 +1511,9 @@ def _display_paper(questions, show_answers=False):
                 if marks and str(marks).isdigit():
                     line += f"  {color_text(f'[{marks} marks]', COLORS.YELLOW)}"
                 line += f"  {color_text(f'[{qtype}]', COLORS.BLUE)}"
+                _code = (q.get('syllabus_code') or '').strip()
+                if _code:
+                    line += f"  {color_text(f'[{_code}]', COLORS.MAGENTA)}"
                 print(line)
 
                 nep = html_to_terminal(q.get('nepali_transcription') or '').strip()
@@ -3917,7 +3920,8 @@ def export_questions_csv():
         'response_lines', 'attachments', 'filetypes', 'maxbytes',
         'grader_info',
         'penalty',
-        'feedback_true', 'feedback_false'
+        'feedback_true', 'feedback_false',
+        'passage_id',
     ]
 
     data = []
@@ -4092,6 +4096,7 @@ def import_questions_csv():
             'options': row.get('options_json'),
             'pairs': row.get('pairs_json'),
             'hints': row.get('hints_json'),
+            'passage_id': row.get('passage_id'),
         }
         q_dict = {k: v for k, v in q_dict.items() if v is not None}
 

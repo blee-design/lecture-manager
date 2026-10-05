@@ -484,7 +484,7 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
                 if c and looks_like_syllabus_code(c):
                     all_codes.append(c)
 
-        if all_codes:
+        if all_codes and not question.get('syllabus_code'):
             primary = normalize_syllabus_code(all_codes[0])
             question['syllabus_code'] = primary
             log(f"  Question {question.get('question_no', '?')}: "
@@ -730,14 +730,15 @@ def parse_text_file(file_path, args):
         # Context-supplied chapter bypasses save_field_to_question(), so the
         # syllabus_code extraction doesn't run. Re-do it here if needed.
         if question_dict.get('chapter') and not question_dict.get('syllabus_code'):
+            from ..utils import normalize_syllabus_code, looks_like_syllabus_code
             ctx_chapter = question_dict['chapter']
             ctx_groups = re.findall(r'\(([^)]+)\)', ctx_chapter)
             ctx_codes = []
             for g in ctx_groups:
                 ctx_codes.extend(re.split(r'\s*[&/,]\s*', g.strip()))
             ctx_codes = [c.strip() for c in ctx_codes if c.strip()]
+            ctx_codes = [c for c in ctx_codes if looks_like_syllabus_code(c)]
             if ctx_codes:
-                from ..utils import normalize_syllabus_code
                 question_dict['syllabus_code'] = normalize_syllabus_code(ctx_codes[0])
 
         # Process field lines using save_field_to_question

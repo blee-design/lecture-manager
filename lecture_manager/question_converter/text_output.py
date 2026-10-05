@@ -30,7 +30,7 @@ def create_text_output(questions, output_file, verbose=False):
             passage_content[pid] = p['content']
 
     metadata_fields = [
-        ('question_date', 'Date'),
+        ('date', 'Date'),
         ('institution', 'Institution'),
         ('level', 'Level'),
         ('alias', 'Alias'),
@@ -38,6 +38,7 @@ def create_text_output(questions, output_file, verbose=False):
         ('group', 'Group'),
         ('subject', 'Subject'),
         ('chapter', 'Chapter'),
+        ('syllabus_code', 'Syllabus Code'),
         ('marks', 'Marks'),
         ('notes', 'Notes'),
         ('source', 'Source'),

@@ -87,7 +87,8 @@ def map_paper_value(paper_str, level=None):
         'third paper':      'paper_iii',
         'third paper: research methodologies, ict and banking laws & regulation': 'paper_iii',
     }
-    return legacy.get(raw)
+    raw_normalised = re.sub(r'\s+', ' ', raw.strip()).lower()
+    return legacy.get(raw_normalised)
 
 def _compute_marks(q_dict):
     """
@@ -560,6 +561,8 @@ def get_questions(filters=None):
             'notes': row.get('notes') or '',
             'source': row.get('source') or '',
             'exam_type': row.get('exam_type') or 'open',
+            'syllabus_code': row.get('syllabus_code') or '',
+            'passage_id':    row.get('passage_id'),
         }
 
         # Fetch options

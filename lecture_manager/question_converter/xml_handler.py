@@ -11,10 +11,20 @@ from .exceptions import ConverterError, ParseError, ValidationError, IOError
 VALID_QUESTION_TYPES = ["multichoice", "essay", "truefalse", "matching"]
 
 # -------------------- HELPER FUNCTIONS (defined first) --------------------
-def create_name_element(doc, index):
+def create_name_element(doc, index, q=None):
     el = doc.createElement("name")
     text_name = doc.createElement("text")
-    text_name.appendChild(doc.createTextNode(f"Question No. {index:03d}"))
+    label = f"Question No. {index:03d}"
+    if q:
+        bits = []
+        if q.get('paper'):         bits.append(q['paper'])
+        if q.get('syllabus_code'): bits.append(q['syllabus_code'])
+        if q.get('source'):        bits.append(q['source'])
+        if bits:
+            label += " — " + " | ".join(bits)
+        if len(label) > 250:
+            label = label[:247] + "..."
+    text_name.appendChild(doc.createTextNode(label))
     el.appendChild(text_name)
     return el
 
@@ -47,7 +57,7 @@ def create_matching_question(doc, q, index):
     question_elem.setAttribute("type", "matching")
     
     # Name
-    question_elem.appendChild(create_name_element(doc, index))
+    question_elem.appendChild(create_name_element(doc, index, q))
     
     # Question text
     question_elem.appendChild(create_text_element_cdata(doc, "questiontext", q['text']))
@@ -146,7 +156,7 @@ def create_matching_question(doc, q, index):
 def create_mcq_question(doc, q, index):
     question_elem = doc.createElement("question")
     question_elem.setAttribute("type","multichoice")
-    question_elem.appendChild(create_name_element(doc,index))
+    question_elem.appendChild(create_name_element(doc,index, q))
 
     # Question text with CDATA
     qtext = doc.createElement("questiontext")
@@ -187,7 +197,7 @@ def create_mcq_question(doc, q, index):
 def create_essay_question(doc, q, index):
     question_elem = doc.createElement("question")
     question_elem.setAttribute("type","essay")
-    question_elem.appendChild(create_name_element(doc,index))
+    question_elem.appendChild(create_name_element(doc,index, q))
 
     # Question text
     question_elem.appendChild(create_text_element_cdata(doc,"questiontext",q['text']))
@@ -244,7 +254,7 @@ def create_truefalse_question(doc, q, index):
     question_elem.setAttribute("type", "truefalse")
     
     # Name
-    question_elem.appendChild(create_name_element(doc, index))
+    question_elem.appendChild(create_name_element(doc, index, q))
     
     # Question text
     question_elem.appendChild(create_text_element_cdata(doc, "questiontext", q['text']))
@@ -442,6 +452,50 @@ def xml_to_questions(input_file, verbose=False):
                         "subquestion": subq_text,
                         "answer": answer_text
                     })
+
+            # ---- idnumber: recover paper / level / syllabus_code ----
+            idn_el = q_elem.getElementsByTagName("idnumber")
+            if idn_el and idn_el[0].firstChild:
+                idn = idn_el[0].firstChild.data.strip()
+                if idn:
+                    from .constants import C  # already imported at top
+                    for token in idn.split("|"):
+                        token = token.strip()
+                        if not token:
+                            continue
+                        # Paper key: known set + heuristic prefixes
+                        if (token in ('paper_i', 'paper_ii', 'paper_iii',
+                                    'pretest', 'l4_pretest', 'l5_pretest',
+                                    'l6_pretest')
+                                or token.startswith('paper_')
+                                or re.match(r'^l\d+_', token)):
+                            question['paper'] = token
+                        # Level: "L6", "L4"
+                        elif re.match(r'^L\d{1,2}$', token):
+                            question['level'] = token[1:]
+                        # Syllabus code: "04.02"
+                        elif re.match(r'^\d{1,2}\.\d{1,2}$', token):
+                            question['syllabus_code'] = token
+
+            # ---- tags: recover source / exam_type / chapter / group / subject / institution / alias ----
+            tags_root = q_elem.getElementsByTagName("tags")
+            if tags_root:
+                for tag_el in tags_root[0].getElementsByTagName("tag"):
+                    t_nodes = tag_el.getElementsByTagName("text")
+                    if not (t_nodes and t_nodes[0].firstChild):
+                        continue
+                    tag_val = t_nodes[0].firstChild.data
+                    key, sep, val = tag_val.partition(":")
+                    if not sep:
+                        continue
+                    val = val.strip()
+                    if key == 'source':     question['source'] = val
+                    elif key == 'exam':     question['exam_type'] = val
+                    elif key == 'chapter':  question['chapter'] = val
+                    elif key == 'group':    question['group'] = val
+                    elif key == 'subject':  question['subject'] = val
+                    elif key == 'inst':     question['institution'] = val
+                    elif key == 'alias':    question['alias'] = val
             
             # Parse hints
             question["hints"] = []
@@ -662,6 +716,39 @@ def create_moodle_xml(questions, output_file, verbose=False):
         else:
             question_elem = create_essay_question(doc, q, i)
             log(f"Question {i}: Created essay element", "INFO", verbose)
+
+        # ---- idnumber: Moodle preserves this verbatim, 255-char cap ----
+        idn_bits = []
+        if q.get('paper'):         idn_bits.append(str(q['paper']))
+        if q.get('level'):         idn_bits.append(f"L{q['level']}")
+        if q.get('syllabus_code'): idn_bits.append(str(q['syllabus_code']))
+        idn_value = "|".join(idn_bits)[:255]
+        if idn_value:
+            idn_el = doc.createElement("idnumber")
+            idn_el.appendChild(doc.createTextNode(idn_value))
+            question_elem.appendChild(idn_el)
+
+        # ---- tags: Moodle 3.0+ preserves these and indexes them ----
+        tag_pairs = [
+            ('source',   q.get('source')),
+            ('exam',     q.get('exam_type') if q.get('exam_type') not in (None, '', 'open') else None),
+            ('chapter',  q.get('chapter')),
+            ('group',    q.get('group')),
+            ('subject',  q.get('subject')),
+            ('inst',     q.get('institution')),
+            ('alias',    q.get('alias')),
+        ]
+        tag_pairs = [(k, str(v).strip()) for k, v in tag_pairs if v]
+        if tag_pairs:
+            tags_el = doc.createElement("tags")
+            for key, val in tag_pairs:
+                # Moodle tags are case-insensitive; keep them short
+                tag_el = doc.createElement("tag")
+                t_el = doc.createElement("text")
+                t_el.appendChild(doc.createTextNode(f"{key}:{val[:120]}"))
+                tag_el.appendChild(t_el)
+                tags_el.appendChild(tag_el)
+            question_elem.appendChild(tags_el)
 
         # Append the question to the quiz
         quiz.appendChild(question_elem)
