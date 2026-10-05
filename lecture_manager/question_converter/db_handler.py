@@ -304,6 +304,13 @@ def insert_question(q_dict, source=None, force=False):
             }
             # Remove None values so defaults are used
             update_kwargs = {k: v for k, v in update_kwargs.items() if v is not None}
+            # Also drop empty options/pairs/hints lists. An empty list means
+            # "the source had none" (typical for essays), but passing it
+            # through forces update_question() into the delete+reinsert
+            # branch, which always reports "updated" even when nothing changed.
+            for _k in ('options', 'pairs', 'hints'):
+                if _k in update_kwargs and not update_kwargs[_k]:
+                    del update_kwargs[_k]
             result = update_question(dup_id, **update_kwargs)
             if result == 'updated':
                 return 'updated', dup_id
