@@ -7,6 +7,14 @@ from .utils import print_colored, COLORS
 
 TABLE_NAME = 'youtube_lectures'
 
+# ------------------------------------------------------------
+# Schema versioning
+# ------------------------------------------------------------
+# Bump this whenever you add a new migration block below.
+# Existing users are auto-adopted at this version on first run
+# so migrations do NOT replay on every startup.
+SCHEMA_VERSION = 1
+
 # ---------- Collation unification ----------
 # MariaDB 11.4+ defaults utf8mb4 to utf8mb4_uca1400_ai_ci. Our app's tables
 # were written assuming utf8mb4_unicode_ci (Moodle, question bank, etc.), so
@@ -332,7 +340,102 @@ def create_table():
     conn.close()
     print_colored(f"[✓] Tables ready.", COLORS.GREEN)
 
+# ---------------- Schema version helpers ----------------
+def _ensure_schema_version_table(cursor):
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS schema_version (
+        id INT PRIMARY KEY DEFAULT 1,
+        version INT NOT NULL DEFAULT 0,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """)
+
+
+def _read_schema_version(cursor):
+    """Return (row_exists, version)."""
+    cursor.execute("SELECT version FROM schema_version WHERE id = 1")
+    row = cursor.fetchone()
+    if row is None:
+        return False, 0
+    return True, row[0]
+
+
+def _write_schema_version(cursor, version):
+    cursor.execute(
+        "REPLACE INTO schema_version (id, version) VALUES (1, %s)",
+        (version,),
+    )
+
+
 def migrate_table():
+    """
+    Run schema migrations only when needed.
+
+    Fast path: read schema_version; if it's already SCHEMA_VERSION,
+    return without touching anything else. This replaces the old
+    behaviour of replaying 60+ SHOW queries on every startup.
+
+    Legacy path: existing installs (tables present, no version row)
+    run the baseline migrations one last time, get stamped with the
+    current version, and skip on every subsequent launch.
+
+    Fresh path: brand-new DBs run the baseline once, then get stamped.
+    """
+    conn = get_connection()
+    cursor = conn.cursor(buffered=True)
+
+    try:
+        _ensure_schema_version_table(cursor)
+        conn.commit()
+
+        row_exists, stored = _read_schema_version(cursor)
+
+        # ---- Legacy install detection ----
+        if not row_exists:
+            cursor.execute("SHOW TABLES LIKE 'youtube_lectures'")
+            if cursor.fetchone() is not None:
+                print_colored(
+                    "[i] Legacy install — running baseline migrations once "
+                    "(this will not happen again).",
+                    COLORS.BLUE,
+                )
+                _apply_migrations()
+                _write_schema_version(cursor, SCHEMA_VERSION)
+                conn.commit()
+                print_colored(
+                    f"[✓] Schema stamped at v{SCHEMA_VERSION}. "
+                    f"Future startups will skip migrations.",
+                    COLORS.GREEN,
+                )
+                return
+            # Truly fresh — fall through and let the range run.
+            stored = 0
+
+        # ---- Already current ----
+        if stored >= SCHEMA_VERSION:
+            return
+
+        # ---- Migration range ----
+        # Today there is only one block (baseline v1). When you add a
+        # new migration, append a new block guarded by `if stored < N`
+        # and bump SCHEMA_VERSION at the top of the file.
+        if stored < 1:
+            print_colored("[i] Applying baseline schema (v1)...", COLORS.BLUE)
+            _apply_migrations()
+            stored = 1
+
+        # if stored < 2:
+        #     _migrate_to_v2()          # <-- future migration
+        #     stored = 2
+
+        _write_schema_version(cursor, SCHEMA_VERSION)
+        conn.commit()
+        print_colored(f"[✓] Schema up to date (v{SCHEMA_VERSION}).", COLORS.GREEN)
+    finally:
+        cursor.close()
+        conn.close()
+
+def _apply_migrations():
     conn = get_connection()
     cursor = conn.cursor(buffered=True)
 
