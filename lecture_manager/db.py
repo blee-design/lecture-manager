@@ -7,13 +7,28 @@ from .utils import print_colored, COLORS
 
 TABLE_NAME = 'youtube_lectures'
 
-# ------------------------------------------------------------
-# Schema versioning
-# ------------------------------------------------------------
-# Bump this whenever you add a new migration block below.
-# Existing users are auto-adopted at this version on first run
-# so migrations do NOT replay on every startup.
-SCHEMA_VERSION = 1
+# =============================================================
+#  Schema management
+# =============================================================
+#  SCHEMA_VERSION is the CURRENT required schema version.
+#  MIGRATIONS is the ordered list of (version, name, fn) that
+#  get there, applied in sequence. Add a new tuple + bump
+#  SCHEMA_VERSION whenever you ship a schema change.
+#
+#  Users never touch this. It runs on startup and skips itself
+#  when the DB is already current.
+# =============================================================
+SCHEMA_VERSION = 2
+
+def _migration_v2_add_foo(cursor):
+    cursor.execute("SHOW COLUMNS FROM questions LIKE 'foo'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE questions ADD COLUMN foo TEXT NULL")
+
+MIGRATIONS.append((2, "add_foo_column", _migration_v2_add_foo))
+
+# Populated below, after the migration functions are defined.
+MIGRATIONS = []
 
 # ---------- Collation unification ----------
 # MariaDB 11.4+ defaults utf8mb4 to utf8mb4_uca1400_ai_ci. Our app's tables
@@ -366,23 +381,191 @@ def _write_schema_version(cursor, version):
         (version,),
     )
 
-
-def migrate_table():
+# =============================================================
+#  Schema Manager
+# =============================================================
+class SchemaManager:
     """
-    Run schema migrations only when needed.
+    Zero-config schema versioning.
 
-    Fast path: read schema_version; if it's already SCHEMA_VERSION,
-    return without touching anything else. This replaces the old
-    behaviour of replaying 60+ SHOW queries on every startup.
+    On every startup the manager:
+      1. Creates its bookkeeping tables if needed.
+      2. Reads the current version.
+      3. Runs only the migrations the DB hasn't seen yet.
 
-    Legacy path: existing installs (tables present, no version row)
-    run the baseline migrations one last time, get stamped with the
-    current version, and skip on every subsequent launch.
+    Install types it auto-detects:
+      • fresh    — brand new DB, no tables yet
+      • legacy   — tables exist but no version record (pre-manager)
+      • managed  — version record exists; normal path
 
-    Fresh path: brand-new DBs run the baseline once, then get stamped.
+    All state lives in two small tables:
+
+      schema_version      — id=1, version INT, updated_at
+      schema_migrations   — one row per applied migration
+                            (version, name, applied_at, duration_ms)
     """
-    conn = get_connection()
-    cursor = conn.cursor(buffered=True)
+
+    def __init__(self, conn):
+        self.conn = conn
+        self.cursor = conn.cursor(buffered=True)
+
+    def close(self):
+        try:
+            self.cursor.close()
+        except Exception:
+            pass
+
+    # ---------- Bookkeeping tables ----------
+    def _ensure_bookkeeping(self):
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS schema_version (
+            id INT PRIMARY KEY DEFAULT 1,
+            version INT NOT NULL DEFAULT 0,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                        ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """)
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            version INT NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            duration_ms INT NOT NULL DEFAULT 0,
+            INDEX idx_version (version)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """)
+        self.conn.commit()
+
+    # ---------- Version I/O ----------
+    def get_version(self):
+        self.cursor.execute("SELECT version FROM schema_version WHERE id = 1")
+        row = self.cursor.fetchone()
+        return row[0] if row else None
+
+    def set_version(self, version):
+        self.cursor.execute(
+            "REPLACE INTO schema_version (id, version) VALUES (1, %s)",
+            (version,),
+        )
+        self.conn.commit()
+
+    # ---------- Detection ----------
+    def detect_install_type(self):
+        stored = self.get_version()
+        if stored is not None:
+            return "managed", stored
+
+        self.cursor.execute("SHOW TABLES LIKE 'youtube_lectures'")
+        if self.cursor.fetchone() is not None:
+            return "legacy", 0
+
+        return "fresh", 0
+
+    # ---------- Migration runner ----------
+    def run(self):
+        self._ensure_bookkeeping()
+        install_type, stored = self.detect_install_type()
+
+        # ----- FRESH INSTALL -----
+        # Tables were just created by create_table(). Run any migration
+        # marked "on_fresh=True" — usually none. Then stamp.
+        if install_type == "fresh":
+            print_colored(
+                "[✓] Fresh database — schema initialised.",
+                COLORS.GREEN,
+            )
+            self.set_version(SCHEMA_VERSION)
+            # Log what we stamped so the history is complete
+            self.cursor.execute("""
+                INSERT INTO schema_migrations (version, name, duration_ms)
+                VALUES (%s, %s, %s)
+            """, (SCHEMA_VERSION, "initial", 0))
+            self.conn.commit()
+            return
+
+        # ----- LEGACY INSTALL -----
+        # Tables exist but were created before the manager. Run the full
+        # baseline once (it's idempotent), then stamp. Future startups
+        # will fall into the managed path and be instant.
+        if install_type == "legacy":
+            print_colored(
+                "[i] Existing installation detected — running one-time "
+                "baseline migration. This won't happen again.",
+                COLORS.BLUE,
+            )
+            self._run_pending(0)
+            return
+
+        # ----- MANAGED INSTALL -----
+        if stored >= SCHEMA_VERSION:
+            return    # silent fast path
+        self._run_pending(stored)
+
+    def _run_pending(self, stored):
+        applied = 0
+        import time
+
+        for version, name, fn in MIGRATIONS:
+            if version <= stored:
+                continue
+            print_colored(
+                f"[i] Applying migration v{version}: {name}",
+                COLORS.BLUE,
+            )
+            t0 = time.time()
+            fn(self.cursor)
+            self.conn.commit()
+            duration_ms = int((time.time() - t0) * 1000)
+
+            self.cursor.execute("""
+                INSERT INTO schema_migrations
+                    (version, name, duration_ms)
+                VALUES (%s, %s, %s)
+            """, (version, name, duration_ms))
+            self.set_version(version)
+            applied += 1
+
+            print_colored(
+                f"[✓] Migration v{version} applied ({duration_ms} ms).",
+                COLORS.GREEN,
+            )
+
+        if applied == 0 and stored >= SCHEMA_VERSION:
+            return
+        if applied > 0:
+            print_colored(
+                f"[✓] Schema is now at v{SCHEMA_VERSION}.",
+                COLORS.GREEN,
+            )
+
+
+def _ensure_unified_collation(cursor):
+    """
+    Idempotent — cheap on healthy DBs (single INFORMATION_SCHEMA query
+    returns 0 rows and we exit immediately).
+    """
+    # (existing body — unchanged)
+    placeholders = ','.join(['%s'] * len(_APP_TABLES))
+    cursor.execute(f"""
+        SELECT TABLE_NAME, TABLE_COLLATION
+        FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN ({placeholders})
+          AND TABLE_COLLATION IS NOT NULL
+          AND TABLE_COLLATION <> %s
+    """, (*_APP_TABLES, _UNIFIED_COLLATION))
+    bad = cursor.fetchall()
+    if not bad:
+        return
+
+def _baseline_migration_v1(cursor):
+    """
+    The full historical migration that took the DB from v0 (pre-manager)
+    to v1 (current). Idempotent — safe to run multiple times.
+    """
+    # ---- Fix collation drift before anything else touches the schema ----
+    _ensure_unified_collation(cursor)
 
     try:
         _ensure_schema_version_table(cursor)
@@ -1256,9 +1439,38 @@ def _apply_migrations():
                           COLORS.YELLOW)
         print_colored("[✓] Added 'passage_id' to questions.", COLORS.GREEN)
 
-    conn.commit()
-    cursor.close()
-    conn.close()
+    # NO cursor.close() / conn.close() here — the SchemaManager owns
+    # the connection and will close it after all migrations run.
+
+def migrate_table():
+    """
+    Public entry point — called by main() and web.py at startup.
+    Delegates to SchemaManager, which is idempotent and fast when
+    the DB is already current.
+    """
+    conn = get_connection()
+    mgr = SchemaManager(conn)
+    try:
+        mgr.run()
+    except Exception as e:
+        print_colored(
+            f"[!] Schema migration failed: {e}",
+            COLORS.RED,
+        )
+        print_colored(
+            "[i] Your data is safe. Fix the error above and restart, "
+            "or run 'python -m lecture_manager.db --status' for details.",
+            COLORS.YELLOW,
+        )
+        raise
+    finally:
+        mgr.close()
+        conn.close()
+
+
+# Register the migrations AFTER both the function and the constant
+# exist. Order matters — this line must come after _baseline_migration_v1.
+MIGRATIONS.append((1, "baseline", _baseline_migration_v1))
 
 def ensure_subjects_populated():
     from .syllabus_config import is_configured
@@ -1318,3 +1530,74 @@ def get_any_media_record(identifier):
         return fb_row
 
     return None
+
+def _cli_status():
+    """Print a friendly schema report. Run: python -m lecture_manager.db --status"""
+    conn = get_connection()
+    mgr = SchemaManager(conn)
+    try:
+        mgr._ensure_bookkeeping()
+        install_type, stored = mgr.detect_install_type()
+
+        print()
+        print("═" * 60)
+        print("  Schema Status")
+        print("═" * 60)
+        print(f"  Install type    : {install_type}")
+        print(f"  DB version      : v{stored if stored is not None else 0}")
+        print(f"  Required version: v{SCHEMA_VERSION}")
+
+        if stored is not None and stored >= SCHEMA_VERSION:
+            print("  Status          : ✅ up to date")
+        elif install_type == "legacy":
+            print("  Status          : ⚠️  legacy — will migrate on next startup")
+        else:
+            print("  Status          : ⚠️  migrations pending")
+
+        print()
+        print("  Migration history:")
+        try:
+            mgr.cursor.execute("""
+                SELECT version, name, applied_at, duration_ms
+                FROM schema_migrations
+                ORDER BY version
+            """)
+            rows = mgr.cursor.fetchall()
+            if not rows:
+                print("    (no migrations recorded yet)")
+            for v, name, when, ms in rows:
+                print(f"    v{v:<4} {name:<24} {when}  ({ms} ms)")
+        except Exception:
+            print("    (history table not created yet)")
+
+        print("═" * 60)
+        print()
+    finally:
+        mgr.close()
+        conn.close()
+
+
+def _cli_reset():
+    """Force migrations to re-run next startup. Run: python -m lecture_manager.db --reset"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM schema_version")
+    conn.commit()
+    cursor.close()
+    conn.close()
+    print_colored(
+        "[✓] Schema version cleared. Migrations will re-run on next startup.",
+        COLORS.GREEN,
+    )
+
+
+if __name__ == "__main__":
+    import sys
+    if "--status" in sys.argv:
+        _cli_status()
+    elif "--reset" in sys.argv:
+        _cli_reset()
+    else:
+        print("Usage:")
+        print("  python -m lecture_manager.db --status   # show schema report")
+        print("  python -m lecture_manager.db --reset    # force re-migration")
