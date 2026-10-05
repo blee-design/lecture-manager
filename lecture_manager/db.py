@@ -18,14 +18,7 @@ TABLE_NAME = 'youtube_lectures'
 #  Users never touch this. It runs on startup and skips itself
 #  when the DB is already current.
 # =============================================================
-SCHEMA_VERSION = 2
-
-def _migration_v2_add_foo(cursor):
-    cursor.execute("SHOW COLUMNS FROM questions LIKE 'foo'")
-    if not cursor.fetchone():
-        cursor.execute("ALTER TABLE questions ADD COLUMN foo TEXT NULL")
-
-MIGRATIONS.append((2, "add_foo_column", _migration_v2_add_foo))
+SCHEMA_VERSION = 1
 
 # Populated below, after the migration functions are defined.
 MIGRATIONS = []
@@ -539,92 +532,13 @@ class SchemaManager:
                 COLORS.GREEN,
             )
 
-
-def _ensure_unified_collation(cursor):
-    """
-    Idempotent — cheap on healthy DBs (single INFORMATION_SCHEMA query
-    returns 0 rows and we exit immediately).
-    """
-    # (existing body — unchanged)
-    placeholders = ','.join(['%s'] * len(_APP_TABLES))
-    cursor.execute(f"""
-        SELECT TABLE_NAME, TABLE_COLLATION
-        FROM INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME IN ({placeholders})
-          AND TABLE_COLLATION IS NOT NULL
-          AND TABLE_COLLATION <> %s
-    """, (*_APP_TABLES, _UNIFIED_COLLATION))
-    bad = cursor.fetchall()
-    if not bad:
-        return
-
 def _baseline_migration_v1(cursor):
     """
-    The full historical migration that took the DB from v0 (pre-manager)
-    to v1 (current). Idempotent — safe to run multiple times.
+    Baseline migration (v1). Called by SchemaManager with the manager's
+    cursor. Idempotent — safe if re-run. Runs once per install.
     """
     # ---- Fix collation drift before anything else touches the schema ----
     _ensure_unified_collation(cursor)
-
-    try:
-        _ensure_schema_version_table(cursor)
-        conn.commit()
-
-        row_exists, stored = _read_schema_version(cursor)
-
-        # ---- Legacy install detection ----
-        if not row_exists:
-            cursor.execute("SHOW TABLES LIKE 'youtube_lectures'")
-            if cursor.fetchone() is not None:
-                print_colored(
-                    "[i] Legacy install — running baseline migrations once "
-                    "(this will not happen again).",
-                    COLORS.BLUE,
-                )
-                _apply_migrations()
-                _write_schema_version(cursor, SCHEMA_VERSION)
-                conn.commit()
-                print_colored(
-                    f"[✓] Schema stamped at v{SCHEMA_VERSION}. "
-                    f"Future startups will skip migrations.",
-                    COLORS.GREEN,
-                )
-                return
-            # Truly fresh — fall through and let the range run.
-            stored = 0
-
-        # ---- Already current ----
-        if stored >= SCHEMA_VERSION:
-            return
-
-        # ---- Migration range ----
-        # Today there is only one block (baseline v1). When you add a
-        # new migration, append a new block guarded by `if stored < N`
-        # and bump SCHEMA_VERSION at the top of the file.
-        if stored < 1:
-            print_colored("[i] Applying baseline schema (v1)...", COLORS.BLUE)
-            _apply_migrations()
-            stored = 1
-
-        # if stored < 2:
-        #     _migrate_to_v2()          # <-- future migration
-        #     stored = 2
-
-        _write_schema_version(cursor, SCHEMA_VERSION)
-        conn.commit()
-        print_colored(f"[✓] Schema up to date (v{SCHEMA_VERSION}).", COLORS.GREEN)
-    finally:
-        cursor.close()
-        conn.close()
-
-def _apply_migrations():
-    conn = get_connection()
-    cursor = conn.cursor(buffered=True)
-
-    # ---- Fix collation drift before anything else touches the schema ----
-    _ensure_unified_collation(cursor)
-    conn.commit()
 
     # Add paper column if missing
     cursor.execute("SHOW COLUMNS FROM youtube_lectures LIKE 'paper'")
@@ -876,7 +790,6 @@ def _apply_migrations():
             )
             updated += 1
 
-    conn.commit()
     print_colored(f"[✓] Backfilled {updated} syllabus codes from chapter field.", COLORS.GREEN)
 
     # ---------- Full‑text index for question search ----------
