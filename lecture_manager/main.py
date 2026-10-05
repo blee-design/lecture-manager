@@ -40,8 +40,9 @@ WEB_DEBUG = False
 #==============================================================================
 
 def show_banner():
+    from . import __version__
     width = 60
-    title = "YOUTUBE LECTURE MANAGER  v2.3.0"
+    title = f"LECTURE MANAGER  v{__version__}"
     subtitle = "Manage your lecture library with style"
     owner = "By Udaya Raj Joshi"
 
