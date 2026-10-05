@@ -296,20 +296,35 @@ def delete_paper(paper_id, cascade_subjects=False):
     cursor.close(); conn.close()
     return ok
 
-def add_chapter(subject_id, chapter_code, name, description=None, display_order=None):
-    """Insert a chapter under a subject. Returns chapter id or None."""
+def add_chapter(subject_id, chapter_code=None, name=None, description=None, display_order=None):
+    """Insert a chapter under a subject. Returns chapter id or None.
+
+    chapter_code is optional. When blank, the next free code is
+    auto-assigned (01, 02, 03, … within this subject).
+    """
     conn = get_connection()
     cursor = conn.cursor()
     try:
+        if chapter_code is None or not str(chapter_code).strip():
+            cursor.execute("""
+                SELECT COALESCE(MAX(CAST(chapter_code AS UNSIGNED)), 0)
+                FROM chapters
+                WHERE subject_id = %s AND chapter_code REGEXP '^[0-9]+$'
+            """, (subject_id,))
+            next_num = (cursor.fetchone()[0] or 0) + 1
+            chapter_code = f"{next_num:02d}"
+        else:
+            chapter_code = str(chapter_code).zfill(2)
+
         if display_order is None:
             cursor.execute("SELECT COALESCE(MAX(display_order), 0) FROM chapters WHERE subject_id = %s",
                            (subject_id,))
             display_order = (cursor.fetchone()[0] or 0) + 10
-        code = str(chapter_code).zfill(2)
+
         cursor.execute("""
             INSERT INTO chapters (subject_id, chapter_code, name, description, display_order)
             VALUES (%s, %s, %s, %s, %s)
-        """, (subject_id, code, name, description, display_order))
+        """, (subject_id, chapter_code, name, description, display_order))
         conn.commit()
         return cursor.lastrowid
     except Exception as e:
@@ -350,6 +365,17 @@ def add_subject(name, paper_key, chapter=None):
     conn = get_connection()
     cursor = conn.cursor()
     try:
+        # Auto-assign the next free numeric code when none is given.
+        if chapter is None or not str(chapter).strip():
+            cursor.execute("""
+                SELECT COALESCE(MAX(CAST(chapter AS UNSIGNED)), 0)
+                FROM subjects
+                WHERE paper = %s AND chapter REGEXP '^[0-9]+$'
+            """, (paper_key,))
+            next_num = (cursor.fetchone()[0] or 0) + 1
+            chapter = f"{next_num:02d}"
+        else:
+            chapter = str(chapter).zfill(2)
         cursor.execute("""
             INSERT INTO subjects (name, paper, chapter, active)
             VALUES (%s, %s, %s, 1)
@@ -360,8 +386,8 @@ def add_subject(name, paper_key, chapter=None):
         print_colored(f"[!] Could not add subject: {e}", COLORS.RED)
         return None
     finally:
-        cursor.close(); conn.close()
-
+        cursor.close()
+        conn.close()
 
 def update_subject(subject_id, **fields):
     allowed = {'name', 'paper', 'chapter', 'active'}

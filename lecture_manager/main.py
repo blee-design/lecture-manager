@@ -277,15 +277,12 @@ def syllabus_menu():
                 print_colored("[!] Invalid paper number.", COLORS.RED)
                 continue
             paper = papers[int(pi) - 1]
-            code = input("Subject code (e.g. 01, 02): ").strip()
-            if not code:
-                print_colored("[!] Subject code required.", COLORS.RED)
-                continue
             name = input("Subject name: ").strip()
             if not name:
                 print_colored("[!] Subject name required.", COLORS.RED)
                 continue
-            if SC.add_subject(name, paper['paper_key'], chapter=code):
+            code = input("Subject code (e.g. 01, 02 — blank to auto-assign): ").strip()
+            if SC.add_subject(name, paper['paper_key'], chapter=code or None):
                 print_colored(f"[✓] Subject '{name}' added under {paper['display_name']}.",
                               COLORS.GREEN)
                 reload_paper_cache()
@@ -856,14 +853,12 @@ def chapters_submenu(SC, reload_paper_cache, papers):
             _, subj = _pick_paper_and_subject()
             if not subj:
                 continue
-            code = input("Chapter code (e.g. 01, 02): ").strip()
-            if not code:
-                continue
             name = input("Chapter name: ").strip()
             if not name:
                 continue
+            code = input("Chapter code (e.g. 01, 02 — blank to auto-assign): ").strip()
             desc = input("Description (optional): ").strip() or None
-            if SC.add_chapter(subj["id"], code, name, description=desc):
+            if SC.add_chapter(subj["id"], code or None, name, description=desc):
                 print_colored("[✓] Chapter added.", COLORS.GREEN)
                 reload_paper_cache()
 
