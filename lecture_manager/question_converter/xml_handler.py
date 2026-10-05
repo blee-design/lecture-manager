@@ -347,6 +347,9 @@ def xml_to_questions(input_file, verbose=False):
             "grade": 1,
             "penalty": 0,
             "lines": 15,
+            "options": [],
+            "pairs": [],
+            "hints": [],
         }
         
         # Extract question number from name element
@@ -371,6 +374,24 @@ def xml_to_questions(input_file, verbose=False):
             text_node = text_elem[0].getElementsByTagName("text")
             if text_node:
                 question["text"] = text_node[0].firstChild.data if text_node[0].firstChild else ""
+                # If the combined text was "nepali\n\nenglish" (our export
+                # convention), split it back into the two columns. Detect
+                # by: first half has Devanagari, second half does not.
+                _sep_used = None
+                for _candidate in ("\n\n", "<br><br>", "<br/><br/>", "<br /><br />"):
+                    if _candidate in question["text"]:
+                        _sep_used = _candidate
+                        break
+                if _sep_used:
+                    _first, _sep, _second = question["text"].partition(_sep_used)
+                    _has_dev_first  = bool(re.search(r'[\u0900-\u097F]', _first))
+                    _has_dev_second = bool(re.search(r'[\u0900-\u097F]', _second))
+                    if _has_dev_first and not _has_dev_second:
+                        question["nepali_transcription"]  = _first.strip()
+                        question["english_transcription"] = _second.strip()
+                    elif _has_dev_second and not _has_dev_first:
+                        question["english_transcription"] = _first.strip()
+                        question["nepali_transcription"]  = _second.strip()
                 # Truncate for logging
                 text_preview = question["text"][:50] + "..." if len(question["text"]) > 50 else question["text"]
                 log(f"Question {idx}: {text_preview}", "INFO", verbose)
@@ -453,77 +474,83 @@ def xml_to_questions(input_file, verbose=False):
                         "answer": answer_text
                     })
 
-            # ---- idnumber: recover paper / level / syllabus_code ----
-            idn_el = q_elem.getElementsByTagName("idnumber")
-            if idn_el and idn_el[0].firstChild:
-                idn = idn_el[0].firstChild.data.strip()
-                if idn:
-                    from .constants import C  # already imported at top
-                    for token in idn.split("|"):
-                        token = token.strip()
-                        if not token:
-                            continue
-                        # Paper key: known set + heuristic prefixes
-                        if (token in ('paper_i', 'paper_ii', 'paper_iii',
-                                    'pretest', 'l4_pretest', 'l5_pretest',
-                                    'l6_pretest')
-                                or token.startswith('paper_')
-                                or re.match(r'^l\d+_', token)):
-                            question['paper'] = token
-                        # Level: "L6", "L4"
-                        elif re.match(r'^L\d{1,2}$', token):
-                            question['level'] = token[1:]
-                        # Syllabus code: "04.02"
-                        elif re.match(r'^\d{1,2}\.\d{1,2}$', token):
-                            question['syllabus_code'] = token
+        # ---- idnumber: recover paper / level / syllabus_code ----
+        idn_el = q_elem.getElementsByTagName("idnumber")
+        if idn_el and idn_el[0].firstChild:
+            idn = idn_el[0].firstChild.data.strip()
+            if idn:
+                from .constants import C  # already imported at top
+                for token in idn.split("|"):
+                    token = token.strip()
+                    if not token:
+                        continue
+                    # Paper key: known set + heuristic prefixes
+                    if (token in ('paper_i', 'paper_ii', 'paper_iii',
+                                'pretest', 'l4_pretest', 'l5_pretest',
+                                'l6_pretest')
+                            or token.startswith('paper_')
+                            or re.match(r'^l\d+_', token)):
+                        question['paper'] = token
+                    # Level: "L6", "L4"
+                    elif re.match(r'^L\d{1,2}$', token):
+                        question['level'] = token[1:]
+                    # Syllabus code: "04.02"
+                    elif re.match(r'^\d{1,2}\.\d{1,2}$', token):
+                        question['syllabus_code'] = token
 
-            # ---- tags: recover source / exam_type / chapter / group / subject / institution / alias ----
-            tags_root = q_elem.getElementsByTagName("tags")
-            if tags_root:
-                for tag_el in tags_root[0].getElementsByTagName("tag"):
-                    t_nodes = tag_el.getElementsByTagName("text")
-                    if not (t_nodes and t_nodes[0].firstChild):
-                        continue
-                    tag_val = t_nodes[0].firstChild.data
-                    key, sep, val = tag_val.partition(":")
-                    if not sep:
-                        continue
-                    val = val.strip()
-                    if key == 'source':     question['source'] = val
-                    elif key == 'exam':     question['exam_type'] = val
-                    elif key == 'chapter':  question['chapter'] = val
-                    elif key == 'group':    question['group'] = val
-                    elif key == 'subject':  question['subject'] = val
-                    elif key == 'inst':     question['institution'] = val
-                    elif key == 'alias':    question['alias'] = val
+        # ---- tags: recover source / exam_type / chapter / group / subject / institution / alias ----
+        tags_root = q_elem.getElementsByTagName("tags")
+        if tags_root:
+            for tag_el in tags_root[0].getElementsByTagName("tag"):
+                t_nodes = tag_el.getElementsByTagName("text")
+                if not (t_nodes and t_nodes[0].firstChild):
+                    continue
+                tag_val = t_nodes[0].firstChild.data
+                key, sep, val = tag_val.partition(":")
+                if not sep:
+                    continue
+                val = val.strip()
+                if key == 'source':     question['source'] = val
+                elif key == 'exam':     question['exam_type'] = val
+                elif key == 'chapter':  question['chapter'] = val
+                elif key == 'group':    question['group'] = val
+                elif key == 'subject':  question['subject'] = val
+                elif key == 'inst':     question['institution'] = val
+                elif key == 'alias':    question['alias'] = val
+                elif key == 'marks':
+                    try:
+                        question['marks'] = int(val)
+                    except (ValueError, TypeError):
+                        pass
+                elif key == 'notes':    question['notes'] = val
             
-            # Parse hints
-            question["hints"] = []
-            hint_elements = q_elem.getElementsByTagName("hint")
-            for hint_elem in hint_elements:
-                hint = {
-                    "text": "",
-                    "clear_incorrect": False,
-                    "show_num_correct": False
-                }
-                
-                # Get hint attributes
-                if hint_elem.hasAttribute("clearincorrectresponses"):
-                    hint["clear_incorrect"] = hint_elem.getAttribute("clearincorrectresponses").lower() == "true"
-                if hint_elem.hasAttribute("shownumpartscorrect"):
-                    hint["show_num_correct"] = hint_elem.getAttribute("shownumpartscorrect").lower() == "true"
-                
-                # Get hint text
-                text_nodes = hint_elem.getElementsByTagName("text")
-                if text_nodes and text_nodes[0].firstChild:
-                    hint_text = text_nodes[0].firstChild.data
-                    if hint_text:
-                        hint_text = hint_text.replace('<br>', '\n').replace('<br/>', '\n')
-                        hint["text"] = hint_text
-                
-                question["hints"].append(hint)
-            
-            log(f"Question {idx}: Matching with {len(question['pairs'])} pairs", "INFO", verbose)
+                # Parse hints
+                question["hints"] = []
+                hint_elements = q_elem.getElementsByTagName("hint")
+                for hint_elem in hint_elements:
+                    hint = {
+                        "text": "",
+                        "clear_incorrect": False,
+                        "show_num_correct": False
+                    }
+
+                    # Get hint attributes
+                    if hint_elem.hasAttribute("clearincorrectresponses"):
+                        hint["clear_incorrect"] = hint_elem.getAttribute("clearincorrectresponses").lower() == "true"
+                    if hint_elem.hasAttribute("shownumpartscorrect"):
+                        hint["show_num_correct"] = hint_elem.getAttribute("shownumpartscorrect").lower() == "true"
+
+                    # Get hint text
+                    text_nodes = hint_elem.getElementsByTagName("text")
+                    if text_nodes and text_nodes[0].firstChild:
+                        hint_text = text_nodes[0].firstChild.data
+                        if hint_text:
+                            hint_text = hint_text.replace('<br>', '\n').replace('<br/>', '\n')
+                            hint["text"] = hint_text
+
+                    question["hints"].append(hint)
+
+                log(f"Question {idx}: Matching with {len(question['pairs'])} pairs", "INFO", verbose)
 
         if q_type == "truefalse":
             question["type"] = "truefalse"
@@ -674,6 +701,20 @@ def create_moodle_xml(questions, output_file, verbose=False):
     from ..question_bank import get_passage
 
     for i, q in enumerate(questions, 1):
+        # ---- Ensure q['text'] is populated from transcriptions ----
+        # When the source had 'Nepali:' / 'English:' on separate lines,
+        # q['text'] is empty. Combine them with a blank-line separator so
+        # the text survives the XML hop and can be split again on import.
+        if not q.get('text'):
+            _nep = (q.get('nepali_transcription') or '').strip()
+            _eng = (q.get('english_transcription') or '').strip()
+            if _nep and _eng:
+                q = dict(q)   # don't mutate caller's dict
+                q['text'] = f"{_nep}\n\n{_eng}"
+            else:
+                q = dict(q)
+                q['text'] = _nep or _eng
+
         # ---- Expand passage inline (Moodle-safe; survives shuffle) ----
         if q.get('passage_id'):
             passage = get_passage(q['passage_id'])
@@ -737,6 +778,8 @@ def create_moodle_xml(questions, output_file, verbose=False):
             ('subject',  q.get('subject')),
             ('inst',     q.get('institution')),
             ('alias',    q.get('alias')),
+            ('marks',    str(q['marks']) if q.get('marks') is not None else None),
+            ('notes',    q.get('notes')),
         ]
         tag_pairs = [(k, str(v).strip()) for k, v in tag_pairs if v]
         if tag_pairs:

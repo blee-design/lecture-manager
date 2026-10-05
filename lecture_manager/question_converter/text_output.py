@@ -69,16 +69,30 @@ def create_text_output(questions, output_file, verbose=False):
                 if val is not None and str(val).strip():
                     f.write(f"{label}: {val}\n")
 
-            # ---- Question number + text (with passage marker if linked) ----
+            # ---- Question number (no text on this line) ----
             qno = q.get("question_no")
-            text = q.get("text", "")
             marker = ""
             if q.get("passage_id") and q["passage_id"] in used_passages:
                 marker = f" (passage:{used_passages[q['passage_id']]})"
             if qno:
-                f.write(f"Question No. {qno}{marker}: {text}\n")
+                f.write(f"Question No. {qno}{marker}:\n")
             else:
-                f.write(f"Question{marker}: {text}\n")
+                f.write(f"Question{marker}:\n")
+
+            # ---- Nepali / English on their own lines (like the source) ----
+            _nep = (q.get("nepali_transcription") or "").strip()
+            _eng = (q.get("english_transcription") or "").strip()
+            if _nep and _eng:
+                f.write(f"Nepali: {_nep}\n")
+                f.write(f"English: {_eng}\n")
+            elif _nep or _eng:
+                # Only one exists — put it on the question line instead
+                # (keeps a single-language question tidy)
+                f.write(f"Nepali: {_nep}\n" if _nep else f"English: {_eng}\n")
+            else:
+                # Fallback: no transcription fields at all — use combined text
+                _text = (q.get("text") or "").replace("<br><br>", "\n\n").replace("<br>", "\n")
+                f.write(f"Nepali: {_text}\n")
 
             # ---- Type ----
             q_type = q.get("type", "multichoice")

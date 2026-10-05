@@ -105,7 +105,17 @@ def create_html_output(questions, output_file, verbose=False, shuffle_applied=Fa
     group_opened = False
 
     for i, q in enumerate(questions, 1):
-        q_text = sanitize(q.get("text", ""))
+        # Prefer combined Nepali/English when 'text' is empty (TXT source
+        # uses separate Nepali:/English: lines; q['text'] stays empty).
+        _raw = q.get("text") or ""
+        if not _raw.strip():
+            _nep = (q.get("nepali_transcription") or "").strip()
+            _eng = (q.get("english_transcription") or "").strip()
+            if _nep and _eng:
+                _raw = f"{_nep}<br><br>{_eng}"
+            else:
+                _raw = _nep or _eng
+        q_text = sanitize(_raw)
         q_type = q.get("type", "multichoice")
         q_no = q.get("question_no", i)
         group = q.get("group", "")

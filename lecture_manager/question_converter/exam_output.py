@@ -50,9 +50,19 @@ def create_exam_html(questions, output_file, verbose=False, time_minutes=90, pas
         grade = float(q.get("grade", 1))
         total_max_raw += grade
 
+        # Prefer combined Nepali/English when 'text' is empty
+        _raw = q.get("text") or ""
+        if not _raw.strip():
+            _nep = (q.get("nepali_transcription") or "").strip()
+            _eng = (q.get("english_transcription") or "").strip()
+            if _nep and _eng:
+                _raw = f"{_nep}<br><br>{_eng}"
+            else:
+                _raw = _nep or _eng
+
         q_data = {
             "id": i,
-            "text": q.get("text", ""),
+            "text": _raw,
             "type": q_type,
             "grade": grade,
             "fraction_correct": float(q.get("fraction_correct", 100)),

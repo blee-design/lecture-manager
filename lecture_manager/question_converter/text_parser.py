@@ -525,6 +525,21 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
         log(f"  Question {question.get('question_no', '?')}: Set source to {field_content}",
             "INFO", True)
 
+    elif field_name == 'exam type':
+        # TXT export writes friendly names: "Open", "Internal",
+        # "Promotional", "Other".  Store the lowercase key.
+        _val = (field_content or '').strip().lower()
+        _mapping = {
+            'open':        'open',
+            'internal':    'internal',
+            'promotional': 'promotional',
+            'other':       'other',
+        }
+        question['exam_type'] = _mapping.get(_val, 'open')
+        log(f"  Question {question.get('question_no', '?')}: "
+            f"Set exam_type to {question['exam_type']}",
+            "INFO", True)
+
 def process_question_lines(question, lines, line_number_start, file_path):
     """Process lines for a question, handling multi-line fields"""
     current_field = None
@@ -824,6 +839,11 @@ def parse_text_file(file_path, args):
             for i, pair in enumerate(q.get("pairs", []), 1):
                 if not pair.get("subquestion") or not pair.get("answer"):
                     raise MatchingPairError(f"Incomplete pair {i} in matching question {q['question_no']}")
+
+    # ---- Sync Marks → grade so <defaultgrade> exports correctly ----
+    for q in questions:
+        if q.get('marks') is not None and q.get('grade') in (None, 1):
+            q['grade'] = q['marks']
 
     # ---- Log parsed question details ----
     if args.verbose:
