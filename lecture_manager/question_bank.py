@@ -2310,12 +2310,17 @@ def question_import_menu():
                                    bypass_option=False, questions=None)
             try:
                 count, errors = import_from_file(filepath, fmt, source=source, args=args)
-                if count == 0 and not errors:
-                    print_colored("[i] No questions were imported.", COLORS.YELLOW)
-                else:
-                    print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
-                    for e in (errors or [])[:5]:
-                        print(f"  {e}")
+                # `import_from_file` already printed a full
+                # "Inserted / Updated / Unchanged / Skipped" summary.
+                # Only add a one-liner when something was actually inserted.
+                if count > 0:
+                    print_colored(
+                        f"[✓] Inserted {count} new question"
+                        f"{'s' if count != 1 else ''}.",
+                        COLORS.GREEN,
+                    )
+                for e in (errors or [])[:5]:
+                    print(f"  {e}")
             except ConverterError as e:
                 print_colored(f"[!] {e}", COLORS.RED)
 
@@ -2350,7 +2355,12 @@ def question_import_menu():
                                         bypass_option=parsed.bypass_option,
                                         questions=parsed.questions)
                 count, errors = import_from_file(input_file, fmt, source=source, args=iargs)
-                print_colored(f"[✓] Imported {count} questions.", COLORS.GREEN)
+                if count > 0:
+                    print_colored(
+                        f"[✓] Inserted {count} new question"
+                        f"{'s' if count != 1 else ''}.",
+                        COLORS.GREEN,
+                    )
                 for e in (errors or [])[:5]:
                     print(f"  {e}")
             except SystemExit:
