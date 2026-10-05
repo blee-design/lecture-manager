@@ -1712,6 +1712,21 @@ def tally_db_with_files():
                 input("\nPress Enter to continue...")
                 continue
 
+            # Preview which records can and cannot be fixed
+            fixable = [r for r in mismatched if r.get('paper')]
+            unfixable = [r for r in mismatched if not r.get('paper')]
+
+            print_colored(f"\n  {len(fixable)} record(s) have a paper set and can be moved.", COLORS.GREEN)
+            if unfixable:
+                print_colored(f"  {len(unfixable)} record(s) have no paper and will be skipped:", COLORS.YELLOW)
+                for r in unfixable[:10]:
+                    print(f"     {r['syllabus_id']} | {r['subject']} | {r['video_id']}")
+                if len(unfixable) > 10:
+                    print(f"     ... and {len(unfixable) - 10} more")
+
+            if input(color_text("\nProceed? (y/n): ", COLORS.MAGENTA)).strip().lower() != 'y':
+                continue
+
             print_colored(f"Found {len(mismatched)} mismatched records. Attempting to auto-fix...", COLORS.BLUE)
             from .crud import organize_video
             fixed = 0
@@ -1719,25 +1734,43 @@ def tally_db_with_files():
 
             for rec in mismatched:
                 print(f"\n--- Fixing {rec['syllabus_id']} | {rec['subject']} ---")
-                # 1) Re-detect paper based on current subject/syllabus/chapter
-                correct_paper = detect_paper(rec['subject'], rec['syllabus_id'], rec.get('chapter'), interactive=False)
+
+                # 1) Trust the paper already on the record. Only fall back to
+                #    detection if it's genuinely missing (legacy data).
+                correct_paper = rec.get('paper')
                 if not correct_paper:
-                    print_colored(f"[!] Could not detect paper for {rec['syllabus_id']}. Skipping.", COLORS.YELLOW)
+                    print_colored(
+                        "  [i] No paper set on record — attempting detection...",
+                        COLORS.BLUE,
+                    )
+                    correct_paper = detect_paper(
+                        rec['subject'], rec['syllabus_id'],
+                        rec.get('chapter'), interactive=False,
+                    )
+
+                if not correct_paper:
+                    print_colored(
+                        f"  [!] Cannot determine paper for {rec['syllabus_id']}. "
+                        f"Use 'Update a lecture' to set it, then retry.",
+                        COLORS.YELLOW,
+                    )
                     failed += 1
                     continue
 
-                # 2) If paper differs, update the database
+                # 2) If the detected/missing paper differs, update the DB.
                 if rec.get('paper') != correct_paper:
                     conn = get_connection()
                     cursor = conn.cursor()
-                    cursor.execute(f"UPDATE {TABLE_NAME} SET paper = %s WHERE video_id = %s",
-                                   (correct_paper, rec['video_id']))
+                    cursor.execute(
+                        f"UPDATE {TABLE_NAME} SET paper = %s WHERE video_id = %s",
+                        (correct_paper, rec['video_id']),
+                    )
                     conn.commit()
                     cursor.close()
                     conn.close()
-                    print_colored(f"  [✓] Updated paper to {correct_paper}", COLORS.GREEN)
+                    print_colored(f"  [✓] Paper set to {correct_paper}", COLORS.GREEN)
 
-                # 3) Move the file to the correct folder (using organize_video)
+                # 3) Move the file to the expected folder.
                 result = organize_video(rec, overwrite=False, interactive=False)
                 if result:
                     print_colored(f"  [✓] File moved successfully", COLORS.GREEN)
@@ -1748,7 +1781,7 @@ def tally_db_with_files():
 
             print_colored(f"\n[✓] Auto-fix complete: {fixed} fixed, {failed} failed.", COLORS.GREEN)
             print_colored("[i] Refreshing statistics...", COLORS.BLUE)
-            continue  # This will re-run the while loop (refresh tally)
+            continue
 
         elif choice == '11':
             from .file_compressor import compress_library_to_480p, compress_single_by_id, list_largest_files
