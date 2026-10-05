@@ -2233,7 +2233,6 @@ def unified_question_menu():
             quick_lookup_interactive()
         elif choice == '3':
             view_whole_paper_interactive()
-            input(color_text("\nPress Enter to continue...", COLORS.MAGENTA))
         elif choice == '4':
             browse_by_syllabus_interactive()
         elif choice == '5':
@@ -3025,30 +3024,124 @@ def view_all_questions_interactive():
             print_colored("[!] Unknown command.", COLORS.RED)
 
 def view_whole_paper_interactive():
-    print("\n" + "═" * 50)
-    print_colored("  VIEW WHOLE PAPER (INTERACTIVE)", COLORS.CYAN, bold=True)
-    print("═" * 50)
-    print("Enter the paper details. At least one field is required.\n")
+    """
+    Interactive whole-paper viewer with live preview.
+    Mirrors the advanced-search UX: all fields shown at once, pick a
+    number to edit one, 90 to display, 0 to return.
+    """
+    fields = ['date', 'institution', 'level', 'alias', 'paper']
+    display_names = {
+        'date':        'Question date',
+        'institution': 'Institution',
+        'level':       'Level',
+        'alias':       'Alias (role)',
+        'paper':       'Paper',
+    }
+    criteria = {f: '' for f in fields}
+    show_answers = False
+    answers_index = len(fields) + 1   # the toggle row
 
-    date = _prompt_field("Date (YYYY-MM-DD): ")
-    institution = _prompt_field("Institution (keyword): ")
-    level = _prompt_field("Level (keyword): ")
-    alias = _prompt_field("Alias/role (keyword): ")
-    paper = _prompt_field("Paper (optional): ")
+    while True:
+        print()
+        print_colored("  " + _title_rule("📄 WHOLE PAPER VIEW"), COLORS.CYAN)
+        print_colored("  CURRENT CRITERIA", COLORS.YELLOW, bold=True)
+        print("  " + "─" * 56)
+        for i, field in enumerate(fields, 1):
+            val = criteria[field]
+            shown = (color_text(val, COLORS.GREEN) if val
+                     else color_text("(not set)", COLORS.RED))
+            print(f"   {i:2}. {display_names[field]:16}: {shown}")
+        ans_shown = color_text("Yes" if show_answers else "No",
+                               COLORS.GREEN if show_answers else COLORS.BLUE)
+        print(f"   {answers_index:2}. {'Include answers':16}: {ans_shown}")
+        print("  " + "─" * 56)
 
-    if not any([date, institution, level, alias, paper]):
-        print_colored("[!] You must provide at least one search criterion.", COLORS.RED)
+        _whole_paper_preview(criteria)
+
+        print()
+        print("   90. " + color_text("Display the paper", COLORS.CYAN, bold=True))
+        print("    0. " + color_text("Return to Question Bank menu", COLORS.YELLOW))
+        choice = input(color_text(
+            f"\nChoose field (1-{answers_index}), 90 to display, or 0 to return: ",
+            COLORS.MAGENTA,
+        )).strip()
+
+        # ---- Execute ----
+        if choice == '90':
+            kwargs = {k: v.strip() for k, v in criteria.items() if v.strip()}
+            if not kwargs:
+                print_colored("[!] Set at least one criterion first.", COLORS.RED)
+                continue
+            results = get_questions_by_criteria(**kwargs)
+            if not results:
+                print_colored("[i] No questions found.", COLORS.YELLOW)
+                continue
+            _display_paper(results, show_answers=show_answers)
+            input(color_text("\nPress Enter to return to the filter...",
+                             COLORS.MAGENTA))
+            continue
+
+        # ---- Exit ----
+        if choice == '0':
+            return
+
+        # ---- Toggle answers ----
+        if choice.isdigit() and int(choice) == answers_index:
+            show_answers = not show_answers
+            continue
+
+        # ---- Edit a field ----
+        if choice.isdigit() and 1 <= int(choice) <= len(fields):
+            field = fields[int(choice) - 1]
+            current = criteria[field]
+            new_val = input(color_text(
+                f"New value for {display_names[field]} [{current}]: ",
+                COLORS.MAGENTA,
+            )).strip()
+            criteria[field] = new_val
+            if new_val:
+                print_colored(f"[✓] {display_names[field]} → {new_val}",
+                              COLORS.GREEN)
+            else:
+                print_colored(f"[i] {display_names[field]} cleared.",
+                              COLORS.YELLOW)
+            continue
+
+        print_colored("[!] Invalid option.", COLORS.RED)
+
+
+def _whole_paper_preview(criteria):
+    """Live count + small sample of what the current filter will return."""
+    kwargs = {k: v.strip() for k, v in criteria.items() if v.strip()}
+    if not kwargs:
+        print_colored("[i] No criteria set — set at least one field.",
+                      COLORS.BLUE)
         return
 
-    results = get_questions_by_criteria(date=date, institution=institution,
-                                        level=level, alias=alias, paper=paper)
-    if not results:
-        print_colored("[i] No questions found.", COLORS.YELLOW)
+    try:
+        results = get_questions_by_criteria(**kwargs)
+    except Exception as e:
+        print_colored(f"[i] Preview unavailable: {e}", COLORS.YELLOW)
         return
 
-    show = input(color_text("Include options / correct answers / explanations? (y/n, default n): ",
-                            COLORS.MAGENTA)).strip().lower() == 'y'
-    _display_paper(results, show_answers=show)
+    total = len(results)
+    print_colored(f"[i] {total} question(s) match current criteria.",
+                  COLORS.BLUE)
+
+    if 0 < total <= 5:
+        print(f"\n  {color_text('Preview:', COLORS.CYAN)}")
+        for r in results:
+            preview = _short_preview(
+                r.get('nepali_transcription')
+                or r.get('english_transcription') or '',
+                50,
+            )
+            print(f"  {r['id']:>5} | "
+                  f"{(r.get('question_date') or ''):<10} | "
+                  f"{(r.get('institution') or '')[:22]:<22} | "
+                  f"{(r.get('subject') or '')[:22]:<22} | "
+                  f"Q{r.get('question_number') or ''}")
+            print(f"        {preview}")
 
 def _search_results_view_loop(results):
     """
