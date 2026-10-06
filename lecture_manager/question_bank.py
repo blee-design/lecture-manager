@@ -2264,9 +2264,110 @@ def unified_question_menu():
         else:
             print_colored("[!] Invalid option.", COLORS.RED)
 
+def _preview_import_file(filepath, fmt):
+    """
+    Parse the file (without touching the DB) and print a preview.
+    Returns the parsed list (may be empty) or None on hard error.
+    """
+    import os
+    if not os.path.exists(filepath):
+        print_colored(f"[!] File not found: {filepath}", COLORS.RED)
+        return None
+
+    from types import SimpleNamespace
+    try:
+        if fmt == 'txt':
+            from .question_converter.text_parser import parse_text_file
+            args = SimpleNamespace(verbose=False, bypass_duplicate=True,
+                                   bypass_option=True, questions=None)
+            questions, _, _ = parse_text_file(filepath, args)
+        elif fmt == 'json':
+            from .question_converter.json_handler import json_to_questions
+            questions = json_to_questions(filepath, verbose=False)
+        elif fmt == 'xml':
+            from .question_converter.xml_handler import xml_to_questions
+            questions = xml_to_questions(filepath, verbose=False)
+        else:
+            return None
+    except Exception as e:
+        print_colored(f"[!] Preview failed: {e}", COLORS.RED)
+        return None
+
+    _print_import_preview(filepath, questions)
+    return questions
+
+
+def _print_import_preview(filepath, questions):
+    """Compact preview of what an import file contains."""
+    import os
+    from collections import Counter
+
+    W = 60
+    print()
+    print_colored("  " + "─" * W, COLORS.CYAN)
+    print_colored(
+        f"  📋  Preview: {os.path.basename(filepath)}",
+        COLORS.CYAN, bold=True,
+    )
+    print_colored("  " + "─" * W, COLORS.CYAN)
+
+    if not questions:
+        print_colored("  No questions detected in this file.", COLORS.YELLOW)
+        print_colored("  " + "─" * W, COLORS.CYAN)
+        print()
+        return
+
+    def _top(counter, n=3):
+        items = counter.most_common()
+        out = ", ".join(f"{k} ({v})" for k, v in items[:n])
+        if len(items) > n:
+            out += f"  … +{len(items) - n} more"
+        return out or "—"
+
+    dates  = Counter(q.get('question_date') or '(no date)' for q in questions)
+    insts  = Counter(q.get('institution')   or '(none)'     for q in questions)
+    levels = Counter(str(q.get('level') or '—')            for q in questions)
+    papers = Counter(q.get('paper') or '—'                 for q in questions)
+    types  = Counter(q.get('type')  or 'essay'             for q in questions)
+    groups = Counter(q.get('group') or '—'                 for q in questions)
+    marks  = Counter(str(q.get('marks')) if q.get('marks') is not None else '—'
+                     for q in questions)
+
+    print(f"  Total questions : {color_text(str(len(questions)), COLORS.GREEN, bold=True)}")
+    print(f"  Dates           : {_top(dates, 2)}")
+    print(f"  Institution     : {_top(insts, 1)}")
+    print(f"  Level(s)        : {_top(levels, 3)}")
+    print(f"  Paper(s)        : {_top(papers, 2)}")
+    print(f"  Type(s)         : {_top(types, 4)}")
+    if any(q.get('marks') is not None for q in questions):
+        print(f"  Marks           : {_top(marks, 4)}")
+
+    group_items = groups.most_common()
+    if group_items:
+        print("  Group(s)        :")
+        for g, n in group_items[:5]:
+            print(f"    {g:<20}  {n}")
+        if len(group_items) > 5:
+            print(f"    … +{len(group_items) - 5} more")
+
+    N = min(3, len(questions))
+    print()
+    print_colored(f"  First {N} question(s):", COLORS.WHITE, bold=True)
+    for i, q in enumerate(questions[:N], 1):
+        qno = q.get('question_no') or '?'
+        qtype = (q.get('type') or 'essay')[:10]
+        preview = (q.get('nepali_transcription')
+                   or q.get('english_transcription')
+                   or q.get('text') or '').strip()
+        preview = re.sub(r'\s+', ' ', preview)
+        if len(preview) > 55:
+            preview = preview[:52] + '…'
+        print(f"    Q{qno:<4}  {qtype:<11}  {preview}")
+
+    print_colored("  " + "─" * W, COLORS.CYAN)
+    print()
 
 # ---------- Submenus for import / export / convert ----------
-
 def question_import_menu():
     """Import submenu (previously letters a-e)."""
     while True:
@@ -2296,6 +2397,12 @@ def question_import_menu():
             if not filepath:
                 continue
             source = input(color_text("Source name (optional): ", COLORS.MAGENTA)).strip() or None
+
+            # ---- NEW: preview before asking about duplicates ----
+            parsed = _preview_import_file(filepath, fmt)
+            if not parsed:
+                input(color_text("\nPress Enter to continue...", COLORS.MAGENTA))
+                continue
 
             print("\nHow to handle duplicates?")
             print("  1. Skip duplicates (keep existing)")
