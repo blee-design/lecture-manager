@@ -16,7 +16,7 @@ def get_file_path_for_record(record):
     file_hash = record.get('file_hash')
     if file_hash:
         conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
+        cursor = conn.cursor(dictionary=True, buffered=True)
         cursor.execute("SELECT file_path FROM hash_cache WHERE file_hash = %s AND status = 'active'", (file_hash,))
         row = cursor.fetchone()
         cursor.close()
