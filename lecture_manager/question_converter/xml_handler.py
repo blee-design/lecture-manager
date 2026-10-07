@@ -195,6 +195,14 @@ def create_mcq_question(doc, q, index):
     # General feedback with CDATA (preserves newlines as <br>)
     question_elem.appendChild(create_text_element_cdata(doc,"generalfeedback",q.get("general_feedback","")))
 
+    # Per-outcome feedback — shown to the student after they answer
+    if q.get("correct_feedback"):
+        question_elem.appendChild(create_text_element_cdata(doc,"correctfeedback",q["correct_feedback"]))
+    if q.get("partially_correct_feedback"):
+        question_elem.appendChild(create_text_element_cdata(doc,"partiallycorrectfeedback",q["partially_correct_feedback"]))
+    if q.get("incorrect_feedback"):
+        question_elem.appendChild(create_text_element_cdata(doc,"incorrectfeedback",q["incorrect_feedback"]))
+
     # Get grade from question dictionary (defaults to 1)
     grade_value = q.get("grade", 1)  # This reads what was set in text_parser.py
     question_elem.appendChild(create_text_element(doc, "defaultgrade", str(grade_value)))
@@ -645,8 +653,21 @@ def xml_to_questions(input_file, verbose=False):
             log(f"Question {idx}: True/False question parsed", "INFO", verbose)
         
         elif q_type == "multichoice":
+            # Per-outcome feedback (written by create_mcq_question)
+            for fb_type, key in [
+                ("correctfeedback",         "correct_feedback"),
+                ("partiallycorrectfeedback","partially_correct_feedback"),
+                ("incorrectfeedback",       "incorrect_feedback"),
+            ]:
+                _fb = q_elem.getElementsByTagName(fb_type)
+                if _fb:
+                    _t = _fb[0].getElementsByTagName("text")
+                    if _t and _t[0].firstChild:
+                        question[key] = _html_to_plain_breaks(_t[0].firstChild.data)
+
             question["options"] = []
             answer_elements = q_elem.getElementsByTagName("answer")
+
             log(f"Question {idx}: Found {len(answer_elements)} options", "INFO", verbose)
 
             for ans_idx, ans_elem in enumerate(answer_elements, 1):
