@@ -46,6 +46,7 @@ questions_export_*.html
 *_export_*.txt 
 questions-*.xml
 test.txt
+exam*.html
 
 downloads/
 .lecture_trash/

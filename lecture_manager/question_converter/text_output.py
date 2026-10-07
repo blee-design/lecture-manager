@@ -1,5 +1,4 @@
-# File text_output.py
-
+import re
 from .utils import log
 
 
