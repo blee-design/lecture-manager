@@ -90,9 +90,13 @@ def create_text_output(questions, output_file, verbose=False):
                 # (keeps a single-language question tidy)
                 f.write(f"Nepali: {_nep}\n" if _nep else f"English: {_eng}\n")
             else:
-                # Fallback: no transcription fields at all — use combined text
-                _text = (q.get("text") or "").replace("<br><br>", "\n\n").replace("<br>", "\n")
-                f.write(f"Nepali: {_text}\n")
+                # Fallback: no transcription split happened. Choose the
+                # label based on what's actually in the text.
+                _text = q.get("text") or ""
+                if re.search(r'[\u0900-\u097F]', _text):
+                    f.write(f"Nepali: {_text}\n")
+                else:
+                    f.write(f"English: {_text}\n")
 
             # ---- Type ----
             q_type = q.get("type", "multichoice")

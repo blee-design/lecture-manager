@@ -33,6 +33,34 @@ def create_text_element(doc, tag, text):
     el.appendChild(doc.createTextNode(text))
     return el
 
+def _html_to_plain_breaks(text):
+    """
+    Convert a Moodle HTML fragment to plain text with real newlines.
+    Inverse of create_text_element_cdata().
+
+      <p>a</p><p>b</p>  →  a\n\nb
+      a<br>b           →  a\nb
+      <b>x</b>         →  x   (tags stripped)
+      &amp;            →  &
+    """
+    if not text:
+        return text
+    import html as _html
+
+    # <p> between blocks → blank line
+    text = re.sub(r'</p>\s*<p[^>]*>', '\n\n', text, flags=re.IGNORECASE)
+    # Leading/trailing <p> tags → nothing
+    text = re.sub(r'</?p[^>]*>', '', text, flags=re.IGNORECASE)
+    # All <br> variants → single newline
+    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    # Any other tag → stripped
+    text = re.sub(r'<[^>]+>', '', text)
+    # Entities
+    text = _html.unescape(text)
+    # Trim trailing whitespace on each line
+    text = '\n'.join(line.rstrip() for line in text.split('\n'))
+    return text.strip()
+
 def create_text_element_cdata(doc, tag, text):
     """Create XML element with CDATA section, preserving newlines"""
     el = doc.createElement(tag)
@@ -373,7 +401,23 @@ def xml_to_questions(input_file, verbose=False):
         if text_elem:
             text_node = text_elem[0].getElementsByTagName("text")
             if text_node:
-                question["text"] = text_node[0].firstChild.data if text_node[0].firstChild else ""
+                _raw = text_node[0].firstChild.data if text_node[0].firstChild else ""
+
+                # ---- Reverse the passage inlining done at export ----
+                # Export writes:  "Reading Passage:<br>...<p>question</p>"
+                # Pull the passage off and stash it as _passage_text so
+                # insert_question can re-link (or recreate) the row.
+                _m = re.match(
+                    r'^Reading Passage:<br>(.*?)<p>(.*)</p>\s*$',
+                    _raw, re.DOTALL,
+                )
+                if _m:
+                    question["_passage_text"] = _html_to_plain_breaks(_m.group(1))
+                    _raw = _m.group(2)
+
+                # Normalize HTML → plain text with real newlines
+                question["text"] = _html_to_plain_breaks(_raw)
+
                 # If the combined text was "nepali\n\nenglish" (our export
                 # convention), split it back into the two columns. Detect
                 # by: first half has Devanagari, second half does not.

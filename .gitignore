@@ -44,6 +44,8 @@ facebook_export*.csv
 questions_export_*.html
 *.json
 *_export_*.txt 
+questions-*.xml
+test.txt
 
 downloads/
 .lecture_trash/
