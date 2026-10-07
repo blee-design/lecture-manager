@@ -479,7 +479,6 @@ def xml_to_questions(input_file, verbose=False):
         if idn_el and idn_el[0].firstChild:
             idn = idn_el[0].firstChild.data.strip()
             if idn:
-                from .constants import C  # already imported at top
                 for token in idn.split("|"):
                     token = token.strip()
                     if not token:
