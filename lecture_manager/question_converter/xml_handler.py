@@ -411,10 +411,7 @@ def xml_to_questions(input_file, verbose=False):
             if text_node:
                 _raw = text_node[0].firstChild.data if text_node[0].firstChild else ""
 
-                # ---- Reverse the passage inlining done at export ----
-                # Export writes:  "Reading Passage:<br>...<p>question</p>"
-                # Pull the passage off and stash it as _passage_text so
-                # insert_question can re-link (or recreate) the row.
+                # ---- 1. Reverse passage inlining done at export ----
                 _m = re.match(
                     r'^Reading Passage:<br>(.*?)<p>(.*)</p>\s*$',
                     _raw, re.DOTALL,
@@ -423,27 +420,58 @@ def xml_to_questions(input_file, verbose=False):
                     question["_passage_text"] = _html_to_plain_breaks(_m.group(1))
                     _raw = _m.group(2)
 
-                # Normalize HTML → plain text with real newlines
-                question["text"] = _html_to_plain_breaks(_raw)
+                # ---- 2. Normalize HTML to plain text with real newlines ----
+                # Handles both our exports (<br>) and Moodle's native
+                # exports (<p> blocks) in one pass.
+                plain = _html_to_plain_breaks(_raw)
 
-                # If the combined text was "nepali\n\nenglish" (our export
-                # convention), split it back into the two columns. Detect
-                # by: first half has Devanagari, second half does not.
-                _sep_used = None
-                for _candidate in ("\n\n", "<br><br>", "<br/><br/>", "<br /><br />"):
-                    if _candidate in question["text"]:
-                        _sep_used = _candidate
-                        break
-                if _sep_used:
-                    _first, _sep, _second = question["text"].partition(_sep_used)
-                    _has_dev_first  = bool(re.search(r'[\u0900-\u097F]', _first))
-                    _has_dev_second = bool(re.search(r'[\u0900-\u097F]', _second))
-                    if _has_dev_first and not _has_dev_second:
+                # ---- 3. Split into Nepali / English ----
+                # Moodle and our exporter both separate the two languages
+                # with a paragraph break. After normalization that's "\n\n".
+                if "\n\n" in plain:
+                    _first, _sep, _second = plain.partition("\n\n")
+                else:
+                    _first, _second = plain, ""
+
+                _dev_first  = bool(re.search(r'[\u0900-\u097F]', _first))
+                _dev_second = bool(re.search(r'[\u0900-\u097F]', _second))
+
+                if _first and _second:
+                    if _dev_first and not _dev_second:
+                        # First block Nepali, second English
                         question["nepali_transcription"]  = _first.strip()
                         question["english_transcription"] = _second.strip()
-                    elif _has_dev_second and not _has_dev_first:
+                    elif _dev_second and not _dev_first:
+                        # First block English, second Nepali
                         question["english_transcription"] = _first.strip()
                         question["nepali_transcription"]  = _second.strip()
+                    else:
+                        # Both blocks same script — they're not a
+                        # translation pair, just two paragraphs of the
+                        # same language. Keep them together, don't mislabel.
+                        _joined = f"{_first.strip()}\n\n{_second.strip()}"
+                        if _dev_first:
+                            question["nepali_transcription"] = _joined
+                        else:
+                            question["english_transcription"] = _joined
+                else:
+                    # Only one block — put it where the script says it belongs.
+                    # "At least one exists" is the invariant: a question
+                    # never has both columns empty.
+                    if _dev_first:
+                        question["nepali_transcription"]  = _first.strip()
+                    else:
+                        question["english_transcription"] = _first.strip()
+
+                # Keep 'text' as the combined view for downstream consumers
+                # (PDF/HTML renderers, previews) that expect a single field.
+                _n = question.get("nepali_transcription") or ""
+                _e = question.get("english_transcription") or ""
+                if _n and _e:
+                    question["text"] = f"{_n}\n\n{_e}"
+                else:
+                    question["text"] = _n or _e
+
                 # Truncate for logging
                 text_preview = question["text"][:50] + "..." if len(question["text"]) > 50 else question["text"]
                 log(f"Question {idx}: {text_preview}", "INFO", verbose)
