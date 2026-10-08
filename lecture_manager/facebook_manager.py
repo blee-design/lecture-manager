@@ -871,240 +871,93 @@ def import_facebook_json():
     conn.close()
     print_colored(f"[✓] Import complete: {added} added, {updated} updated, {skipped} skipped.", COLORS.GREEN)
 
+def _facebook_import_export_menu():
+    """Nested submenu for Facebook import/export operations."""
+    while True:
+        print()
+        print_colored("  " + "─" * 60, COLORS.CYAN)
+        print_colored("  📦  FACEBOOK IMPORT / EXPORT", COLORS.CYAN, bold=True)
+        print_colored("  " + "─" * 60, COLORS.CYAN)
+        print("   1. Export to CSV     (full backup)")
+        print("   2. Export to JSON    (full backup)")
+        print("   3. Import from CSV")
+        print("   4. Import from JSON")
+        print_colored("   0. Back to Facebook Manager", COLORS.WHITE)
+        print_colored("  " + "─" * 60, COLORS.CYAN)
+        choice = input(color_text("  Choose: ", COLORS.MAGENTA)).strip()
+
+        if choice == '0':
+            return
+        elif choice == '1':
+            export_facebook_csv()
+            input("\nPress Enter to continue...")
+        elif choice == '2':
+            export_facebook_json()
+            input("\nPress Enter to continue...")
+        elif choice == '3':
+            import_facebook_csv()
+            input("\nPress Enter to continue...")
+        elif choice == '4':
+            import_facebook_json()
+            input("\nPress Enter to continue...")
+        else:
+            print_colored("[!] Invalid option.", COLORS.RED)
+            input("Press Enter to continue...")
+
+
 def facebook_menu():
     """Interactive menu for managing Facebook entries."""
     while True:
-        print("\n" + "═" * 50)
-        print_colored("  FACEBOOK MANAGER", COLORS.CYAN, bold=True)
-        print("═" * 50)
-        print("  1. List all entries")
-        print("  2. View entry details")
-        print("  3. Delete entries by album URL (bulk)")
-        print("  4. Delete entries by uploader (bulk)")
-        print("  5. Delete ALL Facebook entries")
-        print("  6. Delete a single entry (by ID)")
-        print("  7. Share/Restore a Facebook file")
-        print("  8. Refresh file hashes (recompute MD5)")
-        print("  9. Export Facebook entries to CSV")
-        print(" 10. Export Facebook entries to JSON")
-        print(" 11. Import Facebook entries from CSV")
-        print(" 12. Import Facebook entries from JSON")
-        print(" 13. Update entry metadata (title, uploader, notes)")
-        print(" 14. 🔄 Re-download missing files (bulk)")
-        print("  0. Return to main menu")
-        print("═" * 50)
+        print()
+        print_colored("  " + "═" * 60, COLORS.CYAN)
+        print_colored("  📘  FACEBOOK MANAGER", COLORS.CYAN, bold=True)
+        print_colored("  " + "═" * 60, COLORS.CYAN)
+        print()
 
-        choice = input(color_text("Choose an option (0-14): ", COLORS.MAGENTA)).strip()
+        print_colored("  🌐  ACQUIRE", COLORS.CYAN, bold=True)
+        print("       1. 📥 Download new content (paste URL)")
+        print("       2. 🔄 Re-download missing files (bulk)")
+        print()
 
+        print_colored("  📖  BROWSE", COLORS.CYAN, bold=True)
+        print("       3. List all entries")
+        print("       4. View entry details")
+        print()
+
+        print_colored("  ✏️   EDIT", COLORS.CYAN, bold=True)
+        print("       5. Update entry metadata (title, uploader, notes)")
+        print("       6. Refresh file hashes (recompute MD5)")
+        print("       7. Share / Restore a file")
+        print()
+
+        print_colored("  🗑️   DELETE", COLORS.CYAN, bold=True)
+        print("       8. Delete a single entry (by ID)")
+        print("       9. Delete entries by album URL (bulk)")
+        print("      10. Delete entries by uploader (bulk)")
+        print("      11. Delete ALL Facebook entries")
+        print()
+
+        print_colored("  📦  IMPORT / EXPORT", COLORS.CYAN, bold=True)
+        print("      12. Import / Export entries (CSV, JSON)")
+        print()
+
+        print_colored("       0. 🔙 Return to main menu", COLORS.WHITE)
+        print_colored("  " + "═" * 60, COLORS.CYAN)
+
+        choice = input(color_text("Choose an option (0-12): ", COLORS.MAGENTA)).strip()
+
+        # ============================================================
+        # 🌐 ACQUIRE
+        # ============================================================
+
+        # 1. Download new content
         if choice == '1':
-            entries = list_facebook_entries()
-            if not entries:
-                print_colored("[i] No Facebook entries found.", COLORS.YELLOW)
-            else:
-                print(f"\n--- FACEBOOK ENTRIES ({len(entries)}) ---")
-                for e in entries:
-                    print(f"  ID:{e['id']:4} | FB ID: {e['facebook_id']:>16} | {e['type']:5} | {e['uploader']:20} | {e['title'][:40]}")
-                print()
-            input("Press Enter to continue...")
+            from .facebook import download_facebook
+            download_facebook()
+            input("\nPress Enter to continue...")
 
+        # 2. Re-download missing
         elif choice == '2':
-            identifier = input(color_text("Enter Facebook ID, entry ID, or file hash: ", COLORS.MAGENTA)).strip()
-            if not identifier:
-                continue
-            entry = get_facebook_entry_by_id(identifier)
-            if not entry:
-                print_colored("[!] Entry not found.", COLORS.RED)
-            else:
-                file_path = get_facebook_file_path(entry)
-                print("\n" + "═" * 50)
-                print_colored("  FACEBOOK ENTRY DETAILS", COLORS.CYAN, bold=True)
-                print("═" * 50)
-                print(f"  ID           : {entry['id']}")
-                print(f"  Facebook ID  : {entry['facebook_id']}")
-                print(f"  Type         : {entry['type']}")
-                print(f"  Title        : {entry['title']}")
-                print(f"  Uploader     : {entry['uploader']}")
-                print(f"  URL          : {entry['url']}")
-                print(f"  File Hash    : {entry['file_hash'] or '(none)'}")
-                print(f"  Original Name: {entry['original_filename'] or '(none)'}")
-                print(f"  Download Date: {entry['download_date']}")
-                print(f"  Notes        : {entry['notes'] or '(none)'}")
-                if file_path:
-                    print_colored(f"  File Location: {file_path}", COLORS.BLUE)
-                else:
-                    print_colored("  File Location: (not found on disk)", COLORS.RED)
-                print("═" * 50)
-            input("\nPress Enter to continue...")
-
-        elif choice == '3':
-            url = input(color_text("Enter the exact album URL: ", COLORS.MAGENTA)).strip()
-            if not url:
-                continue
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM facebook_entries WHERE url = %s", (url,))
-            count = cursor.fetchone()[0]
-            cursor.close()
-            conn.close()
-            if count == 0:
-                print_colored("[i] No entries found with that URL.", COLORS.YELLOW)
-                continue
-            print_colored(f"[i] Found {count} entries with that URL.", COLORS.BLUE)
-            delete_files = input(color_text("Also delete the actual files from disk? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y'
-            confirm = input(color_text(f"Delete {count} entries? (y/n): ", COLORS.RED)).strip().lower()
-            if confirm != 'y':
-                print_colored("Cancelled.", COLORS.YELLOW)
-                continue
-            deleted = delete_facebook_entries_by_url(url, delete_files)
-            print_colored(f"[✓] Deleted {deleted} entries.", COLORS.GREEN)
-            input("\nPress Enter to continue...")
-
-        elif choice == '4':
-            uploader = input(color_text("Enter uploader name (case-sensitive): ", COLORS.MAGENTA)).strip()
-            if not uploader:
-                continue
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM facebook_entries WHERE uploader = %s", (uploader,))
-            count = cursor.fetchone()[0]
-            cursor.close()
-            conn.close()
-            if count == 0:
-                print_colored("[i] No entries found with that uploader.", COLORS.YELLOW)
-                continue
-            print_colored(f"[i] Found {count} entries by '{uploader}'.", COLORS.BLUE)
-            delete_files = input(color_text("Also delete the actual files from disk? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y'
-            confirm = input(color_text(f"Delete {count} entries? (y/n): ", COLORS.RED)).strip().lower()
-            if confirm != 'y':
-                print_colored("Cancelled.", COLORS.YELLOW)
-                continue
-            deleted = delete_facebook_entries_by_uploader(uploader, delete_files)
-            print_colored(f"[✓] Deleted {deleted} entries.", COLORS.GREEN)
-            input("\nPress Enter to continue...")
-
-        elif choice == '5':
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM facebook_entries")
-            count = cursor.fetchone()[0]
-            cursor.close()
-            conn.close()
-            if count == 0:
-                print_colored("[i] No Facebook entries at all.", COLORS.YELLOW)
-                continue
-            print_colored(f"[!] WARNING: This will delete ALL {count} Facebook entries!", COLORS.RED)
-            delete_files = input(color_text("Also delete the actual files from disk? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y'
-            confirm = input(color_text(f"Type 'yes' to confirm deletion of ALL {count} entries: ", COLORS.RED)).strip()
-            if confirm.lower() != 'yes':
-                print_colored("Cancelled.", COLORS.YELLOW)
-                continue
-            deleted = delete_all_facebook_entries(delete_files)
-            print_colored(f"[✓] Deleted {deleted} entries.", COLORS.GREEN)
-            input("\nPress Enter to continue...")
-
-        elif choice == '6':
-            identifier = input(color_text("Enter entry ID: ", COLORS.MAGENTA)).strip()
-            if not identifier:
-                continue
-            entry = get_facebook_entry_by_id(identifier)
-            if not entry:
-                print_colored("[!] Entry not found.", COLORS.RED)
-                continue
-            file_path = get_facebook_file_path(entry)
-            print(f"Entry: {entry['title']} ({entry['type']})")
-            if file_path:
-                print(f"File: {file_path}")
-            confirm = input(color_text("Delete this entry and file? (y/n): ", COLORS.MAGENTA)).strip().lower()
-            if confirm == 'y':
-                result = delete_facebook_entry_with_file(entry['id'])
-                if result['status'] in ('deleted', 'partial'):
-                    print_colored(f"[✓] {result['message']}", COLORS.GREEN)
-                else:
-                    print_colored(f"[!] {result['message']}", COLORS.RED)
-            else:
-                print_colored("Cancelled.", COLORS.YELLOW)
-            input("\nPress Enter to continue...")
-
-        elif choice == '7':
-            identifier = input(color_text("Enter Facebook ID, entry ID, or file hash: ", COLORS.MAGENTA)).strip()
-            if not identifier:
-                continue
-            result = share_facebook_file(identifier)
-            if result['status'] in ('shared', 'restored'):
-                print_colored(f"[✓] {result['message']}", COLORS.GREEN)
-            elif result['status'] == 'cancelled':
-                print_colored(f"[i] {result['message']}", COLORS.YELLOW)
-            else:
-                print_colored(f"[!] {result['message']}", COLORS.RED)
-            input("\nPress Enter to continue...")
-
-        elif choice == '8':
-            print_colored("[i] Refreshing Facebook file hashes...", COLORS.BLUE)
-            conn = get_connection()
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT * FROM facebook_entries WHERE file_hash IS NULL OR file_hash = ''")
-            entries = cursor.fetchall()
-            cursor.close()
-            conn.close()
-            if not entries:
-                print_colored("[i] All entries have file hashes.", COLORS.GREEN)
-                input("Press Enter to continue...")
-                continue
-            updated = 0
-            for e in entries:
-                fp = get_facebook_file_path(e)
-                if fp and os.path.exists(fp):
-                    new_hash = compute_md5(fp)
-                    if update_facebook_file_hash(e['id'], new_hash, e.get('original_filename')):
-                        updated += 1
-                        print(f"  Updated ID {e['id']} -> {new_hash}")
-                    else:
-                        print_colored(f"  Failed to update ID {e['id']}", COLORS.RED)
-                else:
-                    print_colored(f"  File not found for ID {e['id']}, skipping.", COLORS.YELLOW)
-            print_colored(f"[✓] Updated {updated} entries.", COLORS.GREEN)
-            input("\nPress Enter to continue...")
-
-        elif choice == '9':
-            export_facebook_csv()
-            input("\nPress Enter to continue...")
-
-        elif choice == '10':
-            export_facebook_json()
-            input("\nPress Enter to continue...")
-
-        elif choice == '11':
-            import_facebook_csv()
-            input("\nPress Enter to continue...")
-
-        elif choice == '12':
-            import_facebook_json()
-            input("\nPress Enter to continue...")
-
-        elif choice == '13':
-            identifier = input(color_text("Enter entry ID, Facebook ID, or file hash: ", COLORS.MAGENTA)).strip()
-            if not identifier:
-                continue
-            entry = get_facebook_entry_by_id(identifier)
-            if not entry:
-                print_colored("[!] Entry not found.", COLORS.RED)
-                input("\nPress Enter to continue...")
-                continue
-            print(f"ID           : {entry['id']}")
-            print(f"Facebook ID  : {entry['facebook_id']}")
-            print(f"Current title    : {entry['title']}")
-            print(f"Current uploader : {entry['uploader']}")
-            print(f"Current notes    : {entry['notes'] or '(none)'}")
-            new_title = input(color_text("New title (press Enter to keep): ", COLORS.MAGENTA)).strip()
-            new_uploader = input(color_text("New uploader (press Enter to keep): ", COLORS.MAGENTA)).strip()
-            new_notes = input(color_text("New notes (press Enter to keep): ", COLORS.MAGENTA)).strip()
-            if update_facebook_entry(entry['id'], new_title or None, new_uploader or None, new_notes or None):
-                print_colored("[✓] Entry updated.", COLORS.GREEN)
-            else:
-                print_colored("[!] No changes made.", COLORS.YELLOW)
-            input("\nPress Enter to continue...")
-
-        elif choice == '14':
             print_colored("[i] Scanning for missing Facebook files...", COLORS.BLUE)
             missing = find_missing_facebook_entries()
 
@@ -1150,7 +1003,6 @@ def facebook_menu():
                     print(f"\n  [{i}/{len(missing)}] {label}")
                     try:
                         re_download_facebook_entry(e)
-                        # Re-fetch to pick up the new hash
                         refreshed = get_facebook_entry_by_id(e['id']) or e
                         fp = get_facebook_file_path(refreshed)
                         if fp and os.path.exists(fp):
@@ -1195,16 +1047,235 @@ def facebook_menu():
                         fail += 1
 
             print()
-            print("═" * 50)
             print_colored("  RE-DOWNLOAD SUMMARY", COLORS.CYAN, bold=True)
-            print("═" * 50)
             print(f"  ✅ Success : {ok}")
             print(f"  ❌ Failed  : {fail}")
             print(f"  ⏭️  Skipped : {skip}")
-            print("═" * 50)
             input("\nPress Enter to continue...")
 
+        # ============================================================
+        # 📖 BROWSE
+        # ============================================================
 
+        # 3. List all entries
+        elif choice == '3':
+            entries = list_facebook_entries()
+            if not entries:
+                print_colored("[i] No Facebook entries found.", COLORS.YELLOW)
+            else:
+                print(f"\n--- FACEBOOK ENTRIES ({len(entries)}) ---")
+                for e in entries:
+                    print(f"  ID:{e['id']:4} | FB ID: {e['facebook_id']:>16} | "
+                          f"{e['type']:5} | {e['uploader']:20} | {e['title'][:40]}")
+                print()
+            input("Press Enter to continue...")
+
+        # 4. View entry details
+        elif choice == '4':
+            identifier = input(color_text("Enter Facebook ID, entry ID, or file hash: ", COLORS.MAGENTA)).strip()
+            if not identifier:
+                continue
+            entry = get_facebook_entry_by_id(identifier)
+            if not entry:
+                print_colored("[!] Entry not found.", COLORS.RED)
+            else:
+                file_path = get_facebook_file_path(entry)
+                print("\n" + "═" * 50)
+                print_colored("  FACEBOOK ENTRY DETAILS", COLORS.CYAN, bold=True)
+                print("═" * 50)
+                print(f"  ID           : {entry['id']}")
+                print(f"  Facebook ID  : {entry['facebook_id']}")
+                print(f"  Type         : {entry['type']}")
+                print(f"  Title        : {entry['title']}")
+                print(f"  Uploader     : {entry['uploader']}")
+                print(f"  URL          : {entry['url']}")
+                print(f"  File Hash    : {entry['file_hash'] or '(none)'}")
+                print(f"  Original Name: {entry['original_filename'] or '(none)'}")
+                print(f"  Download Date: {entry['download_date']}")
+                print(f"  Notes        : {entry['notes'] or '(none)'}")
+                if file_path:
+                    print_colored(f"  File Location: {file_path}", COLORS.BLUE)
+                else:
+                    print_colored("  File Location: (not found on disk)", COLORS.RED)
+                print("═" * 50)
+            input("\nPress Enter to continue...")
+
+        # ============================================================
+        # ✏️  EDIT
+        # ============================================================
+
+        # 5. Update metadata
+        elif choice == '5':
+            identifier = input(color_text("Enter entry ID, Facebook ID, or file hash: ", COLORS.MAGENTA)).strip()
+            if not identifier:
+                continue
+            entry = get_facebook_entry_by_id(identifier)
+            if not entry:
+                print_colored("[!] Entry not found.", COLORS.RED)
+                input("\nPress Enter to continue...")
+                continue
+            print(f"ID           : {entry['id']}")
+            print(f"Facebook ID  : {entry['facebook_id']}")
+            print(f"Current title    : {entry['title']}")
+            print(f"Current uploader : {entry['uploader']}")
+            print(f"Current notes    : {entry['notes'] or '(none)'}")
+            new_title = input(color_text("New title (press Enter to keep): ", COLORS.MAGENTA)).strip()
+            new_uploader = input(color_text("New uploader (press Enter to keep): ", COLORS.MAGENTA)).strip()
+            new_notes = input(color_text("New notes (press Enter to keep): ", COLORS.MAGENTA)).strip()
+            if update_facebook_entry(entry['id'], new_title or None, new_uploader or None, new_notes or None):
+                print_colored("[✓] Entry updated.", COLORS.GREEN)
+            else:
+                print_colored("[!] No changes made.", COLORS.YELLOW)
+            input("\nPress Enter to continue...")
+
+        # 6. Refresh hashes
+        elif choice == '6':
+            print_colored("[i] Refreshing Facebook file hashes...", COLORS.BLUE)
+            conn = get_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT * FROM facebook_entries WHERE file_hash IS NULL OR file_hash = ''")
+            entries = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            if not entries:
+                print_colored("[i] All entries have file hashes.", COLORS.GREEN)
+                input("Press Enter to continue...")
+                continue
+            updated = 0
+            for e in entries:
+                fp = get_facebook_file_path(e)
+                if fp and os.path.exists(fp):
+                    new_hash = compute_md5(fp)
+                    if update_facebook_file_hash(e['id'], new_hash, e.get('original_filename')):
+                        updated += 1
+                        print(f"  Updated ID {e['id']} -> {new_hash}")
+                    else:
+                        print_colored(f"  Failed to update ID {e['id']}", COLORS.RED)
+                else:
+                    print_colored(f"  File not found for ID {e['id']}, skipping.", COLORS.YELLOW)
+            print_colored(f"[✓] Updated {updated} entries.", COLORS.GREEN)
+            input("\nPress Enter to continue...")
+
+        # 7. Share/Restore
+        elif choice == '7':
+            identifier = input(color_text("Enter Facebook ID, entry ID, or file hash: ", COLORS.MAGENTA)).strip()
+            if not identifier:
+                continue
+            result = share_facebook_file(identifier)
+            if result['status'] in ('shared', 'restored'):
+                print_colored(f"[✓] {result['message']}", COLORS.GREEN)
+            elif result['status'] == 'cancelled':
+                print_colored(f"[i] {result['message']}", COLORS.YELLOW)
+            else:
+                print_colored(f"[!] {result['message']}", COLORS.RED)
+            input("\nPress Enter to continue...")
+
+        # ============================================================
+        # 🗑️  DELETE
+        # ============================================================
+
+        # 8. Delete single by ID
+        elif choice == '8':
+            identifier = input(color_text("Enter entry ID: ", COLORS.MAGENTA)).strip()
+            if not identifier:
+                continue
+            entry = get_facebook_entry_by_id(identifier)
+            if not entry:
+                print_colored("[!] Entry not found.", COLORS.RED)
+                continue
+            file_path = get_facebook_file_path(entry)
+            print(f"Entry: {entry['title']} ({entry['type']})")
+            if file_path:
+                print(f"File: {file_path}")
+            confirm = input(color_text("Delete this entry and file? (y/n): ", COLORS.MAGENTA)).strip().lower()
+            if confirm == 'y':
+                result = delete_facebook_entry_with_file(entry['id'])
+                if result['status'] in ('deleted', 'partial'):
+                    print_colored(f"[✓] {result['message']}", COLORS.GREEN)
+                else:
+                    print_colored(f"[!] {result['message']}", COLORS.RED)
+            else:
+                print_colored("Cancelled.", COLORS.YELLOW)
+            input("\nPress Enter to continue...")
+
+        # 9. Delete by album URL
+        elif choice == '9':
+            url = input(color_text("Enter the exact album URL: ", COLORS.MAGENTA)).strip()
+            if not url:
+                continue
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM facebook_entries WHERE url = %s", (url,))
+            count = cursor.fetchone()[0]
+            cursor.close()
+            conn.close()
+            if count == 0:
+                print_colored("[i] No entries found with that URL.", COLORS.YELLOW)
+                continue
+            print_colored(f"[i] Found {count} entries with that URL.", COLORS.BLUE)
+            delete_files = input(color_text("Also delete the actual files from disk? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y'
+            confirm = input(color_text(f"Delete {count} entries? (y/n): ", COLORS.RED)).strip().lower()
+            if confirm != 'y':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                continue
+            deleted = delete_facebook_entries_by_url(url, delete_files)
+            print_colored(f"[✓] Deleted {deleted} entries.", COLORS.GREEN)
+            input("\nPress Enter to continue...")
+
+        # 10. Delete by uploader
+        elif choice == '10':
+            uploader = input(color_text("Enter uploader name (case-sensitive): ", COLORS.MAGENTA)).strip()
+            if not uploader:
+                continue
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM facebook_entries WHERE uploader = %s", (uploader,))
+            count = cursor.fetchone()[0]
+            cursor.close()
+            conn.close()
+            if count == 0:
+                print_colored("[i] No entries found with that uploader.", COLORS.YELLOW)
+                continue
+            print_colored(f"[i] Found {count} entries by '{uploader}'.", COLORS.BLUE)
+            delete_files = input(color_text("Also delete the actual files from disk? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y'
+            confirm = input(color_text(f"Delete {count} entries? (y/n): ", COLORS.RED)).strip().lower()
+            if confirm != 'y':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                continue
+            deleted = delete_facebook_entries_by_uploader(uploader, delete_files)
+            print_colored(f"[✓] Deleted {deleted} entries.", COLORS.GREEN)
+            input("\nPress Enter to continue...")
+
+        # 11. Delete ALL
+        elif choice == '11':
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM facebook_entries")
+            count = cursor.fetchone()[0]
+            cursor.close()
+            conn.close()
+            if count == 0:
+                print_colored("[i] No Facebook entries at all.", COLORS.YELLOW)
+                continue
+            print_colored(f"[!] WARNING: This will delete ALL {count} Facebook entries!", COLORS.RED)
+            delete_files = input(color_text("Also delete the actual files from disk? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y'
+            confirm = input(color_text(f"Type 'yes' to confirm deletion of ALL {count} entries: ", COLORS.RED)).strip()
+            if confirm.lower() != 'yes':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                continue
+            deleted = delete_all_facebook_entries(delete_files)
+            print_colored(f"[✓] Deleted {deleted} entries.", COLORS.GREEN)
+            input("\nPress Enter to continue...")
+
+        # ============================================================
+        # 📦 IMPORT / EXPORT
+        # ============================================================
+
+        # 12. Import/Export submenu
+        elif choice == '12':
+            _facebook_import_export_menu()
+
+        # 0. Exit
         elif choice == '0':
             break
 

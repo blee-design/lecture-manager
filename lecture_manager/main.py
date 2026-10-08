@@ -21,7 +21,6 @@ from .file_manager import (
 from .web import run_web_server
 from .utils import print_colored, color_text, COLORS
 from .youtube import refresh_cookies
-from .facebook import download_facebook
 from .facebook_manager import facebook_menu
 from .upload import scan_and_match_youtube_videos, batch_upload_missing_mirrors
 from .question_bank import unified_question_menu
@@ -1160,8 +1159,7 @@ def main():
             ("📈 Show library dashboard", show_dashboard),
         ],
         '6': [
-            ("📘 Download Facebook video/photos", download_facebook),
-            ("📋 Manage Facebook downloads", facebook_menu),
+            ("📘 Facebook", facebook_menu),
         ],
         '7': [
             ("📡 Scan YouTube channel and match mirrors", scan_and_match_youtube_videos),
@@ -1196,6 +1194,13 @@ def main():
             '8': "🧰 EXTERNAL TOOLS",
             '9': "📚 SYLLABUS SETUP",
         }
+
+        # Single-item category → invoke directly, skip the pointless submenu
+        if len(items) == 1:
+            items[0][1]()
+            input("\nPress Enter to continue...")
+            return
+
         while True:
             print("\n" + "─" * 50)
             print_colored(f"  {category_names[category_key]}", COLORS.CYAN, bold=True)
