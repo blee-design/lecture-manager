@@ -672,12 +672,12 @@ def _process_album_files(file_paths, url, uploader=None, title=None):
     print()  # newline after progress
     print_colored(f"[✓] Album processed: {len(file_paths)} photos added to {album_folder}.", COLORS.GREEN)
 
-def _download_single_photo(url, custom_name=None, probe=None):
+def _download_single_photo(url, custom_name=None, probe=None, force=False):
     from .facebook_manager import add_facebook_entry, get_facebook_entry_by_url
     import subprocess, tempfile, shutil, re
 
     existing = get_facebook_entry_by_url(url)
-    if existing:
+    if existing and not force:
         print_colored(f"[i] URL already exists (ID: {existing['id']}). Skipping.", COLORS.YELLOW)
         return
 

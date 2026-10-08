@@ -181,17 +181,34 @@ def get_facebook_entry_by_url(url):
         print_colored(f"[!] Database error in get_facebook_entry_by_url: {e}", COLORS.RED)
         return None
 
+def find_missing_facebook_entries():
+    """FB entries whose file is not on disk (or whose hash is NULL)."""
+    entries = list_facebook_entries(limit=None)
+    missing = []
+    for e in entries:
+        fp = get_facebook_file_path(e)
+        if not fp or not os.path.exists(fp):
+            missing.append(e)
+    return missing
+
 def re_download_facebook_entry(entry):
     """
     Re-download a Facebook entry (video or photo) using its stored URL,
     and update the database entry with new file hash and original filename.
+
+    Passes force=True so the download proceeds even though a DB row
+    already exists for this URL.
     """
     from .facebook import _download_video, _download_single_photo
 
     if entry['type'] == 'video':
-        _download_video(entry['url'], custom_name=entry.get('original_filename'))
+        _download_video(entry['url'],
+                        custom_name=entry.get('original_filename'),
+                        force=True)
     else:
-        _download_single_photo(entry['url'], custom_name=entry.get('original_filename'))
+        _download_single_photo(entry['url'],
+                               custom_name=entry.get('original_filename'),
+                               force=True)
 
 def get_facebook_file_path(entry):
     """
@@ -860,10 +877,11 @@ def facebook_menu():
         print(" 11. Import Facebook entries from CSV")
         print(" 12. Import Facebook entries from JSON")
         print(" 13. Update entry metadata (title, uploader, notes)")
+        print(" 14. 🔄 Re-download missing files (bulk)")
         print("  0. Return to main menu")
         print("═" * 50)
 
-        choice = input(color_text("Choose an option (0-13): ", COLORS.MAGENTA)).strip()
+        choice = input(color_text("Choose an option (0-14): ", COLORS.MAGENTA)).strip()
 
         if choice == '1':
             entries = list_facebook_entries()
@@ -1072,6 +1090,107 @@ def facebook_menu():
             else:
                 print_colored("[!] No changes made.", COLORS.YELLOW)
             input("\nPress Enter to continue...")
+
+        elif choice == '14':
+            print_colored("[i] Scanning for missing Facebook files...", COLORS.BLUE)
+            missing = find_missing_facebook_entries()
+
+            if not missing:
+                print_colored("[✓] All Facebook entries have their files on disk.",
+                              COLORS.GREEN)
+                input("\nPress Enter to continue...")
+                continue
+
+            print()
+            print_colored(f"[!] {len(missing)} entr{'y' if len(missing) == 1 else 'ies'} "
+                          f"missing on disk:", COLORS.YELLOW)
+            print("─" * 70)
+            for i, e in enumerate(missing[:10], 1):
+                title = (e.get('title') or '')[:45]
+                uploader = (e.get('uploader') or '')[:18]
+                print(f"  {i:2}. [{e['type']:5}]  {uploader:18}  {title}")
+            if len(missing) > 10:
+                print(f"  ... and {len(missing) - 10} more")
+            print("─" * 70)
+
+            print()
+            print("How do you want to proceed?")
+            print("  1. Auto       — re-download all missing")
+            print("  2. Interactive — one at a time")
+            print("  0. Cancel")
+            mode = input(color_text("Choose (0-2): ", COLORS.MAGENTA)).strip()
+
+            if mode == '0' or not mode:
+                print_colored("Cancelled.", COLORS.YELLOW)
+                input("\nPress Enter to continue...")
+                continue
+
+            ok = 0
+            fail = 0
+            skip = 0
+
+            if mode == '1':
+                print_colored(f"\n[i] Re-downloading {len(missing)} entries...",
+                              COLORS.BLUE)
+                for i, e in enumerate(missing, 1):
+                    label = f"{e['type']} — {(e.get('title') or '')[:40]}"
+                    print(f"\n  [{i}/{len(missing)}] {label}")
+                    try:
+                        re_download_facebook_entry(e)
+                        # Re-fetch to pick up the new hash
+                        refreshed = get_facebook_entry_by_id(e['id']) or e
+                        fp = get_facebook_file_path(refreshed)
+                        if fp and os.path.exists(fp):
+                            print_colored("  [✓] Success.", COLORS.GREEN)
+                            ok += 1
+                        else:
+                            print_colored("  [!] Download ran, but file not found.",
+                                          COLORS.YELLOW)
+                            fail += 1
+                    except Exception as ex:
+                        print_colored(f"  [!] Failed: {ex}", COLORS.RED)
+                        fail += 1
+            else:  # mode == '2'
+                for i, e in enumerate(missing, 1):
+                    print()
+                    print(f"  [{i}/{len(missing)}] [{e['type']}] "
+                          f"{(e.get('title') or '')[:50]}")
+                    print(f"    Uploader : {e.get('uploader') or '(unknown)'}")
+                    print(f"    URL      : {(e.get('url') or '')[:75]}")
+                    action = input(color_text(
+                        "    Download? (y / n / q to quit): ",
+                        COLORS.MAGENTA)).strip().lower()
+                    if action == 'q':
+                        print_colored("Aborted.", COLORS.YELLOW)
+                        break
+                    if action != 'y':
+                        skip += 1
+                        continue
+                    try:
+                        re_download_facebook_entry(e)
+                        refreshed = get_facebook_entry_by_id(e['id']) or e
+                        fp = get_facebook_file_path(refreshed)
+                        if fp and os.path.exists(fp):
+                            print_colored("    [✓] Success.", COLORS.GREEN)
+                            ok += 1
+                        else:
+                            print_colored("    [!] Download ran, but file not found.",
+                                          COLORS.YELLOW)
+                            fail += 1
+                    except Exception as ex:
+                        print_colored(f"    [!] Failed: {ex}", COLORS.RED)
+                        fail += 1
+
+            print()
+            print("═" * 50)
+            print_colored("  RE-DOWNLOAD SUMMARY", COLORS.CYAN, bold=True)
+            print("═" * 50)
+            print(f"  ✅ Success : {ok}")
+            print(f"  ❌ Failed  : {fail}")
+            print(f"  ⏭️  Skipped : {skip}")
+            print("═" * 50)
+            input("\nPress Enter to continue...")
+
 
         elif choice == '0':
             break
