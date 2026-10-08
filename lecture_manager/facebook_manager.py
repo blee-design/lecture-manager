@@ -387,36 +387,41 @@ def add_facebook_lecture(url_or_id):
         print_colored("[!] Please provide a full Facebook URL.", COLORS.RED)
         return
 
-    # ---- Resolve to canonical ID using yt-dlp ----
-        # ---- Resolve to canonical ID using yt-dlp ----
-    facebook_id = None
-    try:
-        _ensure_cookie_file()
-        ydl_opts = {
-            'quiet': True,
-            'extract_flat': False,   # get full info, not just metadata
-            'ignoreerrors': True,
-            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url_or_id, download=False)
-            if info and isinstance(info, dict):
-                # Try multiple possible fields
-                facebook_id = info.get('id') or info.get('display_id') or info.get('webpage_url_basename')
-                if not facebook_id:
-                    # Some Facebook videos have ID in 'url' or 'original_url'
-                    if info.get('url'):
-                        import re
-                        match = re.search(r'facebook\.com/watch/?\?v=(\d+)', info['url'])
-                        if match:
-                            facebook_id = match.group(1)
-    except Exception as e:
-        print_colored(f"[!] Could not resolve URL: {e}", COLORS.YELLOW)
+    # ---- Resolve to canonical ID: regex first, yt-dlp only as last resort ----
+    # A regex extraction works for >95% of Facebook URLs and takes
+    # microseconds. The old code always ran yt-dlp here — which for a
+    # photo page costs 10–20 seconds just to fetch an ID we already had.
+    from .facebook import _extract_facebook_id, _fast_probe
 
-    # ---- Fallback to old extraction method ----
-    if not facebook_id:
-        from .facebook import _extract_facebook_id
-        facebook_id = _extract_facebook_id(url_or_id)
+    facebook_id = _extract_facebook_id(url_or_id)
+    probe = None
+
+    # If the regex gave us a plausible ID, try a cheap HTTP probe to
+    # confirm and grab title/uploader. Only reach for yt-dlp when the
+    # regex AND the probe both fail — that's genuinely rare.
+    if facebook_id:
+        try:
+            probe = _fast_probe(url_or_id, timeout=8)
+        except Exception:
+            probe = None
+
+    if not facebook_id or not probe:
+        try:
+            _ensure_cookie_file()
+            ydl_opts = {
+                'quiet': True,
+                'extract_flat': False,
+                'ignoreerrors': True,
+                'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url_or_id, download=False)
+                if info and isinstance(info, dict):
+                    facebook_id = facebook_id or info.get('id') \
+                                   or info.get('display_id') \
+                                   or info.get('webpage_url_basename')
+        except Exception as e:
+            print_colored(f"[i] ID resolution fallback failed: {e}", COLORS.YELLOW)
 
     if not facebook_id:
         print_colored("[!] Could not extract a valid Facebook ID from the URL.", COLORS.RED)
@@ -452,10 +457,10 @@ def add_facebook_lecture(url_or_id):
 
     if _is_video_link(url_or_id):
         print_colored("[i] Detected as video/Reel link.", COLORS.BLUE)
-        _download_video(url_or_id, custom_name)
+        _download_video(url_or_id, custom_name, probe=probe)
     else:
         print_colored("[i] Detected as photo link.", COLORS.BLUE)
-        _download_single_photo(url_or_id, custom_name)
+        _download_single_photo(url_or_id, custom_name, probe=probe)
 
 def add_facebook_entry(facebook_id, entry_type, title, uploader, url, file_hash=None, original_filename=None, notes=None):
     """

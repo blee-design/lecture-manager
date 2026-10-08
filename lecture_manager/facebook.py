@@ -45,6 +45,214 @@ def _parse_netscape_cookies(path):
         pass
     return cookies
 
+# ---------------------------------------------------------------------------
+#  Facebook title / uploader extraction helpers
+# ---------------------------------------------------------------------------
+
+# Titles like these carry no information — reject them.
+_FB_GENERIC_TITLES = {
+    'facebook', 'watch', 'video', 'photo', 'reel', 'live', 'album',
+    'photos', 'videos', 'facebook video', 'facebook watch',
+    'facebook photo', 'facebook reel', 'facebook album',
+    'video | facebook', 'photo | facebook', 'reel | facebook',
+    'photos | facebook', 'watch | facebook',
+}
+
+# Path segments that are structural, not page names.
+_FB_URL_SLUG_IGNORE = {
+    'share', 'photo', 'photos', 'watch', 'reel', 'reels', 'videos',
+    'posts', 'permalink', 'story', 'login', 'signup', 'p', 'groups',
+    'profile.php', 'media', 'permalink.php', 'photo.php', 'video.php',
+    'v', 'www', 'm', 'business', 'pg', 'pages', 'people',
+}
+
+
+def _clean_facebook_title(raw, uploader=None):
+    """
+    Turn a raw og:title (or yt-dlp title) into something usable, or None.
+
+    - Strips Facebook's trailing fluff (" | Facebook", " - Facebook", …).
+    - Rejects generic noise ("Facebook", "Video", "Photo", …).
+    - Rejects the title if it's identical to the uploader name.
+    - Rejects titles that are just a bare filename (e.g. "1234_5678.jpg").
+    - Strips "Photo by X" / "Video by X" prefixes when the uploader is known.
+    """
+    if not raw:
+        return None
+    t = str(raw).strip()
+
+    # Strip trailing " | Facebook" style suffixes (case-insensitive)
+    for suffix in (
+        ' | facebook', ' - facebook', ' – facebook', ' — facebook',
+        ' | facebook watch', ' - facebook watch', ' | watch',
+        ' on facebook', ' | meta',
+    ):
+        if t.lower().endswith(suffix):
+            t = t[:-len(suffix)].rstrip()
+
+    # Reject generic titles
+    if t.lower().strip(' |') in _FB_GENERIC_TITLES:
+        return None
+
+    # Reject if the title equals the uploader name
+    if uploader and t.lower() == str(uploader).lower():
+        return None
+
+    # Reject bare filenames: "1234_5678.jpg", "abc-123.png", etc.
+    if re.match(r'^[\w\-]+\.(jpg|jpeg|png|gif|webp|mp4|webm|mov|avi)$',
+                t, re.IGNORECASE):
+        return None
+
+    # Strip "<Kind> by <uploader>" prefixes
+    if uploader:
+        u = re.escape(str(uploader))
+        for pat in (
+            rf'^(?:Photo|Video|Reel|Live|Post)\s+by\s+{u}\b[\s:\-–—|]*',
+        ):
+            t = re.sub(pat, '', t, flags=re.IGNORECASE)
+
+    t = t.strip(' -–—:|')
+    if len(t) < 3:
+        return None
+    if len(t) > 200:
+        t = t[:197].rsplit(' ', 1)[0] + '…'
+    return t
+
+
+def _extract_caption_from_description(desc):
+    """
+    Try to find the actual caption inside og:description.
+
+    Facebook typically formats it as:
+        "Photo by X on Facebook"                              ← no caption
+        "Sunset at Pokhara — by Some Page on Facebook"        ← good caption
+        "Album: Nepal 2081 · 12 photos · Facebook"            ← album blurb
+    """
+    if not desc:
+        return None
+
+    text = str(desc).strip()
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+
+        # Strip common boilerplate prefixes/suffixes
+        line = re.sub(r'^(?:Album|Photos?|Videos?)\s*[:\-–—]\s*',
+                      '', line, flags=re.IGNORECASE)
+        line = re.sub(r'\s*[·•]\s*\d+\s+photos?\s*',
+                      '', line, flags=re.IGNORECASE)
+        line = re.sub(r'\s*[·•]\s*Facebook\s*$',
+                      '', line, flags=re.IGNORECASE)
+        line = re.sub(r'\s+on\s+Facebook\.?\s*$',
+                      '', line, flags=re.IGNORECASE)
+        line = re.sub(r'\s*[—\-–]\s*by\s+.+?$', '', line)
+        line = re.sub(r'^by\s+[^—\-–]+?\s*[—\-–]\s*', '', line,
+                      flags=re.IGNORECASE)
+        line = line.strip(' -–—:|')
+
+        if len(line) < 5:
+            continue
+        if line.lower() in _FB_GENERIC_TITLES:
+            continue
+
+        if len(line) > 150:
+            line = line[:147].rsplit(' ', 1)[0] + '…'
+        return line
+
+    return None
+
+
+def _extract_uploader_from_url(url):
+    """
+    Best-effort page-name extraction from a Facebook URL.
+
+    Handles:
+      facebook.com/pages/<Name>/<id>       →  <Name>
+      facebook.com/<slug>/photos/...       →  <slug>
+      facebook.com/<slug>/videos/...       →  <slug>
+      facebook.com/profile.php?id=...      →  None (no name in URL)
+    """
+    if not url:
+        return None
+
+    # facebook.com/pages/<Name>/<id>  — the most informative pattern
+    m = re.search(r'facebook\.com/pages/([^/?#]+)', url, re.IGNORECASE)
+    if m:
+        name = m.group(1).replace('-', ' ').replace('_', ' ').replace('.', ' ')
+        return ' '.join(name.split()).strip()
+
+    # facebook.com/<slug>/...  — fallback
+    m = re.search(r'facebook\.com/([^/?#]+)', url, re.IGNORECASE)
+    if m:
+        slug = m.group(1)
+        if slug.lower() not in _FB_URL_SLUG_IGNORE:
+            name = slug.replace('-', ' ').replace('_', ' ').replace('.', ' ')
+            return ' '.join(name.split()).strip()
+
+    return None
+
+
+def _pick_photo_title(probe, uploader=None, custom_name=None):
+    """
+    Choose the best available title for a single Facebook photo.
+
+    Priority:
+      1. custom_name (user override)
+      2. Cleaned og:title
+      3. Real caption from og:description
+      4. Uploader-based fallback ("Photo by X")
+      5. Last resort: None (caller decides)
+    """
+    if custom_name:
+        return custom_name
+
+    if probe:
+        t = _clean_facebook_title(probe.get('title'), uploader=uploader)
+        if t:
+            return t
+
+        cap = _extract_caption_from_description(probe.get('description'))
+        if cap:
+            return cap
+
+    if uploader and uploader.lower() not in ('unknown', 'facebook', ''):
+        return f"Photo by {uploader}"
+
+    return None
+
+
+def _pick_album_title(probe, uploader=None, photo_count=None, custom_name=None):
+    """
+    Choose the best available title for a Facebook album.
+    Same priority as photos, with photo count appended when known.
+    """
+    def _suffix(t):
+        if not t:
+            return t
+        if photo_count and photo_count > 0:
+            return f"{t} ({photo_count} photo" + ("s" if photo_count != 1 else "") + ")"
+        return t
+
+    if custom_name:
+        return _suffix(custom_name)
+
+    if probe:
+        t = _clean_facebook_title(probe.get('title'), uploader=uploader)
+        if t:
+            return _suffix(t)
+
+        cap = _extract_caption_from_description(probe.get('description'))
+        if cap:
+            return _suffix(cap)
+
+    if uploader and uploader.lower() not in ('unknown', 'facebook', ''):
+        return _suffix(f"Album by {uploader}")
+
+    if photo_count and photo_count > 0:
+        return f"Facebook Album ({photo_count} photo" + ("s" if photo_count != 1 else "") + ")"
+
+    return "Facebook Album"
 
 def _fast_probe(url, timeout=8):
     """
@@ -153,25 +361,13 @@ def _fast_probe(url, timeout=8):
         kind = 'photo'
 
     # ---- Extract uploader ----
-    uploader = None
+    uploader = _extract_uploader_from_url(url)
 
-    # 1. From URL path: facebook.com/<slug>/...
-    m = re.search(r'facebook\.com/([^/?#]+)', url, re.I)
-    if m:
-        slug = m.group(1)
-        IGNORE = {
-            'share', 'photo', 'photos', 'watch', 'reel', 'videos', 'posts',
-            'permalink', 'story', 'login', 'signup', 'p', 'groups', 'profile.php',
-            'media', 'permalink.php', 'photo.php', 'watch', 'reel',
-        }
-        if slug.lower() not in IGNORE:
-            uploader = slug.replace('.', ' ').strip()
-
-    # 2. From og:title patterns
+    # Fallback: og:title patterns ("Photo by X on Facebook", "X - Watch", …)
     if not uploader and og_title:
         for pat in (
             r'^(?:Post|Video|Photo|Reel|Live)\s+by\s+(.+?)(?:\s+on\s+Facebook)?$',
-            r'^(.+?)\s*[-–]\s*(?:Watch|Video|Reel|Photo)',
+            r'^(.+?)\s*[-–—]\s*(?:Watch|Video|Reel|Photo|Album)',
         ):
             m = re.match(pat, og_title, re.I)
             if m:
@@ -291,22 +487,23 @@ def _download_album_with_db(url, uploader=None):
         if proc.returncode != 0:
             print_colored(f"[!] Download failed with code {proc.returncode}", COLORS.RED)
             return
-        _process_album_files(tmpdir, url, uploader)
+        _process_album_files(tmpdir, url, uploader, probe=probe)
 
 def _extract_facebook_title(info):
     if not info or not isinstance(info, dict):
         return None
-    title = info.get('title', '').strip()
-    generic = ['video', 'facebook video', 'reel', 'photo', '']
-    if title.lower() not in generic:
-        return title
-    desc = info.get('description', '').strip()
-    if desc:
-        lines = desc.split('\n')
-        first = lines[0].strip()
-        if first:
-            return first[:200]
-    uploader = info.get('uploader', '').strip()
+
+    uploader = (info.get('uploader') or info.get('channel') or
+                info.get('creator') or '').strip() or None
+
+    t = _clean_facebook_title(info.get('title'), uploader=uploader)
+    if t:
+        return t
+
+    cap = _extract_caption_from_description(info.get('description'))
+    if cap:
+        return cap
+
     if uploader:
         return f"Video from {uploader}"
     return None
@@ -387,27 +584,8 @@ def _download_video(url, custom_name=None, force=False, probe=None):
     # Extract ID from URL even when probe succeeded
     facebook_id = _extract_facebook_id(url)
 
-    # Only hit yt-dlp for metadata if we're still missing something
-    if not title or not uploader or not facebook_id:
-        try:
-            ydl_opts_info = {
-                'quiet': True,
-                'no_warnings': True,
-                'extract_flat': False,
-                'ignoreerrors': True,
-                **cookie_opt,
-            }
-            with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if info and isinstance(info, dict):
-                    if not title:
-                        title = _extract_facebook_title(info)
-                    if not uploader:
-                        uploader = (info.get('uploader') or '').strip()
-                    if not facebook_id:
-                        facebook_id = info.get('id') or _extract_facebook_id(url)
-        except Exception as e:
-            print_colored(f"[i] Metadata fallback: {e}", COLORS.YELLOW)
+    # Metadata is now backfilled from the download's info dict (see below),
+    # so the separate metadata-only yt-dlp pass is no longer needed.
 
     if not title:
         title = "Facebook Video"
@@ -437,7 +615,26 @@ def _download_video(url, custom_name=None, force=False, probe=None):
     try:
         with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
             print_colored("[⏳] Downloading Facebook video...", COLORS.BLUE)
-            ydl.download([url])
+            # extract_info(download=True) returns the metadata dict AND
+            # performs the download in a single extraction pass. The old
+            # code called .download([url]) which internally re-extracts
+            # everything a second time.
+            _info = ydl.extract_info(url, download=True)
+
+        # Backfill any metadata that the probe couldn't provide.
+        if _info and isinstance(_info, dict):
+            if not title:
+                title = _extract_facebook_title(_info)
+            if not uploader:
+                uploader = (_info.get('uploader') or '').strip()
+            if not facebook_id:
+                facebook_id = _info.get('id') or _extract_facebook_id(url)
+        if not title:
+            title = "Facebook Video"
+        if not uploader:
+            uploader = _extract_facebook_uploader_from_url(url) or "Unknown"
+        if not facebook_id:
+            facebook_id = _extract_facebook_id(url)
 
         import glob
         pattern = os.path.join(DOWNLOAD_DIR, f"{temp_base}.*")
@@ -626,7 +823,7 @@ def download_facebook():
     else:
         _download_single_photo(url, custom_name if custom_name else None, probe=probe)
 
-def _process_album_files(file_paths, url, uploader=None, title=None):
+def _process_album_files(file_paths, url, uploader=None, title=None, probe=None):
     from .facebook_manager import add_facebook_entry
     import shutil, os, hashlib
 
@@ -637,7 +834,10 @@ def _process_album_files(file_paths, url, uploader=None, title=None):
         uploader = _extract_facebook_uploader_from_url(url)
 
     if not title:
-        title = f"Album from {uploader}" if uploader != "Unknown" else "Facebook Album"
+        # Use the smart picker — og:title, then og:description caption,
+        # then "Album by X", with photo count appended.
+        title = _pick_album_title(probe, uploader=uploader,
+                                  photo_count=len(file_paths))
 
     # Create a unique folder name from the URL
     url_hash = hashlib.md5(url.encode()).hexdigest()[:12]
@@ -672,6 +872,77 @@ def _process_album_files(file_paths, url, uploader=None, title=None):
     print()  # newline after progress
     print_colored(f"[✓] Album processed: {len(file_paths)} photos added to {album_folder}.", COLORS.GREEN)
 
+def _download_photo_direct(og_image_url, source_url, custom_name=None, probe=None, force=False):
+    """
+    Fast-path photo download: fetch og:image directly with requests.
+    Returns True on success, False to signal "fall back to gallery-dl".
+    """
+    import requests, tempfile, shutil
+
+    from .facebook_manager import add_facebook_entry, get_facebook_entry_by_url
+    existing = get_facebook_entry_by_url(source_url)
+    if existing and not force:
+        print_colored(f"[i] URL already exists (ID: {existing['id']}). Skipping.", COLORS.YELLOW)
+        return True   # nothing to do, treat as success
+
+    uploader = (probe.get('uploader') if probe else None) \
+               or _extract_facebook_uploader_from_url(source_url)
+    title = (probe.get('title') if probe else None) or custom_name or "Facebook Photo"
+
+    headers = {
+        'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                       'AppleWebKit/537.36 (KHTML, like Gecko) '
+                       'Chrome/131.0.0.0 Safari/537.36'),
+    }
+    try:
+        resp = requests.get(og_image_url, headers=headers, timeout=15, stream=True)
+        if resp.status_code != 200:
+            return False
+        ctype = resp.headers.get('Content-Type', '').split(';')[0].strip().lower()
+    except Exception:
+        return False
+
+    # Reject anything that isn't a real image (og:image occasionally points to
+    # an HTML error page or a video thumbnail that we don't want as a photo).
+    if not ctype.startswith('image/'):
+        return False
+
+    ext_map = {
+        'image/jpeg': '.jpg', 'image/jpg': '.jpg',
+        'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif',
+    }
+    ext = ext_map.get(ctype, '.jpg')
+
+    # Write to temp, compute hash, move into place
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        for chunk in resp.iter_content(chunk_size=65536):
+            if chunk:
+                tmp.write(chunk)
+        tmp_path = tmp.name
+
+    file_hash = compute_md5(tmp_path)
+    target_dir = os.path.join(ROOT_DIR, 'facebook', 'photos')
+    os.makedirs(target_dir, exist_ok=True)
+    final_path = os.path.join(target_dir, f"{file_hash}{ext}")
+
+    if os.path.exists(final_path):
+        os.remove(final_path)
+    shutil.move(tmp_path, final_path)
+    print_colored(f"[✓] Photo stored: {final_path}", COLORS.GREEN)
+
+    add_facebook_entry(
+        facebook_id=file_hash,
+        entry_type='photo',
+        title=title,
+        uploader=uploader,
+        url=source_url,
+        file_hash=file_hash,
+        original_filename=custom_name or (probe.get('title') if probe else None)
+                          or "Facebook Photo",
+        notes=None,
+    )
+    return True
+
 def _download_single_photo(url, custom_name=None, probe=None, force=False):
     from .facebook_manager import add_facebook_entry, get_facebook_entry_by_url
     import subprocess, tempfile, shutil, re
@@ -680,6 +951,18 @@ def _download_single_photo(url, custom_name=None, probe=None, force=False):
     if existing and not force:
         print_colored(f"[i] URL already exists (ID: {existing['id']}). Skipping.", COLORS.YELLOW)
         return
+
+    # ---- Fast path: single photo with a known og:image ----
+    # Facebook serves a direct image URL in og:image for every public photo
+    # page. Fetching it with requests takes ~1s vs 5–15s for gallery-dl.
+    # Only used when the probe is confident this is a single photo (not an
+    # album, not ambiguous) and og:image is present.
+    if probe and probe.get('kind') == 'photo' and probe.get('og_image'):
+        print_colored("[⏳] Downloading photo directly (og:image)...", COLORS.BLUE)
+        if _download_photo_direct(probe['og_image'], url, custom_name, probe, force):
+            return
+        print_colored("[i] Direct download failed — falling back to gallery-dl.",
+                      COLORS.YELLOW)
 
     # ---- Metadata: probe first, fall back only if needed ----
     uploader = None
@@ -697,7 +980,11 @@ def _download_single_photo(url, custom_name=None, probe=None, force=False):
     if not uploader or uploader == "Unknown":
         uploader = _extract_facebook_uploader_from_url(url)
     if not title:
-        title = custom_name or "Facebook Photo"
+        title = _pick_photo_title(probe, uploader=uploader,
+                                  custom_name=custom_name)
+    if not title:
+        # Absolute last resort — better than "Facebook Photo"
+        title = "Facebook Photo"
 
     _ensure_cookie_file()
     cookie_file = 'cookies.txt' if os.path.exists('cookies.txt') else None
@@ -729,7 +1016,7 @@ def _download_single_photo(url, custom_name=None, probe=None, force=False):
 
         if len(files) > 1:
             print_colored(f"[i] Detected {len(files)} photos – processing as album.", COLORS.YELLOW)
-            _process_album_files(files, url, uploader, title)
+            _process_album_files(files, url, uploader, title, probe=probe)
             return
 
         downloaded_file = files[0]
@@ -753,7 +1040,7 @@ def _download_single_photo(url, custom_name=None, probe=None, force=False):
             uploader=uploader,
             url=url,
             file_hash=file_hash,
-            original_filename=os.path.basename(downloaded_file),
+            original_filename=(custom_name or title or os.path.basename(downloaded_file)),
             notes=None,
         )
         if entry_id:
