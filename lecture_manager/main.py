@@ -421,7 +421,10 @@ def syllabus_menu():
             else:
                 default_name = f"syllabus_{current['syllabus_key']}_{ts}.json"
 
-            path = input(f"Output path [{default_name}]: ").strip() or default_name
+            from .utils import resolve_export_path, export_default_hint
+            hint = export_default_hint('syllabus', default_name)
+            path = input(f"Output path [{hint}]: ").strip() or default_name
+            path = resolve_export_path(path, 'syllabus')
 
             try:
                 if scope == "2":
@@ -436,9 +439,11 @@ def syllabus_menu():
         # 8. Import syllabus from JSON
         # ==============================================================
         elif choice == "8":
-            path = input("Path to syllabus JSON file: ").strip()
-            if not path:
+            from .utils import resolve_import_path
+            raw = input("Path to syllabus JSON file (bare name searches exports/syllabus/): ").strip()
+            if not raw:
                 continue
+            path = resolve_import_path(raw, 'syllabus')
             # Ask whether to import into the current syllabus, or create a new one
             print()
             print("Import into:")

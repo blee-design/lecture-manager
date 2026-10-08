@@ -43,8 +43,61 @@ COLOR_MAP = {
     'white': COLORS.WHITE
 }
 
-# ---------- HTML → terminal rendering ----------
+# ---------------------------------------------------------------------------
+#  Export / import directory management
+# ---------------------------------------------------------------------------
+# Code-repo root (parent of the lecture_manager package)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+EXPORTS_ROOT = os.path.join(PROJECT_ROOT, 'exports')
 
+_EXPORT_CATEGORIES = {
+    'questions': os.path.join(EXPORTS_ROOT, 'questions'),
+    'lectures':  os.path.join(EXPORTS_ROOT, 'lectures'),
+    'facebook':  os.path.join(EXPORTS_ROOT, 'facebook'),
+    'syllabus':  os.path.join(EXPORTS_ROOT, 'syllabus'),
+    'exams':     os.path.join(EXPORTS_ROOT, 'exams'),
+}
+
+
+def resolve_export_path(filename, category='questions'):
+    """
+    Turn a possibly-bare filename into a full path under exports/<category>/.
+    Creates the directory if needed. Absolute paths and paths containing a
+    directory separator are returned unchanged.
+    """
+    if not filename:
+        return filename
+    if os.path.isabs(filename) or os.sep in filename or '/' in filename:
+        return filename
+    folder = _EXPORT_CATEGORIES.get(category, _EXPORT_CATEGORIES['questions'])
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, filename)
+
+
+def resolve_import_path(filename, category='questions'):
+    """
+    Look up a possibly-bare filename: try exports/<category>/ first, then
+    CWD. Returns a full path (may not exist — caller reports the error).
+    """
+    if not filename:
+        return filename
+    if os.path.isabs(filename) or os.sep in filename or '/' in filename:
+        return filename
+    folder = _EXPORT_CATEGORIES.get(category, _EXPORT_CATEGORIES['questions'])
+    candidate = os.path.join(folder, filename)
+    if os.path.exists(candidate):
+        return candidate
+    if os.path.exists(filename):
+        return filename
+    return candidate   # nothing exists — caller reports "not found: <this path>"
+
+
+def export_default_hint(category, filename):
+    """Return a display path like 'exports/questions/foo.csv' for prompts."""
+    folder = _EXPORT_CATEGORIES.get(category, _EXPORT_CATEGORIES['questions'])
+    return os.path.relpath(os.path.join(folder, filename), PROJECT_ROOT)
+
+# ---------- HTML → terminal rendering ----------
 def _wrap_inline(node, ctx, open_code, close_code):
     """Wrap the rendered children of an inline tag with ANSI codes."""
     inner = ''.join(_walk_html(c, ctx) for c in node.children)

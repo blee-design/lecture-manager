@@ -5,7 +5,10 @@ import csv
 import json
 from .db import get_connection, TABLE_NAME
 from .youtube import extract_video_id
-from .utils import clean_field, get_display_title, print_colored, color_text, COLORS
+from .utils import (
+    clean_field, get_display_title, print_colored, color_text, COLORS,
+    resolve_export_path, resolve_import_path, export_default_hint,
+)
 
 # ----- Helper: get export data (full or basic) -----
 def get_export_data(full=False):
@@ -60,11 +63,13 @@ def export_csv():
 
     suffix = "-full" if full else "-basic"
     default_name = f"lectures_export{suffix}.csv"
-    filename = input(color_text(f"Enter CSV filename (default: {default_name}): ", COLORS.MAGENTA)).strip()
+    hint = export_default_hint('lectures', default_name)
+    filename = input(color_text(f"Enter CSV filename (default: {hint}): ", COLORS.MAGENTA)).strip()
     if not filename:
         filename = default_name
     if not filename.endswith('.csv'):
         filename += '.csv'
+    filename = resolve_export_path(filename, 'lectures')
 
     columns = _get_export_columns(full)
     try:
@@ -237,10 +242,12 @@ def import_csv():
     print("\n" + "═" * 50)
     print_colored("  IMPORT FROM CSV", COLORS.CYAN, bold=True)
     print("═" * 50)
-    filename = input(color_text("Enter CSV filename: ", COLORS.MAGENTA)).strip()
-    if not filename:
+    raw = input(color_text("Enter CSV filename (bare name searches exports/lectures/): ",
+                            COLORS.MAGENTA)).strip()
+    if not raw:
         print_colored("[!] No filename given.", COLORS.RED)
         return
+    filename = resolve_import_path(raw, 'lectures')
     if not os.path.exists(filename):
         print_colored(f"[!] File {filename} not found.", COLORS.RED)
         return

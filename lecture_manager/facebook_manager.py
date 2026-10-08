@@ -8,8 +8,11 @@ import shutil
 import glob
 from datetime import datetime
 from urllib.parse import quote
-from .utils import sanitize_filename, color_text, print_colored, COLORS, compute_md5
-from .utils import ROOT_DIR, TRASH_DIR
+from .utils import (
+    sanitize_filename, color_text, print_colored, COLORS, compute_md5,
+    ROOT_DIR, TRASH_DIR,
+    resolve_export_path, resolve_import_path, export_default_hint,
+)
 from .youtube import _ensure_cookie_file
 from .db import get_connection
 from .file_sharing import _load_share_db, _save_share_db, SHARE_DIR
@@ -617,11 +620,14 @@ def export_facebook_csv():
     if not rows:
         print_colored("[i] No Facebook entries to export.", COLORS.YELLOW)
         return
-    filename = input(color_text("Enter CSV filename (default: facebook_export.csv): ", COLORS.MAGENTA)).strip()
+    default_name = "facebook_export.csv"
+    hint = export_default_hint('facebook', default_name)
+    filename = input(color_text(f"Enter CSV filename (default: {hint}): ", COLORS.MAGENTA)).strip()
     if not filename:
-        filename = "facebook_export.csv"
+        filename = default_name
     if not filename.endswith('.csv'):
         filename += '.csv'
+    filename = resolve_export_path(filename, 'facebook')
     fieldnames = list(rows[0].keys())
     try:
         with open(filename, 'w', newline='', encoding='utf-8') as f:
@@ -665,10 +671,12 @@ def export_facebook_json():
 def import_facebook_csv():
     """Import Facebook entries from a CSV file."""
     import csv
-    filename = input(color_text("Enter CSV filename: ", COLORS.MAGENTA)).strip()
-    if not filename:
+    raw = input(color_text("Enter CSV filename (bare name searches exports/facebook/): ",
+                            COLORS.MAGENTA)).strip()
+    if not raw:
         print_colored("[!] No filename given.", COLORS.RED)
         return
+    filename = resolve_import_path(raw, 'facebook')
     if not os.path.exists(filename):
         print_colored(f"[!] File {filename} not found.", COLORS.RED)
         return

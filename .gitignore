@@ -8,8 +8,8 @@ __pycache__/
 *.py~
 *.so
 
-dist/
 build/
+dist/
 *.egg-info/
 .eggs/
 
@@ -30,47 +30,57 @@ cookies.txt
 cookies
 .lecture_manager_config.json
 .pypirc
+.secrets/
 
 # ============================================================
-#  User data (safe to regenerate)
+#  User data — regenerable exports
 # ============================================================
 lectures_export*.json
 lectures_export*.csv
 questions_export*.json
 questions_export*.csv
 questions_export*.xml
+questions_export_*.html
+questions-*.xml
 facebook_export*.json
 facebook_export*.csv
-questions_export_*.html
-*.json
-*_export_*.txt 
-questions-*.xml
-test.txt
+*_export_*.txt
 exam*.html
 
+# ============================================================
+#  Local runtime directories
+# ============================================================
 downloads/
 .lecture_trash/
 backups/
 *.sql
 
 # ============================================================
-#  Local sample / scratch files
+#  Exports folder (keep the folder, ignore contents)
 # ============================================================
-questions.txt
-questions_sample.txt
-termux_installation_sample.txt
-"Prompt for ChatGPT.txt"
+exports/**
+!exports/.gitkeep
+
+# ============================================================
+#  Local sample / scratch files
+#  (paths reflect the reorganized layout)
+# ============================================================
+data/samples/questions.txt
+data/samples/questions_sample.txt
+data/samples/Prompt_for_ChatGPT.txt
+docs/termux_installation_sample.txt
+docs/upload_guide.html
+docs/questions_formatting_prompt.txt
+
+# Generic scratch
 *_import_*
-*_export.*
 *.bak
 *.temp.*
 *.zip
 *.kate-swp
-questions_formatting_prompt.txt
-
 
 # ============================================================
-#  Packed snapshots
+#  Packed snapshots (kept in dist/, ignored there)
 # ============================================================
 lecture-manager-*.py
 
@@ -95,8 +105,7 @@ desktop.ini
 *.log
 
 # ============================================================
-#  Docs that shouldn't ship
+#  Personal syllabus seeds — not for redistribution
 # ============================================================
-upload_guide.html
-Prompt for ChatGPT.txt
-exports/
+data/seeds/*.json
+!data/seeds/.gitkeep

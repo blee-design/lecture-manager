@@ -18,7 +18,11 @@ from collections import defaultdict
 from decimal import Decimal
 from types import SimpleNamespace
 from .db import get_connection
-from .utils import print_colored, color_text, COLORS, clean_field, html_to_terminal, sanitize_for_json
+from .utils import (
+    print_colored, color_text, COLORS, clean_field, html_to_terminal,
+    sanitize_for_json, resolve_export_path, resolve_import_path,
+    export_default_hint,
+)
 from .question_converter.exceptions import (
     ConverterError,
     ValidationError,
@@ -2621,9 +2625,11 @@ def question_import_menu():
                 '3': ("JSON", 'json'),
                 '4': ("XML", 'xml'),
             }[choice]
-            filepath = input(color_text(f"{label} file path: ", COLORS.MAGENTA)).strip()
-            if not filepath:
+            raw = input(color_text(f"{label} file path (bare name searches exports/questions/): ",
+                                    COLORS.MAGENTA)).strip()
+            if not raw:
                 continue
+            filepath = resolve_import_path(raw, 'questions')
             source = input(color_text("Source name (optional): ", COLORS.MAGENTA)).strip() or None
 
             # ---- NEW: preview before asking about duplicates ----
@@ -2669,6 +2675,9 @@ def question_import_menu():
                 argv = shlex.split(args_str)
                 parsed = parser.parse_args(argv)
                 input_file = parsed.input
+                # Bare filename → try exports/questions/ first, then CWD
+                if not _os.path.isabs(input_file) and _os.sep not in input_file:
+                    input_file = resolve_import_path(input_file, 'questions')
                 if not _os.path.exists(input_file):
                     print_colored(f"[!] File not found: {input_file}", COLORS.RED)
                     continue
@@ -2724,7 +2733,9 @@ def question_export_menu():
                 print_colored("[i] No questions to export.", COLORS.YELLOW)
                 continue
             default = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            outfile = input(color_text(f"Output (default: {default}): ", COLORS.MAGENTA)).strip() or default
+            hint = export_default_hint('questions', default)
+            outfile = input(color_text(f"Output (default: {hint}): ", COLORS.MAGENTA)).strip() or default
+            outfile = resolve_export_path(outfile, 'questions')
             try:
                 export_to_file(qs, outfile, 'txt', args=SimpleNamespace(verbose=True))
                 print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
@@ -2740,7 +2751,9 @@ def question_export_menu():
             if not qs:
                 print_colored("[i] No questions to export.", COLORS.YELLOW); continue
             default = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            outfile = input(color_text(f"Output (default: {default}): ", COLORS.MAGENTA)).strip() or default
+            hint = export_default_hint('questions', default)
+            outfile = input(color_text(f"Output (default: {hint}): ", COLORS.MAGENTA)).strip() or default
+            outfile = resolve_export_path(outfile, 'questions')
             try:
                 export_to_file(qs, outfile, 'json', args=SimpleNamespace(verbose=True))
                 print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
@@ -2753,7 +2766,9 @@ def question_export_menu():
             if not qs:
                 print_colored("[i] No questions to export.", COLORS.YELLOW); continue
             default = f"questions_export_moodle_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
-            outfile = input(color_text(f"Output (default: {default}): ", COLORS.MAGENTA)).strip() or default
+            hint = export_default_hint('questions', default)
+            outfile = input(color_text(f"Output (default: {hint}): ", COLORS.MAGENTA)).strip() or default
+            outfile = resolve_export_path(outfile, 'questions')
             try:
                 export_to_file(qs, outfile, 'xml', args=SimpleNamespace(verbose=True))
                 print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
@@ -2766,7 +2781,9 @@ def question_export_menu():
             if not qs:
                 print_colored("[i] No questions to export.", COLORS.YELLOW); continue
             default = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-            outfile = input(color_text(f"Output (default: {default}): ", COLORS.MAGENTA)).strip() or default
+            hint = export_default_hint('questions', default)
+            outfile = input(color_text(f"Output (default: {hint}): ", COLORS.MAGENTA)).strip() or default
+            outfile = resolve_export_path(outfile, 'questions')
             try:
                 export_to_file(qs, outfile, 'html', args=SimpleNamespace(verbose=True))
                 print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
@@ -2780,7 +2797,9 @@ def question_export_menu():
             _last_filtered_questions = filtered
             from .question_converter.exam_output import create_exam_html
             default = f"exam_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-            outfile = input(color_text(f"Output (default: {default}): ", COLORS.MAGENTA)).strip() or default
+            hint = export_default_hint('exams', default)
+            outfile = input(color_text(f"Output (default: {hint}): ", COLORS.MAGENTA)).strip() or default
+            outfile = resolve_export_path(outfile, 'exams')
             t = input(color_text("Time limit in minutes (default 90): ", COLORS.MAGENTA)).strip()
             time_min = int(t) if t.isdigit() else 90
             create_exam_html(filtered, outfile, verbose=True, time_minutes=time_min, pass_marks=45)
@@ -2794,7 +2813,9 @@ def question_export_menu():
             if not fmt:
                 continue
             default = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{fmt}"
-            outfile = input(color_text(f"Output (default: {default}): ", COLORS.MAGENTA)).strip() or default
+            hint = export_default_hint('questions', default)
+            outfile = input(color_text(f"Output (default: {hint}): ", COLORS.MAGENTA)).strip() or default
+            outfile = resolve_export_path(outfile, 'questions')
             try:
                 from .question_converter import export_to_file
                 export_to_file(filtered, outfile, fmt, args=SimpleNamespace(verbose=True))
@@ -4230,11 +4251,14 @@ def export_questions_csv():
         print_colored("[i] No questions to export.", COLORS.YELLOW)
         return
 
-    filename = input(color_text("Enter CSV filename (default: questions_export_full.csv): ", COLORS.MAGENTA)).strip()
+    default_name = "questions_export_full.csv"
+    hint = export_default_hint('questions', default_name)
+    filename = input(color_text(f"Enter CSV filename (default: {hint}): ", COLORS.MAGENTA)).strip()
     if not filename:
-        filename = "questions_export_full.csv"
+        filename = default_name
     if not filename.endswith('.csv'):
         filename += '.csv'
+    filename = resolve_export_path(filename, 'questions')
 
     import json
     from decimal import Decimal
@@ -4318,8 +4342,10 @@ def import_questions_csv():
     print("═" * 50)
     print("Expects a CSV with all scalar columns + options_json, pairs_json, hints_json.\n")
 
-    filename = input(color_text("Enter CSV filename: ", COLORS.MAGENTA)).strip()
-    if not filename or not os.path.exists(filename):
+    raw = input(color_text("Enter CSV filename (bare name searches exports/questions/): ",
+                            COLORS.MAGENTA)).strip()
+    filename = resolve_import_path(raw, 'questions')
+    if not raw or not os.path.exists(filename):
         print_colored("[!] File not found.", COLORS.RED)
         return
 
@@ -4483,11 +4509,14 @@ def export_questions_txt():
         print_colored("[i] No questions to export.", COLORS.YELLOW)
         return
 
-    filename = input(color_text("Enter TXT filename (default: questions_export.txt): ", COLORS.MAGENTA)).strip()
+    default_name = "questions_export.txt"
+    hint = export_default_hint('questions', default_name)
+    filename = input(color_text(f"Enter TXT filename (default: {hint}): ", COLORS.MAGENTA)).strip()
     if not filename:
-        filename = "questions_export.txt"
+        filename = default_name
     if not filename.endswith('.txt'):
         filename += '.txt'
+    filename = resolve_export_path(filename, 'questions')
 
     field_order = [
         'question_date', 'institution', 'level', 'paper', 'group',
@@ -4679,9 +4708,11 @@ def import_questions_txt():
     print("Context lines (Date, Institution, Level, Paper, Group, etc.)")
     print("apply to all following question blocks until changed.\n")
 
-    filename = input(color_text("Enter Text filename (e.g., questions.txt): ", COLORS.MAGENTA)).strip()
-    if not filename or not os.path.exists(filename):
-        print_colored("[!] File not found.", COLORS.RED)
+    raw = input(color_text("Enter Text filename (bare name searches exports/questions/): ",
+                            COLORS.MAGENTA)).strip()
+    filename = resolve_import_path(raw, 'questions') if raw else ''
+    if not raw or not os.path.exists(filename):
+        print_colored(f"[!] File not found: {filename or raw}", COLORS.RED)
         return
 
     try:
@@ -4840,11 +4871,14 @@ def export_questions_json():
         print_colored("[i] No questions to export.", COLORS.YELLOW)
         return
 
-    filename = input(color_text("Enter JSON filename (default: questions_export.json): ", COLORS.MAGENTA)).strip()
+    default_name = "questions_export.json"
+    hint = export_default_hint('questions', default_name)
+    filename = input(color_text(f"Enter JSON filename (default: {hint}): ", COLORS.MAGENTA)).strip()
     if not filename:
-        filename = "questions_export.json"
+        filename = default_name
     if not filename.endswith('.json'):
         filename += '.json'
+    filename = resolve_export_path(filename, 'questions')
 
     total = len(rows)
     print_colored(f"[i] Exporting {total} questions to {filename}…", COLORS.BLUE)
@@ -4885,9 +4919,11 @@ def import_questions_json():
     print("Each object can have keys matching the database columns (except 'id', 'created_at', 'updated_at').")
     print("If a duplicate is found (same date, institution, level, paper, group, question_number), you can skip, overwrite, or abort.\n")
 
-    filename = input(color_text("Enter JSON filename: ", COLORS.MAGENTA)).strip()
-    if not filename or not os.path.exists(filename):
-        print_colored("[!] File not found.", COLORS.RED)
+    raw = input(color_text("Enter JSON filename (bare name searches exports/questions/): ",
+                            COLORS.MAGENTA)).strip()
+    filename = resolve_import_path(raw, 'questions') if raw else ''
+    if not raw or not os.path.exists(filename):
+        print_colored(f"[!] File not found: {filename or raw}", COLORS.RED)
         return
 
     try:
