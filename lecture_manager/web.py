@@ -1023,13 +1023,38 @@ def question_paper():
     display_alias = alias or (first_q.get('alias') or '')
     display_level = level or (first_q.get('level') or '')
 
+    # ---- Summary stats for the paper footer ----
+    from collections import Counter as _Counter
+    total_questions = len(results)
+    total_marks = sum(
+        int(q['marks']) for q in results
+        if q.get('marks') and str(q.get('marks')).isdigit()
+    )
+    type_breakdown = _Counter(
+        (q.get('type') or 'essay') for q in results
+    ).most_common()
+    sources_in_paper = sorted({
+        (q.get('source') or '').strip()
+        for q in results
+        if (q.get('source') or '').strip()
+    })
+    # Resolve paper → display name for the header
+    from .file_manager import _papers as _get_papers
+    _pk = paper or (first_q.get('paper') or '')
+    _paper_obj = _get_papers().get(_pk) if _pk else None
+
     return render_template('question_paper.html',
                            grouped=grouped,
                            date=date,
                            institution=institution,
                            level=display_level,
                            alias=display_alias,
-                           paper=paper)
+                           paper=paper,
+                           total_questions=total_questions,
+                           total_marks=total_marks,
+                           type_breakdown=type_breakdown,
+                           sources_in_paper=sources_in_paper,
+                           paper_obj=_paper_obj)
 
 @app.route('/question/suggestions')
 def question_suggestions():

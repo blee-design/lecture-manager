@@ -15,13 +15,22 @@
         <h4 class="mt-1 text-muted">
           {% if date %}<i class="bi bi-calendar"></i> Exam Date: {{ date }}{% else %}Exam Date: <span class="text-warning">(not specified)</span>{% endif %}
         </h4>
-        {% if paper %}
+        {% if paper_obj %}
+          {% set _ps = lookup_paper(paper_obj.paper_key) %}
+          {% if _ps and _ps.syllabus %}
+            <div class="small text-white-50 mt-2">📚 {{ _ps.syllabus.display_name }}{% if _ps.syllabus.level %} (Level {{ _ps.syllabus.level }}){% endif %}</div>
+          {% endif %}
+          <span class="badge bg-info text-dark mt-2 px-3 py-2">📄 {{ paper_obj.display_name }}</span>
+        {% elif paper %}
           <span class="badge bg-info text-dark mt-2 px-3 py-2">{{ paper }}</span>
         {% endif %}
         <hr class="my-3 border-light">
         <p class="mb-0 small">
           <i class="bi bi-clock"></i> Exam Date: {{ date if date else 'N/A' }}
-          {% if paper %} | <i class="bi bi-file-text"></i> {{ paper }}{% endif %}
+          {% if total_questions is defined and total_questions %}
+            · <i class="bi bi-list-ol"></i> {{ total_questions }} questions
+            · <i class="bi bi-star"></i> {{ total_marks }} marks
+          {% endif %}
         </p>
       </div>
 
@@ -32,7 +41,16 @@
           <strong>Instructions:</strong> Answer all questions. Each question carries marks as indicated.
         </div>
 
+          <!-- Answer-key toggle -->
+        <div class="form-check form-switch mb-4">
+          <input class="form-check-input" type="checkbox" id="showAnswersToggle">
+          <label class="form-check-label" for="showAnswersToggle">
+            <i class="bi bi-eye"></i> Show answer key
+          </label>
+        </div>
+
         <!-- Loop through groups and subjects -->
+        {% set ns = namespace(last_pid=None) %}
         {% for group, subjects in grouped.items()|sort %}
           <div class="group-section mt-4">
             <h3 class="border-bottom pb-2 text-primary">
@@ -46,7 +64,21 @@
                 </h4>
                 <ul class="list-unstyled ps-3">
                   {% for q in qs|sort(attribute='question_number') %}
-                    <li class="question-item mb-4 p-3 bg-light rounded">
+
+                    {# ---------- Reading passage: print once when it changes ---------- #}
+                    {% if q.passage_id and q.passage_id != ns.last_pid %}
+                      {% set _p = get_passage(q.passage_id) %}
+                      {% if _p and _p.content %}
+                        <li class="passage-block mb-3 p-3 bg-white border rounded" style="list-style: none;">
+                          <div class="fw-semibold small text-primary mb-1">📖 Reading Passage</div>
+                          <div class="small" style="white-space: pre-wrap;">{{ _p.content }}</div>
+                        </li>
+                        {% set ns.last_pid = q.passage_id %}
+                      {% endif %}
+                    {% endif %}
+
+                    <li class="question-item mb-4 p-3 bg-light rounded"
+                        data-qtype="{{ q.type or 'essay' }}">
                       {% if q.notes %}
                         <div class="mt-1 text-warning small">
                           <i class="bi bi-pencil"></i> {{ q.notes }}
@@ -67,21 +99,28 @@
                                 <i class="bi bi-bookmark"></i> {{ q.chapter }}
                               </span>
                             {% endif %}
+                            {% if q.syllabus_code %}
+                              <span class="badge bg-info ms-1">{{ q.syllabus_code }}</span>
+                            {% endif %}
+                            {% set _et = (q.exam_type or 'open')|lower %}
+                            {% if _et != 'open' %}
+                              <span class="badge bg-warning text-dark ms-1">{{ _et|capitalize }}</span>
+                            {% endif %}
                           </div>
 
-                          <!-- Syllabus Code badges -->
-                          <div class="mb-2">
-                            {% if q.marks %}
-                              <span class="badge bg-warning text-dark fs-6 me-2">...</span>
+                          {% if q.source %}
+                            {% set _src_parts = [] %}
+                            {% for _s in q.source.split('\n') %}
+                              {% if _s.strip() and _s.strip() not in _src_parts %}
+                                {% set _ = _src_parts.append(_s.strip()) %}
+                              {% endif %}
+                            {% endfor %}
+                            {% if _src_parts %}
+                              <div class="small text-info mb-1">🔖 {{ _src_parts | join(' · ') }}</div>
                             {% endif %}
-                            {% if q.chapter %}
-                              <span class="badge bg-secondary me-2">{{ q.chapter }}</span>
-                            {% endif %}
-                            {% if q.syllabus_code %}
-                              <span class="badge bg-info">{{ q.syllabus_code }}</span>
-                            {% endif %}
-                          </div>
-                          <!-- Question text: only use brackets when both exist -->
+                          {% endif %}
+
+                          <!-- Question stem -->
                           <div class="question-text">
                             {% if q.nepali_transcription and q.english_transcription %}
                               <span>{{ q.nepali_transcription|safe }}</span>
@@ -92,6 +131,111 @@
                               <span>{{ q.english_transcription|safe }}</span>
                             {% endif %}
                           </div>
+
+                          {# ---------- MULTICHOICE ---------- #}
+                          {% if q.type == 'multichoice' and q.options %}
+                            <ul class="list-unstyled mt-2 mb-0 option-list">
+                              {% for opt in q.options %}
+                                <li class="option-item {% if opt.correct %}correct-option{% endif %}">
+                                  <span class="option-letter">{{ 'ABCDEFGH'[loop.index0] }}.</span>
+                                  <span class="option-text">{{ opt.text|safe }}</span>
+                                  {% if opt.correct %}<span class="correct-tick">✓</span>{% endif %}
+                                </li>
+                              {% endfor %}
+                            </ul>
+
+                          {# ---------- TRUE / FALSE ---------- #}
+                          {% elif q.type == 'truefalse' and q.options %}
+                            <ul class="list-unstyled mt-2 mb-0 option-list">
+                              {% for opt in q.options %}
+                                <li class="option-item {% if opt.correct %}correct-option{% endif %}">
+                                  <span class="tf-box tf-empty">( )</span>
+                                  <span class="tf-box correct-tick">(✓)</span>
+                                  <span class="option-text">{{ opt.text }}</span>
+                                </li>
+                              {% endfor %}
+                            </ul>
+                            {% if q.feedback_true %}
+                              <div class="answer-only small text-success mt-1">
+                                <strong>If answered True:</strong> {{ q.feedback_true|safe }}
+                              </div>
+                            {% endif %}
+                            {% if q.feedback_false %}
+                              <div class="answer-only small text-success mt-1">
+                                <strong>If answered False:</strong> {{ q.feedback_false|safe }}
+                              </div>
+                            {% endif %}
+
+                          {# ---------- MATCHING ---------- #}
+                          {% elif q.type == 'matching' and q.pairs %}
+                            <div class="matching-question mt-2">
+                              <div class="question-mode">
+                                <div class="fw-semibold small">Sub-questions</div>
+                                <ol class="mb-2">
+                                  {% for pair in q.pairs %}
+                                    <li>{{ pair.subquestion }}</li>
+                                  {% endfor %}
+                                </ol>
+                                <div class="fw-semibold small">Answer bank</div>
+                                {% set seen_answers = [] %}
+                                {% for pair in q.pairs %}
+                                  {% if pair.answer not in seen_answers %}
+                                    {% set _ = seen_answers.append(pair.answer) %}
+                                  {% endif %}
+                                {% endfor %}
+                                <ul class="mb-2">
+                                  {% for ans in seen_answers|sort %}
+                                    <li>{{ ans }}</li>
+                                  {% endfor %}
+                                </ul>
+                              </div>
+                              <div class="answer-mode">
+                                <table class="table table-sm table-bordered mb-1">
+                                  <tbody>
+                                    {% for pair in q.pairs %}
+                                      <tr>
+                                        <td>{{ pair.subquestion }}</td>
+                                        <td class="text-center">↔</td>
+                                        <td>{{ pair.answer }}</td>
+                                      </tr>
+                                    {% endfor %}
+                                  </tbody>
+                                </table>
+                                <div class="small text-muted">
+                                  Shuffle answers: {{ 'Yes' if q.shuffle_answers else 'No' }} ·
+                                  Show number correct: {{ 'Yes' if q.show_num_correct else 'No' }}
+                                </div>
+                                {% if q.hints %}
+                                  <div class="mt-2 small">
+                                    <strong>💡 Hints:</strong>
+                                    <ul class="mb-0">
+                                      {% for h in q.hints %}
+                                        <li>
+                                          {{ h.hint_text or h.text or '' }}
+                                          {% if h.clear_incorrect %}<span class="badge bg-secondary ms-1">clears incorrect</span>{% endif %}
+                                          {% if h.show_num_correct %}<span class="badge bg-secondary ms-1">shows count</span>{% endif %}
+                                        </li>
+                                      {% endfor %}
+                                    </ul>
+                                  </div>
+                                {% endif %}
+                              </div>
+                            </div>
+                          {% endif %}
+
+                          {# ---------- ESSAY grader info (answer mode only) ---------- #}
+                          {% if q.type == 'essay' and q.grader_info %}
+                            <div class="answer-only small text-secondary mt-2">
+                              <strong>📝 Grader notes:</strong> {{ q.grader_info|safe }}
+                            </div>
+                          {% endif %}
+
+                          {# ---------- General feedback (answer mode only) ---------- #}
+                          {% if q.general_feedback %}
+                            <div class="answer-only alert alert-info py-2 mt-2 mb-0 small">
+                              <strong>💡 Explanation:</strong> {{ q.general_feedback|safe }}
+                            </div>
+                          {% endif %}
                         </div>
                       </div>
                     </li>
@@ -107,6 +251,39 @@
           </div>
         {% endfor %}
       </div>
+
+      <!-- Paper summary -->
+      {% if total_questions %}
+      <div class="card-body border-top bg-light">
+        <h5 class="text-secondary mb-3">📊 Paper Summary</h5>
+        <div class="row g-3 small">
+          <div class="col-md-3">
+            <div class="fw-semibold">Questions</div>
+            <div class="fs-4 text-primary">{{ total_questions }}</div>
+          </div>
+          <div class="col-md-3">
+            <div class="fw-semibold">Total marks</div>
+            <div class="fs-4 text-primary">{{ total_marks }}</div>
+          </div>
+          <div class="col-md-6">
+            <div class="fw-semibold">By type</div>
+            <div class="d-flex flex-wrap gap-1 mt-1">
+              {% for t, n in type_breakdown %}
+                <span class="badge bg-secondary">{{ t }}: {{ n }}</span>
+              {% endfor %}
+            </div>
+          </div>
+          {% if sources_in_paper %}
+          <div class="col-12 mt-2">
+            <div class="fw-semibold">🔖 Sources</div>
+            <ul class="mb-0 mt-1">
+              {% for s in sources_in_paper %}<li>{{ s }}</li>{% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
 
       <!-- Footer -->
       <div class="card-footer bg-light d-flex justify-content-between align-items-center">
@@ -154,5 +331,64 @@
       display: none !important;
     }
   }
+
+  /* ===== Answer-key toggle behaviour ===== */
+  .option-list {
+    padding-left: 1.5rem;
+  }
+  .option-item {
+    padding: 0.35rem 0.5rem;
+    border-radius: 0.35rem;
+    line-height: 1.5;
+  }
+  .option-letter {
+    font-weight: 600;
+    margin-right: 0.5rem;
+    color: #6c757d;
+  }
+  .tf-box {
+    display: inline-block;
+    width: 1.6em;
+    font-family: monospace;
+  }
+
+  /* Correct-answer decorations: hidden until body.show-answers */
+  .correct-tick { display: none; }
+  body.show-answers .correct-option {
+    background: #d1fae5;
+    border-left: 3px solid #10b981;
+  }
+  body.show-answers .option-item.correct-option .correct-tick {
+    display: inline;
+    color: #059669;
+    font-weight: bold;
+    margin-left: 0.4rem;
+  }
+  body.show-answers .option-item.correct-option .tf-empty { display: none; }
+
+  /* Answer-only blocks */
+  .answer-only { display: none; }
+  body.show-answers .answer-only { display: block; }
+
+  /* Matching: question mode vs answer mode */
+  .matching-question .answer-mode { display: none; }
+  body.show-answers .matching-question .question-mode { display: none; }
+  body.show-answers .matching-question .answer-mode { display: block; }
+
+  /* Passage block sits between question items, full width */
+  .passage-block {
+    border-left: 4px solid #6366f1 !important;
+    font-family: inherit;
+  }
 </style>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var t = document.getElementById('showAnswersToggle');
+    if (!t) return;
+    t.addEventListener('change', function () {
+      document.body.classList.toggle('show-answers', this.checked);
+    });
+  });
+</script>
 {% endblock %}

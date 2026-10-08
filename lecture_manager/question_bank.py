@@ -226,7 +226,7 @@ def search_questions_by_chapter(chapter_pattern):
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
-    return rows
+    return _attach_children_to_questions(rows)
 
 def _should_clear_english(nepali, english):
     """Return True if english is non‑empty and identical to nepali (ignoring case/trim)."""
@@ -898,6 +898,59 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
     print_colored(f"[✓] Question added with ID: {qid}", COLORS.GREEN)
     return qid
 
+def _attach_children_to_questions(rows):
+    """
+    Enrich bare question rows with their options, pairs, and hints in a
+    single batched query per child table. Mutates and returns `rows`.
+    """
+    if not rows:
+        return rows
+
+    ids = [r['id'] for r in rows]
+    placeholders = ','.join(['%s'] * len(ids))
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute(
+        f"SELECT * FROM question_options "
+        f"WHERE question_id IN ({placeholders}) "
+        f"ORDER BY question_id, display_order", ids)
+    opts_by_qid = {}
+    for o in cursor.fetchall():
+        try:
+            o['correct'] = float(o.get('fraction') or 0) > 0
+        except (TypeError, ValueError):
+            o['correct'] = False
+        opts_by_qid.setdefault(o['question_id'], []).append(o)
+
+    cursor.execute(
+        f"SELECT * FROM question_matching_pairs "
+        f"WHERE question_id IN ({placeholders}) "
+        f"ORDER BY question_id, display_order", ids)
+    pairs_by_qid = {}
+    for p in cursor.fetchall():
+        pairs_by_qid.setdefault(p['question_id'], []).append(p)
+
+    cursor.execute(
+        f"SELECT * FROM question_hints "
+        f"WHERE question_id IN ({placeholders}) "
+        f"ORDER BY question_id, hint_number", ids)
+    hints_by_qid = {}
+    for h in cursor.fetchall():
+        hints_by_qid.setdefault(h['question_id'], []).append(h)
+
+    cursor.close()
+    conn.close()
+
+    for r in rows:
+        qid = r['id']
+        r['options'] = opts_by_qid.get(qid, [])
+        r['pairs']   = pairs_by_qid.get(qid, [])
+        r['hints']   = hints_by_qid.get(qid, [])
+
+    return rows
+
 def get_question_by_id(qid):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -988,7 +1041,7 @@ def get_questions_by_criteria(date=None, institution=None, level=None, alias=Non
         rows = [r for r in rows
                 if pattern.search(r.get('syllabus_code') or '')]
 
-    return rows
+    return _attach_children_to_questions(rows)
 
 def get_all_questions(sort_by='question_date', order='DESC', search=None):
     conn = get_connection()
@@ -1071,7 +1124,7 @@ def search_questions_all_fields(search_term):
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
-    return rows
+    return _attach_children_to_questions(rows)
 
 def update_question(qid, **kwargs):
     options = kwargs.pop('options', None)
@@ -1469,7 +1522,39 @@ def _display_paper(questions, show_answers=False):
         print(f"     {combined_level}")
     if date_str:
         print(f"     {color_text(date_str, COLORS.MAGENTA)}")
+
+    # ---- Resolved syllabus + paper name ----
+    _syl_info = resolve_question_syllabus(first)
+    if _syl_info.get('paper_key'):
+        try:
+            from .file_manager import _papers as _get_papers
+            from . import syllabus_config as _SC
+            _p = _get_papers().get(_syl_info['paper_key'])
+            if _p:
+                print()
+                _sid = _p.get('syllabus_id')
+                if _sid:
+                    _sylls = {s['id']: s for s in _SC.get_syllabi(active_only=False)}
+                    _syl = _sylls.get(_sid)
+                    if _syl:
+                        _lvl = f"  (Level {_syl['level']})" if _syl.get('level') else ""
+                        print(f"     {color_text('📚', COLORS.CYAN)} {_syl['display_name']}{_lvl}")
+                print(f"     {color_text('📄', COLORS.CYAN)} {_p['display_name']}")
+        except Exception:
+            pass
+
+    # ---- Quick summary line ----
+    _total_marks = sum(
+        int(q['marks']) for q in questions
+        if q.get('marks') and str(q.get('marks')).isdigit()
+    )
+    _qword = "question" if len(questions) == 1 else "questions"
+    print()
+    print(f"     {color_text(f'{len(questions)} {_qword} · {_total_marks} marks', COLORS.WHITE)}")
     print_colored("  " + _rule(), COLORS.CYAN)
+
+    # ---- Passage deduplication state (persists across all subjects) ----
+    _last_printed_passage_id = None
 
     # Group: subject → chapter → questions  (fall back to group → subject)
     from collections import defaultdict
@@ -1514,7 +1599,41 @@ def _display_paper(questions, show_answers=False):
                 _code = (q.get('syllabus_code') or '').strip()
                 if _code:
                     line += f"  {color_text(f'[{_code}]', COLORS.MAGENTA)}"
+                _et = (q.get('exam_type') or 'open').lower()
+                if _et != 'open':
+                    _et_label = EXAM_TYPE_LABELS.get(_et, _et.capitalize())
+                    line += f"  {color_text(f'[{_et_label}]', COLORS.YELLOW)}"
                 print(line)
+
+                # ---- Source tag (own line, only when set) ----
+                # The DB value can contain literal newlines (double-import
+                # artefact), which would render the tag twice. Split on
+                # newlines, trim, dedupe, and rejoin with a middot.
+                _src_raw = (q.get('source') or '').strip()
+                if _src_raw:
+                    _src_lines = []
+                    for _s in _src_raw.split('\n'):
+                        _s = _s.strip()
+                        if _s and _s not in _src_lines:
+                            _src_lines.append(_s)
+                    if _src_lines:
+                        _src = ' · '.join(_src_lines)
+                        print(f"           {color_text('🔖 ' + _src, COLORS.CYAN)}")
+
+                # ---- Reading passage: print only when it changes ----
+                # Same passage shared by consecutive questions appears once,
+                # above the first question in the run.
+                _pid = q.get('passage_id')
+                if _pid and _pid != _last_printed_passage_id:
+                    _p = get_passage(_pid)
+                    if _p and _p.get('content'):
+                        print()
+                        print(f"        {color_text('📖  Reading Passage', COLORS.CYAN, bold=True)}")
+                        print_colored("        " + "─" * (_QB_WIDTH - 12), COLORS.CYAN)
+                        for _ln in _p['content'].split('\n'):
+                            print(f"           {_ln}" if _ln.strip() else "")
+                        _last_printed_passage_id = _pid
+                        print()          # ← blank line before the questions
 
                 nep = html_to_terminal(q.get('nepali_transcription') or '').strip()
                 eng = html_to_terminal(q.get('english_transcription') or '').strip()
@@ -1536,27 +1655,136 @@ def _display_paper(questions, show_answers=False):
                 if q.get('notes'):
                     print(f"           {color_text('Note:', COLORS.YELLOW)} {q['notes']}")
 
-                if show_answers:
-                    if qtype in ('multichoice', 'truefalse'):
-                        for opt in q.get('options', []):
-                            marker = color_text(" ✓", COLORS.GREEN, bold=True) if opt.get('correct') else ""
-                            print(f"              - {opt.get('text', '')}{marker}")
-                    elif qtype == 'matching':
-                        for pair in q.get('pairs', []):
-                            print(f"              {pair.get('subquestion','')}  "
-                                  f"{color_text('↔', COLORS.CYAN)}  {pair.get('answer','')}")
-                    if q.get('general_feedback'):
-                        _print_labeled(
-                            color_text('💡', COLORS.GREEN),
-                            q['general_feedback'],
-                            indent="              ",
-                        )
-                    if qtype == 'essay' and q.get('grader_info'):
+                # ---- Type-specific structure (choices / pairs always shown;
+                #      ✓ marks and explanations only when answers are requested) ----
+                if qtype == 'multichoice':
+                    options = q.get('options', [])
+                    if options:
+                        print()
+                        for idx, opt in enumerate(options):
+                            letter = chr(ord('A') + idx)
+                            text = opt.get('text', '')
+                            if show_answers and opt.get('correct'):
+                                marker = color_text('✓ ', COLORS.GREEN, bold=True)
+                                print(f"           {marker}{letter}. {text}")
+                            else:
+                                print(f"             {letter}. {text}")
+
+                elif qtype == 'truefalse':
+                    options = q.get('options', [])
+                    if options:
+                        print()
+                        for opt in options:
+                            is_correct = opt.get('correct', False)
+                            box = (color_text('(✓)', COLORS.GREEN, bold=True)
+                                   if (show_answers and is_correct) else '( )')
+                            print(f"           {box} {opt.get('text', '')}")
+                        if show_answers:
+                            if q.get('feedback_true'):
+                                _print_labeled(
+                                    color_text('If answered True :', COLORS.GREEN),
+                                    q['feedback_true'],
+                                    indent="           ",
+                                )
+                            if q.get('feedback_false'):
+                                _print_labeled(
+                                    color_text('If answered False:', COLORS.GREEN),
+                                    q['feedback_false'],
+                                    indent="           ",
+                                )
+
+                elif qtype == 'matching':
+                    pairs = q.get('pairs', [])
+                    if pairs:
+                        print()
+                        if show_answers:
+                            # Full pairing
+                            for idx, pair in enumerate(pairs, 1):
+                                print(f"           {idx}. {pair.get('subquestion','')}  "
+                                      f"{color_text('↔', COLORS.CYAN)}  {pair.get('answer','')}")
+                            print()
+                            shuffle_text = 'Yes' if q.get('shuffle_answers', True) else 'No'
+                            show_num_text = 'Yes' if q.get('show_num_correct', False) else 'No'
+                            print(f"           Shuffle answers  : {shuffle_text}")
+                            print(f"           Show num correct : {show_num_text}")
+
+                            _hints = q.get('hints', [])
+                            if _hints:
+                                print()
+                                print_colored("           Hints:", COLORS.WHITE)
+                                for _hi, _h in enumerate(_hints, 1):
+                                    _extra = []
+                                    if _h.get('clear_incorrect'):
+                                        _extra.append("clears incorrect")
+                                    if _h.get('show_num_correct'):
+                                        _extra.append("shows count")
+                                    _suffix = f"  ({', '.join(_extra)})" if _extra else ""
+                                    print(f"             Hint {_hi}: {_h.get('text', '')}{_suffix}")
+                        else:
+                            # Subquestions numbered, answers alphabetised in a bank
+                            print_colored("           Sub-questions:", COLORS.WHITE)
+                            for idx, pair in enumerate(pairs, 1):
+                                print(f"             {idx}. {pair.get('subquestion','')}")
+                            print()
+                            print_colored("           Answer bank:", COLORS.WHITE)
+                            seen = []
+                            for pair in pairs:
+                                ans = pair.get('answer', '')
+                                if ans not in seen:
+                                    seen.append(ans)
+                            for ans in sorted(seen):
+                                print(f"             • {ans}")
+
+                elif qtype == 'essay':
+                    if show_answers and q.get('grader_info'):
+                        print()
                         _print_labeled(
                             color_text('📝 Grader:', COLORS.GREEN),
                             q['grader_info'],
-                            indent="              ",
+                            indent="           ",
                         )
+
+                # ---- General feedback (answer mode only) ----
+                if show_answers and q.get('general_feedback'):
+                    print()
+                    _print_labeled(
+                        color_text('💡 Explanation:', COLORS.GREEN),
+                        q['general_feedback'],
+                        indent="           ",
+                    )
+
+    # ---- End-of-paper summary ----
+    from collections import Counter as _Counter
+    _tc = _Counter((q.get('type') or 'essay') for q in questions)
+
+    print()
+    print_colored("  " + _rule(), COLORS.CYAN)
+    print()
+    print_colored("  📊  PAPER SUMMARY", COLORS.CYAN, bold=True)
+    print_colored("  " + "─" * (_QB_WIDTH - 4), COLORS.CYAN)
+
+    print(f"     {'Questions':<14}: {len(questions)}")
+    print(f"     {'Total marks':<14}: {_total_marks}")
+    if _tc:
+        print(f"     {'By type':<14}: " +
+              "  ·  ".join(f"{t} {n}" for t, n in sorted(_tc.items())))
+
+    _all_sources = set()
+    for q in questions:
+        _s_raw = (q.get('source') or '').strip()
+        if not _s_raw:
+            continue
+        for _s in _s_raw.split('\n'):
+            _s = _s.strip()
+            if _s:
+                _all_sources.add(_s)
+    _all_sources = sorted(_all_sources)
+    if _all_sources:
+        print()
+        print_colored("  🔖  Sources", COLORS.CYAN, bold=True)
+        print_colored("  " + "─" * (_QB_WIDTH - 4), COLORS.CYAN)
+        for _s in _all_sources:
+            print(f"     • {_s}")
 
     print()
     print_colored("  " + _rule(), COLORS.CYAN)
@@ -4813,7 +5041,7 @@ def get_questions_by_chapter(chapter_code):
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
-    return rows
+    return _attach_children_to_questions(rows)
 
 def get_distinct_chapters_like(search_term):
     conn = get_connection()
