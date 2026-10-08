@@ -63,7 +63,7 @@ def export_import_submenu():
     """Sub‑menu for all import/export operations (main menu)."""
     while True:
         print("\n" + "═" * 50)
-        print_colored("  EXPORT / IMPORT", COLORS.CYAN, bold=True)
+        print_colored("  📤 EXPORT / IMPORT  ·  LECTURES", COLORS.CYAN, bold=True)
         print("═" * 50)
         print("  1. Export to CSV")
         print("  2. Export to JSON")
@@ -1127,6 +1127,7 @@ def main():
             ("✏️ Update a lecture", update_lecture),
             ("🗑️ Delete a lecture", delete_lecture),
             ("🔎 Search lectures", search_all),
+            ("📤 Export / Import lectures (CSV, JSON)", export_import_submenu),
         ],
         '2': [
             ("⬇️ Download a video (from existing record)", download_existing),
@@ -1147,7 +1148,6 @@ def main():
             ("🏷️ Backfill hash naming (rename files to MD5)", backfill_hash_naming),
         ],
         '4': [
-            ("📤 Export/Import (CSV, JSON)", export_import_submenu),
             ("⚙️ Edit database configuration", edit_config),
         ],
         '5': [
@@ -1184,7 +1184,7 @@ def main():
             '1': "📚 LECTURE MANAGEMENT",
             '2': "🎬 YOUTUBE LOCAL OPERATIONS",
             '3': "📁 FILE SYSTEM & MAINTENANCE",
-            '4': "📦 EXPORT / IMPORT & CONFIG",
+            '4': "⚙️ SYSTEM CONFIGURATION",
             '5': "🌐 WEB & DASHBOARD",
             '6': "📘 FACEBOOK",
             '7': "☁️ YOUTUBE UPLOAD & MIRROR MANAGEMENT",
@@ -1223,7 +1223,7 @@ def main():
         print("  1. 📚 Lecture Management")
         print("  2. 🎬 YouTube Local Operations")
         print("  3. 📁 File System & Maintenance")
-        print("  4. 📦 Export / Import & Config")
+        print("  4. ⚙️ System Configuration")
         print("  5. 🌐 Web & Dashboard")
         print("  6. 📘 Facebook")
         print("  7. ☁️ YouTube Upload & Mirror Management")
