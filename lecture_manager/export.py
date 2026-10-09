@@ -98,11 +98,13 @@ def export_json():
 
     suffix = "-full" if full else "-basic"
     default_name = f"lectures_export{suffix}.json"
-    filename = input(color_text(f"Enter JSON filename (default: {default_name}): ", COLORS.MAGENTA)).strip()
+    hint = export_default_hint('lectures', default_name)
+    filename = input(color_text(f"Enter JSON filename (default: {hint}): ", COLORS.MAGENTA)).strip()
     if not filename:
         filename = default_name
     if not filename.endswith('.json'):
         filename += '.json'
+    filename = resolve_export_path(filename, 'lectures')
 
     columns = _get_export_columns(full)
     data = [dict(zip(columns, row)) for row in rows]
@@ -266,10 +268,13 @@ def import_json():
     print("\n" + "═" * 50)
     print_colored("  IMPORT FROM JSON", COLORS.CYAN, bold=True)
     print("═" * 50)
-    filename = input(color_text("Enter JSON filename: ", COLORS.MAGENTA)).strip()
-    if not filename:
+    raw = input(color_text(
+        "Enter JSON filename (bare name searches exports/lectures/): ",
+        COLORS.MAGENTA)).strip()
+    if not raw:
         print_colored("[!] No filename given.", COLORS.RED)
         return
+    filename = resolve_import_path(raw, 'lectures')
     if not os.path.exists(filename):
         print_colored(f"[!] File {filename} not found.", COLORS.RED)
         return

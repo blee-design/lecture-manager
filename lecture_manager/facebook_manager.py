@@ -651,11 +651,16 @@ def export_facebook_json():
     if not rows:
         print_colored("[i] No Facebook entries to export.", COLORS.YELLOW)
         return
-    filename = input(color_text("Enter JSON filename (default: facebook_export.json): ", COLORS.MAGENTA)).strip()
+    default_name = "facebook_export.json"
+    hint = export_default_hint('facebook', default_name)
+    filename = input(color_text(
+        f"Enter JSON filename (default: {hint}): ",
+        COLORS.MAGENTA)).strip()
     if not filename:
-        filename = "facebook_export.json"
+        filename = default_name
     if not filename.endswith('.json'):
         filename += '.json'
+    filename = resolve_export_path(filename, 'facebook')
     # Convert datetime objects to strings
     for row in rows:
         for key, value in row.items():

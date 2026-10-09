@@ -489,62 +489,158 @@ def detect_paper(subject, syllabus_id=None, chapter=None, interactive=True):
     """
     Determine which paper a record belongs to.
 
-    Subject names may appear in multiple papers (different syllabi).
-    When that happens, ask the user to disambiguate. Returns None if
-    nothing matches and the user doesn't pick.
+    Uses a cascade of signals, strongest to weakest:
+
+      1. Exact chapter code from syllabus_id  (e.g. '04.02')
+      2. Subject code from syllabus_id        (e.g. '04')
+      3. Exact subject-name match             ('Microeconomics')
+      4. Chapter-name substring               ('Development Planning')
+      5. Paper keyword (word-boundary)        ('Microeconomics' in keywords)
+      6. paper_key / display-name literal     ('paper_ii' mentioned)
+
+    When a signal returns multiple candidates, weaker signals are used
+    to narrow the set before prompting. Interactive mode shows each
+    candidate with the reason(s) it matched. Non-interactive ambiguity
+    returns None without printing anything.
+
+    Returns the paper_key or None.
     """
-    # 1. Exact subject-name match — may return 1 or more candidates
-    if subject:
-        lookup = _subject_name_lookup()
-        papers = lookup.get(subject.strip(), [])
+    import re as _re
 
-        if len(papers) == 1:
-            return papers[0]
+    papers = _papers()
+    if not papers:
+        return None
 
-        if len(papers) > 1 and interactive:
-            from . import syllabus_config as SC
-            print_colored(
-                f"[!] Subject '{subject}' exists in multiple papers.",
-                COLORS.YELLOW,
-            )
-            print()
-            for i, pk in enumerate(papers, 1):
-                paper = next((p for p in SC.get_papers(active_only=False)
-                              if p['paper_key'] == pk), None)
-                label = paper['display_name'] if paper else pk
-                if paper and paper.get('syllabus_id'):
-                    syll = next((s for s in SC.get_syllabi(active_only=False)
-                                 if s['id'] == paper['syllabus_id']), None)
-                    if syll:
-                        lvl = f"  (Level {syll['level']})" if syll.get('level') else ""
-                        label = f"{syll['display_name']}{lvl}  →  {label}"
-                print(f"  {i}. {label}")
-            c = input(color_text("Choose (blank to cancel): ",
-                                 COLORS.MAGENTA)).strip()
-            if c.isdigit() and 1 <= int(c) <= len(papers):
-                return papers[int(c) - 1]
+    # ------- collect candidates from every signal -------
+    reasons = {}                       # paper_key -> [reason strings]
+
+    def _record(pk_set, reason):
+        for pk in pk_set:
+            reasons.setdefault(pk, []).append(reason)
+
+    # ---- parse syllabus_id once ----
+    subj_code = chap_code = None
+    if syllabus_id:
+        subj_code, chap_code, _ = parse_syllabus_id(syllabus_id)
+
+    # ---- 1. Exact chapter code from syllabus_id ----
+    by_chap_code = set()
+    if subj_code and chap_code:
+        for (pk, s, c) in _chapter_lookup():
+            if s == subj_code and c == chap_code:
+                by_chap_code.add(pk)
+        _record(by_chap_code,
+                f"syllabus_id '{syllabus_id}' → chapter {subj_code}.{chap_code}")
+
+    # ---- 2. Subject code from syllabus_id ----
+    by_subj_code = set()
+    if subj_code:
+        for (pk, s) in _subject_lookup():
+            if s == subj_code:
+                by_subj_code.add(pk)
+        _record(by_subj_code,
+                f"syllabus_id '{syllabus_id}' → subject code {subj_code}")
+
+    # ---- 3. Exact subject name ----
+    by_name = set()
+    if subject and isinstance(subject, str) and subject.strip():
+        for pk in _subject_name_lookup().get(subject.strip(), []):
+            if pk in papers:
+                by_name.add(pk)
+        _record(by_name, f"subject name '{subject.strip()}'")
+
+    # ---- 4. Chapter-name substring match ----
+    by_chap_name = set()
+    if chapter and isinstance(chapter, str) and chapter.strip():
+        t = chapter.strip().lower()
+        for (pk, _s, _c), cname in _chapter_lookup().items():
+            if cname and cname.lower() in t:
+                by_chap_name.add(pk)
+                reasons.setdefault(pk, []).append(f"chapter name '{cname}'")
+
+    # ---- 5. Keyword, word-boundary ----
+    by_keyword = set()
+    combined = f"{subject or ''} {chapter or ''}".lower().strip()
+    if combined:
+        for pk, kws in _keywords().items():
+            if pk not in papers:
+                continue
+            for kw in kws:
+                if _re.search(r'(?<!\w)' + _re.escape(kw) + r'(?!\w)', combined):
+                    by_keyword.add(pk)
+                    reasons.setdefault(pk, []).append(f"keyword '{kw}'")
+                    break
+
+    # ---- 6. paper_key / display-name literal ----
+    by_literal = set()
+    if combined:
+        for pk, cfg in papers.items():
+            dn = (cfg.get('display_name') or '').lower()
+            for name in (pk.lower(), dn):
+                if name and name in combined:
+                    by_literal.add(pk)
+                    reasons.setdefault(pk, []).append(f"'{name}' in text")
+                    break
+
+    # ------- cascade with narrowing -------
+    cascade = [
+        (by_chap_code, "exact chapter code"),
+        (by_subj_code, "subject code"),
+        (by_name,      "subject name"),
+        (by_chap_name, "chapter name"),
+        (by_keyword,   "keyword"),
+        (by_literal,   "text mention"),
+    ]
+
+    for i, (base, base_reason) in enumerate(cascade):
+        if not base:
+            continue
+
+        candidates = set(base)
+        # Narrow with weaker signals (intersection only, never grow)
+        for j in range(i + 1, len(cascade)):
+            if len(candidates) <= 1:
+                break
+            narrowed = candidates & cascade[j][0]
+            if narrowed:
+                candidates = narrowed
+
+        if len(candidates) == 1:
+            return next(iter(candidates))
+
+        # Ambiguous
+        if not interactive:
             return None
 
-    # 2. Keyword fallback
-    combined = f"{subject or ''} {chapter or ''}".lower()
-    matches = []
-    for paper_key, kws in _keywords().items():
-        if any(kw in combined for kw in kws):
-            matches.append(paper_key)
-
-    if len(matches) == 1:
-        return matches[0]
-
-    if len(matches) > 1 and interactive:
+        # Prompt, showing each candidate and its reasons
         from . import syllabus_config as SC
-        print_colored(f"[!] Matches multiple papers: {matches}", COLORS.YELLOW)
-        for i, pk in enumerate(matches, 1):
-            paper = next((p for p in SC.get_papers(active_only=False)
-                          if p['paper_key'] == pk), None)
-            print(f"  {i}. {paper['display_name'] if paper else pk}")
-        c = input(color_text("Choose (blank to cancel): ", COLORS.MAGENTA)).strip()
-        if c.isdigit() and 1 <= int(c) <= len(matches):
-            return matches[int(c) - 1]
+        syll_map = {s['id']: s for s in SC.get_syllabi(active_only=False)}
+
+        print_colored(
+            f"[!] Multiple papers match ({base_reason}). Please choose:",
+            COLORS.YELLOW,
+        )
+        print()
+        ordered = sorted(
+            candidates,
+            key=lambda p: (papers[p].get('display_order', 999), p),
+        )
+        for idx, pk in enumerate(ordered, 1):
+            cfg = papers[pk]
+            label = cfg.get('display_name') or pk
+            sid = cfg.get('syllabus_id')
+            syll = syll_map.get(sid) if sid else None
+            if syll:
+                lvl = f"  (L{syll['level']})" if syll.get('level') else ""
+                label = f"{syll['display_name']}{lvl}  →  {label}"
+            print(f"  {idx}. {label}")
+            for r in reasons.get(pk, []):
+                print(f"       ↳ {r}")
+        print("  0. Cancel")
+        c = input(color_text("Choose: ", COLORS.MAGENTA)).strip()
+        if c.isdigit() and 1 <= int(c) <= len(ordered):
+            return ordered[int(c) - 1]
+        return None
 
     return None
 
