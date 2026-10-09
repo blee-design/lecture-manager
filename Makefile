@@ -6,6 +6,9 @@
 # --- Version management ---
 # Read version from __init__.py
 CURRENT_VERSION := $(shell grep -oP '__version__ = "\K[0-9a-zA-Z.-]+' lecture_manager/__init__.py)
+ifeq ($(CURRENT_VERSION),)
+  $(error Could not read __version__ from lecture_manager/__init__.py — check the file format)
+endif
 
 # --- Project settings ---
 PROJECT_NAME   := lecture-manager
@@ -13,7 +16,7 @@ BACKUP_DIR     := ./backups
 TIMESTAMP      := $(shell date +%Y%m%d_%H%M%S)
 BACKUP_FILE    := $(BACKUP_DIR)/$(PROJECT_NAME)_backup_$(TIMESTAMP).tar.xz
 
-FLASK_DEBUG=1
+FLASK_DEBUG=0
 
 # --- Database settings (for backup-db) ---
 # Credentials are read from environment variables; you can set them in a .env file or pass inline.
@@ -60,21 +63,34 @@ NC     := \033[0m
 .PHONY: help
 help:
 	@echo "$(GREEN)Available targets:$(NC)"
-	@echo "  $(BLUE)install$(NC)       - Install the package in editable mode with all dependencies"
-	@echo "  $(BLUE)venv$(NC)          - Create a virtual environment"
-	@echo "  $(BLUE)db-init$(NC)       - Initialize the database tables (via Python module)"
-	@echo "  $(BLUE)run$(NC)           - Start the CLI application (lecture-manager)"
-	@echo "  $(BLUE)web$(NC)           - Start the web interface (Flask) on $(HOST):$(PORT)"
-	@echo "  $(BLUE)pomodoro$(NC)      - Launch the Pomodoro timer GUI"
-	@echo "  $(BLUE)converter$(NC)     - Show help for the standalone question converter"
-	@echo "  $(BLUE)export-html$(NC)   - Export all questions to HTML (questions_export.html)"
-	@echo "  $(BLUE)test$(NC)          - Run tests (placeholder)"
-	@echo "  $(BLUE)clean$(NC)         - Remove Python cache and build artifacts"
-	@echo "  $(BLUE)distclean$(NC)     - Remove virtual environment and generated files"
-	@echo "  $(BLUE)setup$(NC)         - Quick setup: install + db-init"
-	@echo "  $(BLUE)backup$(NC)        - Create a timestamped backup tarball of the project"
-	@echo "  $(BLUE)backup-db$(NC)     - Dump the MariaDB database to a SQL file (requires DB credentials)"
-	@echo "  $(BLUE)dist$(NC)          - Build a source distribution (.tar.gz) for PyPI"
+	@echo ""
+	@echo "$(CYAN)  Setup & Run$(NC)"
+	@echo "  $(BLUE)venv$(NC)             - Create a virtual environment"
+	@echo "  $(BLUE)install$(NC)          - Install the package in editable mode with all dependencies"
+	@echo "  $(BLUE)setup$(NC)            - Quick setup: install + db-init + migrate"
+	@echo "  $(BLUE)db-init$(NC)          - Initialize the database tables"
+	@echo "  $(BLUE)run$(NC)              - Start the CLI application (lecture-manager)"
+	@echo "  $(BLUE)web$(NC)              - Start the web interface (Flask) on $(HOST):$(PORT)"
+	@echo "  $(BLUE)pomodoro$(NC)         - Launch the Pomodoro timer GUI"
+	@echo "  $(BLUE)converter$(NC)        - Show help for the standalone question converter"
+	@echo "  $(BLUE)export-html$(NC)      - Export all questions to HTML"
+	@echo ""
+	@echo "$(CYAN)  Database migrations$(NC)"
+	@echo "  $(BLUE)migrate$(NC)          - Apply any pending schema migrations"
+	@echo "  $(BLUE)migrate-status$(NC)   - Show current schema version + full history"
+	@echo "  $(BLUE)migrate-history$(NC)  - Raw migration rows (needs DB_USER/DB_PASSWORD env)"
+	@echo "  $(BLUE)migrate-reset$(NC)    - Clear the version stamp (next migrate re-runs baseline)"
+	@echo ""
+	@echo "$(CYAN)  Release & distribution$(NC)"
+	@echo "  $(BLUE)release$(NC)          - Bump version, build, and upload to PyPI"
+	@echo "  $(BLUE)dist$(NC)             - Build a source distribution (.tar.gz) for PyPI"
+	@echo "  $(BLUE)backup$(NC)           - Create a timestamped backup tarball of the project"
+	@echo "  $(BLUE)backup-db$(NC)        - Dump the MariaDB database to a SQL file"
+	@echo ""
+	@echo "$(CYAN)  Maintenance$(NC)"
+	@echo "  $(BLUE)test$(NC)             - Run tests (placeholder)"
+	@echo "  $(BLUE)clean$(NC)            - Remove Python cache and build artifacts"
+	@echo "  $(BLUE)distclean$(NC)        - Remove virtual environment and generated files"
 
 .PHONY: release
 release: distclean
@@ -87,8 +103,41 @@ release: distclean
 	sed -i 's/__version__ = ".*"/__version__ = "'"$$VERSION"'"/' lecture_manager/__init__.py; \
 	sed -i 's/version=".*"/version="'"$$VERSION"'"/' setup.py; \
 	echo "$(GREEN)Version updated to $$VERSION$(NC)"; \
-	echo "$(BLUE)Building distribution...$(NC)"; \
-	$(MAKE) dist
+	echo ""; \
+	echo "$(BLUE)>>> Building distribution...$(NC)"; \
+	$(MAKE) dist; \
+	echo ""; \
+	echo "$(YELLOW)>>> Before uploading, make sure you've committed:"; \
+	echo "    git add ."; \
+	echo "    git commit -m \"Bump version to $$VERSION\""; \
+	echo "    git tag v$$VERSION"; \
+	echo "    git push && git push --tags$(NC)"; \
+	echo ""; \
+	read -p "Continue to PyPI upload? (y/n): " UPLOAD; \
+	if [ "$$UPLOAD" = "y" ]; then \
+		if ! command -v twine >/dev/null 2>&1; then \
+			echo "$(RED)twine not found. Install with: pip install twine$(NC)"; \
+			exit 1; \
+		fi; \
+		echo ""; \
+		echo "$(BLUE)>>> Uploading to PyPI...$(NC)"; \
+		echo "$(YELLOW)    Username: __token__"; \
+		echo "    Password: <your PyPI API token>$(NC)"; \
+		echo ""; \
+		twine upload dist/*; \
+		echo ""; \
+		if [ $$? -eq 0 ]; then \
+			echo "$(GREEN)✅ Released $$VERSION to PyPI!$(NC)"; \
+			echo "   Install with: pip install --upgrade lecture-manager"; \
+		else \
+			echo "$(RED)❌ Upload failed. Fix the error above and retry: twine upload dist/*$(NC)"; \
+			exit 1; \
+		fi; \
+	else \
+		echo ""; \
+		echo "$(YELLOW)Build complete. When ready, upload with:$(NC)"; \
+		echo "    twine upload dist/*"; \
+	fi
 
 # --- Virtual environment ---
 .PHONY: venv
@@ -122,13 +171,9 @@ run:
 
 # --- Run Web Interface ---
 .PHONY: web
-# web:
-# 	@echo "$(BLUE)Starting web server on $(HOST):$(PORT)...$(NC)"
-# 	FLASK_APP=$(FLASK_APP) FLASK_ENV=$(FLASK_ENV) $(PYTHON_VENV) -m flask run --host=$(HOST) --port=$(PORT)
-#
 web:
 	@echo "$(BLUE)Starting web server on $(HOST):$(PORT)...$(NC)"
-	FLASK_APP=$(FLASK_APP) FLASK_ENV=$(FLASK_ENV) FLASK_DEBUG=1 python3 -m flask run --host=$(HOST) --port=$(PORT)
+	FLASK_APP=$(FLASK_APP) FLASK_ENV=$(FLASK_ENV) FLASK_DEBUG=0 python3 -m flask run --host=$(HOST) --port=$(PORT)
 
 # --- Pomodoro Timer ---
 .PHONY: pomodoro
@@ -194,6 +239,27 @@ backup-db: $(BACKUP_DIR)
 	@echo "$(BLUE)Dumping database $(DB_NAME)...$(NC)"
 	mysqldump -h $(DB_HOST) -u $(DB_USER) -p$(DB_PASSWORD) $(DB_NAME) > $(DB_DUMP_FILE)
 	@echo "$(GREEN)Database dump saved: $(DB_DUMP_FILE)$(NC)"
+
+# --- Database schema migrations ---
+.PHONY: migrate migrate-status migrate-reset migrate-history
+
+migrate:
+	@echo "$(BLUE)Applying pending migrations...$(NC)"
+	$(PYTHON_VENV) -W ignore::RuntimeWarning -c "from lecture_manager.db import create_table, migrate_table; create_table(); migrate_table()"
+	@echo "$(GREEN)Done.$(NC)"
+
+migrate-status:
+	@$(PYTHON_VENV) -W ignore::RuntimeWarning -m lecture_manager.db --status
+
+migrate-reset:
+	@echo "$(YELLOW)Clearing version stamp — next 'make migrate' will re-run the baseline...$(NC)"
+	@$(PYTHON_VENV) -W ignore::RuntimeWarning -m lecture_manager.db --reset
+
+migrate-history:
+	@echo "$(BLUE)Migration history:$(NC)"
+	@mysql -h $${DB_HOST:-localhost} -u $${DB_USER:-root} -p$${DB_PASSWORD:-} $${DB_NAME:-fox} \
+	  -e "SELECT version, name, applied_at, duration_ms FROM schema_migrations ORDER BY version;" 2>/dev/null \
+	  || echo "$(YELLOW)Could not query (set DB_USER / DB_PASSWORD / DB_NAME).$(NC)"
 
 # --- Build source distribution ---
 .PHONY: dist
