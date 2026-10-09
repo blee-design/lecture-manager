@@ -34,6 +34,8 @@ def json_to_questions(input_file, verbose=False):
             "institution": item.get("institution", ""),
             # Transient passage text — resolved to passage_id by insert_question
             "_passage_text": item.get("_passage_text"),
+            # Cross-syllabus links (list of {paper_key, code, note})
+            "also_in": item.get("also_in") or [],
             "level": item.get("level", ""),
             "alias": item.get("alias"),
             "paper": item.get("paper", ""),
@@ -145,6 +147,7 @@ def create_json_output(questions, output_file, verbose=False):
             "id": q.get("id"),
             "question_no": q.get("question_no", i),
             "type": q.get("type", "multichoice"),
+            "also_in": q.get("also_in") or [],
             "text": q.get("text", ""),
             "nepali_transcription": q.get("nepali_transcription", ""),
             "english_transcription": q.get("english_transcription", ""),

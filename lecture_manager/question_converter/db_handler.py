@@ -12,6 +12,57 @@ from .exceptions import DuplicateQuestionError, ConverterError, ValidationError
 from .text_parser import parse_text_file
 from .xml_handler import xml_to_questions
 from .json_handler import json_to_questions
+import re as _re
+
+def _apply_also_in(qid, also_in):
+    """
+    Persist each 'Also in:' entry as a non-primary row in question_links.
+    INSERT IGNORE — re-importing the same file won't create duplicates.
+    """
+    if not also_in:
+        return 0
+    if isinstance(also_in, str):
+        also_in = [also_in]
+
+    conn = get_connection()
+    cur = conn.cursor()
+    added = 0
+    try:
+        for raw in also_in:
+            raw = (raw or '').strip()
+            if not raw:
+                continue
+            parts = [p.strip() for p in raw.split('|')]
+            if len(parts) < 2:
+                continue
+            paper_key = parts[0]
+            spec = parts[1]
+            note = parts[2] if len(parts) >= 3 else None
+
+            m = _re.search(r'\(([\d.]+(?:-\d+)?)\)', spec)
+            code = m.group(1) if m else spec.strip()
+            m2 = _re.match(r'^(\d{1,2})\.(\d{1,2})', code)
+            if not m2:
+                continue
+            subj = f"{int(m2.group(1)):02d}"
+            chap = f"{int(m2.group(2)):02d}"
+            norm = f"{subj}.{chap}"
+
+            cur.execute("""
+                INSERT IGNORE INTO question_links
+                    (question_id, paper_key, syllabus_code,
+                     subject_code, chapter_code, is_primary, note)
+                VALUES (%s, %s, %s, %s, %s, 0, %s)
+            """, (qid, paper_key, norm, subj, chap, note))
+            added += cur.rowcount
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print_colored(f"[!] _apply_also_in failed: {e}", COLORS.RED)
+    finally:
+        cur.close()
+        conn.close()
+    return added
 
 def map_paper_value(paper_str, level=None):
     """
@@ -312,12 +363,12 @@ def insert_question(q_dict, source=None, force=False):
                 if _k in update_kwargs and not update_kwargs[_k]:
                     del update_kwargs[_k]
             result = update_question(dup_id, **update_kwargs)
+            _apply_also_in(dup_id, q_dict.get('also_in'))
             if result == 'updated':
                 return 'updated', dup_id
             elif result == 'no_change':
-                return 'unchanged', dup_id   # <-- NEW: treat no_change as success
+                return 'unchanged', dup_id
             else:
-                # Only raise for actual errors (e.g., 'error: something')
                 raise Exception(f"Update failed: {result}")
         else:
             raise DuplicateQuestionError(
@@ -366,6 +417,7 @@ def insert_question(q_dict, source=None, force=False):
         source=(q_dict.get('source') or source),
         passage_id=passage_id,
     )
+    _apply_also_in(qid, q_dict.get('also_in'))
     return 'inserted', qid
 
 def _convert_to_db_fields(q_dict):
@@ -423,6 +475,50 @@ def delete_question(qid):
     return delete_q(qid)
 
 # -------------------- Get Questions --------------------
+def _parse_multi(raw):
+    """
+    Split 'a,b,c' or 'a..c' into a list of ('eq', val) / ('between', lo, hi).
+    Handles whitespace. Empty input → [].
+    """
+    items = []
+    for part in str(raw).split(','):
+        part = part.strip()
+        if not part:
+            continue
+        if '..' in part:
+            lo, _, hi = part.partition('..')
+            items.append(('between', lo.strip(), hi.strip()))
+        else:
+            items.append(('eq', part))
+    return items
+
+
+def _multi_eq_clause(col, raw, params):
+    """OR-of-equals / BETWEEN for a comma/range string."""
+    parts = []
+    for it in _parse_multi(raw):
+        if it[0] == 'eq':
+            parts.append(f"{col} = %s")
+            params.append(it[1])
+        else:
+            parts.append(f"{col} BETWEEN %s AND %s")
+            params.extend([it[1], it[2]])
+    return "(" + " OR ".join(parts) + ")" if parts else "1=0"
+
+
+def _multi_like_clause(col, raw, params, prefix=True):
+    """Same but LIKE-based (prefix or substring)."""
+    parts = []
+    for it in _parse_multi(raw):
+        if it[0] == 'eq':
+            parts.append(f"{col} LIKE %s")
+            params.append(f"{it[1]}%" if prefix else f"%{it[1]}%")
+        else:
+            parts.append(f"{col} BETWEEN %s AND %s")
+            params.extend([it[1], it[2]])
+    return "(" + " OR ".join(parts) + ")" if parts else "1=0"
+
+
 def _build_question_where(filters):
     """
     Build (where_sql, params) for the given filter dict.
@@ -442,30 +538,48 @@ def _build_question_where(filters):
         clauses.append(f"q.id IN ({placeholders})")
         params.extend(ids)
 
-    # --- Exact matches ---
+    # --- Date: exact / list / range ---
     if filters.get('date'):
-        clauses.append("q.question_date = %s")
-        params.append(filters['date'])
-    if filters.get('paper'):
-        clauses.append("q.paper = %s")
-        params.append(filters['paper'])
-    if filters.get('type'):
-        clauses.append("q.type = %s")
-        params.append(filters['type'])
+        clauses.append(_multi_eq_clause('q.question_date',
+                                        filters['date'], params))
 
-    # --- LIKE prefix matches ---
+    # --- Paper: list, link-aware (matches primary OR question_links) ---
+    if filters.get('paper'):
+        parts = []
+        for it in _parse_multi(filters['paper']):
+            if it[0] == 'eq':
+                parts.append(
+                    "(q.paper = %s OR q.id IN "
+                    "(SELECT question_id FROM question_links "
+                    "WHERE paper_key = %s))"
+                )
+                params.extend([it[1], it[1]])
+        if parts:
+            clauses.append("(" + " OR ".join(parts) + ")")
+
+    # --- Type: list ---
+    if filters.get('type'):
+        clauses.append(_multi_eq_clause('q.type', filters['type'], params))
+
+    # --- Institution / Subject: prefix match, list OK ---
     if filters.get('institution'):
-        clauses.append("q.institution LIKE %s")
-        params.append(f"{filters['institution']}%")
-    if filters.get('level'):
-        clauses.append("q.level LIKE %s")
-        params.append(f"{filters['level']}%")
-    if filters.get('group'):
-        clauses.append("q.`group` LIKE %s")
-        params.append(f"{filters['group']}%")
+        clauses.append(_multi_like_clause('q.institution',
+                                          filters['institution'],
+                                          params, prefix=True))
     if filters.get('subject'):
-        clauses.append("q.subject LIKE %s")
-        params.append(f"{filters['subject']}%")
+        clauses.append(_multi_like_clause('q.subject',
+                                          filters['subject'],
+                                          params, prefix=True))
+
+    # --- Level / Group: prefix match, list OK ---
+    if filters.get('level'):
+        clauses.append(_multi_like_clause('q.level',
+                                          filters['level'],
+                                          params, prefix=True))
+    if filters.get('group'):
+        clauses.append(_multi_like_clause('q.`group`',
+                                          filters['group'],
+                                          params, prefix=True))
 
     # --- LIKE substring matches (support `*` = has value, `-` = empty/null) ---
     if filters.get('alias'):
@@ -489,8 +603,7 @@ def _build_question_where(filters):
 
     # --- Legacy keys kept for backward compatibility ---
     if filters.get('source'):
-        clauses.append("q.source = %s")
-        params.append(filters['source'])
+        clauses.append(_multi_eq_clause('q.source', filters['source'], params))
     if filters.get('group_name'):
         clauses.append("q.`group` = %s")
         params.append(filters['group_name'])
@@ -565,6 +678,7 @@ def get_questions(filters=None):
             'options': [],
             'pairs': [],
             'hints': [],
+            'also_in': row.get('also_in'),
             'institution': row.get('institution') or '',
             'level': row.get('level') or '',
             'alias': row.get('alias'),
@@ -617,6 +731,20 @@ def get_questions(filters=None):
         # If still 'essay' but no options/pairs, keep as essay
         if q['type'] == 'essay' and not q['options'] and not q['pairs']:
             q['type'] = 'essay'
+
+        # Cross-syllabus links (non-primary only; primary is already in `paper`)
+        cursor.execute("""
+            SELECT paper_key, syllabus_code, note
+            FROM question_links
+            WHERE question_id = %s AND is_primary = 0
+            ORDER BY id
+        """, (qid,))
+        q['also_in'] = [
+            {'paper_key': r['paper_key'],
+             'code':      r['syllabus_code'],
+             'note':      r.get('note')}
+            for r in cursor.fetchall()
+        ]
 
         questions.append(q)
 

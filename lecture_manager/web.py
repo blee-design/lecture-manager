@@ -125,23 +125,20 @@ def _build_syllabus_tree():
             chap = parts[1].zfill(2)
             lecture_counts[(paper, subj, chap)] = lecture_counts.get((paper, subj, chap), 0) + 1
 
-    # ---- Question counts ----
-    from .question_bank import resolve_question_syllabus
+    # ---- Question counts (via question_links junction table) ----
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM questions")
-    q_rows = cursor.fetchall()
+    cursor.execute("""
+        SELECT paper_key, subject_code, chapter_code
+        FROM question_links
+        WHERE chapter_code IS NOT NULL
+    """)
+    question_counts = {}
+    for row in cursor.fetchall():
+        k = (row['paper_key'], row['subject_code'], row['chapter_code'])
+        question_counts[k] = question_counts.get(k, 0) + 1
     cursor.close()
     conn.close()
-
-    question_counts = {}
-    for q in q_rows:
-        info = resolve_question_syllabus(q)
-        pk = info.get('paper_key')
-        s = info.get('subject_code')
-        c = info.get('chapter_code')
-        if pk and s and c:
-            question_counts[(pk, s, c)] = question_counts.get((pk, s, c), 0) + 1
 
     # ---- Build tree ----
     tree = []
@@ -1013,10 +1010,20 @@ def question_paper():
                                level=level, paper=paper)
 
     from collections import defaultdict
+    from .question_bank import _resolve_against_paper
+
+    # When a specific paper is requested, group each question under THAT
+    # paper's subject/chapter (not its primary's). Otherwise fall back
+    # to the question's own subject field.
+    context_paper = paper or None
     grouped = defaultdict(lambda: defaultdict(list))
     for q in results:
+        if context_paper:
+            info = _resolve_against_paper(q, context_paper)
+            subj = info.get('subject_name') or q.get('subject') or ''
+        else:
+            subj = q.get('subject') or ''
         grp = q.get('group', 'General')
-        subj = q.get('subject', '')
         grouped[grp][subj].append(q)
 
     first_q = results[0] if results else {}

@@ -174,6 +174,78 @@ def resolve_question_syllabus(q):
         out['reason'] = 'raw code'
     return out
 
+def get_question_links(qid):
+    """
+    Return every link row for a question, primary first.
+    Returns [] on older DBs where the table doesn't exist yet.
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT * FROM question_links
+            WHERE question_id = %s
+            ORDER BY is_primary DESC, id
+        """, (qid,))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return rows
+    except Exception:
+        return []
+
+
+def resolve_question_all_syllabi(q):
+    """
+    Return a list of fully-resolved link dicts — one per syllabus this
+    question appears in. The primary link is first. If the junction
+    table is empty for this question, falls back to the legacy single
+    resolver (so nothing breaks on un-migrated data).
+    """
+    from .file_manager import describe_syllabus_id, _papers
+    from . import syllabus_config as SC
+
+    links = get_question_links(q.get('id'))
+    if not links:
+        return [resolve_question_syllabus(q)]
+
+    papers  = {p['paper_key']: p for p in SC.get_papers(active_only=False)}
+    syllabi = {s['id']: s for s in SC.get_syllabi(active_only=False)}
+
+    out = []
+    for link in links:
+        paper = papers.get(link['paper_key'])
+        if not paper:
+            continue
+        desc = describe_syllabus_id(link['syllabus_code'], link['paper_key'])
+        syll = syllabi.get(paper.get('syllabus_id')) if paper else None
+
+        out.append({
+            'link_id':          link['id'],
+            'is_primary':       bool(link['is_primary']),
+            'paper_key':        link['paper_key'],
+            'paper_display':    paper['display_name'],
+            'syllabus_id':      syll['id']      if syll else None,
+            'syllabus_display': syll['display_name'] if syll else None,
+            'syllabus_level':   syll.get('level')   if syll else None,
+            'subject_code':     desc.get('subject_code'),
+            'subject_name':     desc.get('subject_name'),
+            'chapter_code':     desc.get('chapter_code'),
+            'chapter_name':     desc.get('chapter_name'),
+            'code_display':     link['syllabus_code'],
+        })
+    return out
+
+def _resolve_against_paper(q, paper_key):
+    """Return the link dict for `paper_key` if the question is linked to it,
+    otherwise fall back to the primary link."""
+    if not paper_key:
+        return resolve_question_syllabus(q)
+    for info in resolve_question_all_syllabi(q):
+        if info.get('paper_key') == paper_key:
+            return info
+    return resolve_question_syllabus(q)
+
 # ---------- Database ----------
 def create_question_table():
     conn = get_connection()
@@ -742,11 +814,16 @@ def _get_filtered_questions_interactive():
             key = list(filters.keys())[idx]
             current = filters[key]
             label = display_labels.get(key, key.replace('_', ' ').title())
-            if key == 'id':
-                hint = " (list/range OK)"
-            elif key in ('alias', 'chapter', 'institution', 'subject',
-                         'level', 'paper', 'group', 'type'):
-                hint = " (*=has any value, -=empty)"
+            MULTI = {'id', 'date', 'paper', 'source', 'level',
+                     'type', 'group', 'institution', 'subject'}
+            RANGE_OK = {'id', 'date'}
+            if key in MULTI:
+                hint = " (comma list"
+                if key in RANGE_OK:
+                    hint += ", '..' for range"
+                hint += ")"
+            elif key in ('alias', 'chapter'):
+                hint = " (* = has value, - = empty)"
             else:
                 hint = ""
             new_val = input(color_text(
@@ -760,6 +837,45 @@ def _get_filtered_questions_interactive():
             continue
 
         print_colored("[!] Invalid choice.", COLORS.RED)
+
+def _get_export_questions(verbose=True):
+    """
+    Shared entry point for every export option.
+
+    Returns a list of question dicts, or None if the user cancelled.
+    An empty filter (user just presses 90 with nothing set) returns all.
+    """
+    from .question_converter.db_handler import get_questions
+
+    print()
+    print_colored("  📤  EXPORT SCOPE", COLORS.CYAN, bold=True)
+    print("  " + "─" * 56, COLORS.CYAN)
+    print("    1. All questions  (no filter)")
+    print("    2. Filter by fields  (date, paper, source, subject, …)")
+    print("    0. Cancel")
+    print("  " + "─" * 56, COLORS.CYAN)
+
+    c = input(color_text("  Choose (1/2/0, default 1): ",
+                         COLORS.MAGENTA)).strip() or '1'
+
+    if c == '0':
+        return None
+
+    if c == '1':
+        try:
+            return get_questions({}) or []
+        except Exception as e:
+            print_colored(f"[!] Fetch failed: {e}", COLORS.RED)
+            return []
+
+    if c == '2':
+        filtered, cancelled = _get_filtered_questions_interactive()
+        if cancelled:
+            return None
+        return filtered or []
+
+    print_colored("[!] Invalid choice.", COLORS.RED)
+    return None
 
 def add_question(date, institution, subject, paper, group, marks, chapter,
                  question_number, nepali, english, level, notes=None,
@@ -999,9 +1115,14 @@ def get_questions_by_criteria(date=None, institution=None, level=None, alias=Non
         conditions.append("alias LIKE %s")
         params.append(f"%{alias}%")
     if paper:
-        # Paper is a controlled vocabulary (pretest / paper_i / paper_ii / paper_iii).
-        # Exact match — otherwise 'paper_i' also matches 'paper_ii'.
-        conditions.append("paper = %s")
+        # Match either the question's PRIMARY paper, or any paper it's
+        # linked to via question_links.
+        conditions.append("""
+            (paper = %s
+             OR id IN (SELECT question_id FROM question_links
+                       WHERE paper_key = %s))
+        """)
+        params.append(paper)
         params.append(paper)
     if group:
         conditions.append("`group` LIKE %s")
@@ -1162,6 +1283,29 @@ def update_question(qid, **kwargs):
             sql = f"UPDATE questions SET {', '.join(fields)} WHERE id = %s"
             cursor.execute(sql, values)
             affected = cursor.rowcount
+
+            # Keep the PRIMARY question_links row in sync when paper or
+            # syllabus_code changes on the questions row.
+            if 'paper' in kwargs or 'syllabus_code' in kwargs:
+                cursor.execute(
+                    "SELECT paper, syllabus_code FROM questions WHERE id = %s",
+                    (qid,))
+                r = cursor.fetchone()
+                if r:
+                    pk = r[0]
+                    code = (r[1] or '').strip()
+                    m = re.match(r'^(\d{1,2})\.(\d{1,2})', code)
+                    if pk and m:
+                        subj = f"{int(m.group(1)):02d}"
+                        chap = f"{int(m.group(2)):02d}"
+                        cursor.execute("""
+                            UPDATE question_links
+                            SET paper_key     = %s,
+                                syllabus_code = %s,
+                                subject_code  = %s,
+                                chapter_code  = %s
+                            WHERE question_id = %s AND is_primary = 1
+                        """, (pk, f"{subj}.{chap}", subj, chap, qid))
 
         if has_related:
             if options is not None:
@@ -1506,7 +1650,7 @@ def _display_single_question(q):
     print()
     print_colored("  " + _rule(), COLORS.CYAN)
 
-def _display_paper(questions, show_answers=False):
+def _display_paper(questions, show_answers=False, context_paper=None):
     if not questions:
         print_colored("[i] No questions found.", COLORS.YELLOW)
         return
@@ -1528,7 +1672,8 @@ def _display_paper(questions, show_answers=False):
         print(f"     {color_text(date_str, COLORS.MAGENTA)}")
 
     # ---- Resolved syllabus + paper name ----
-    _syl_info = resolve_question_syllabus(first)
+    _syl_info = _resolve_against_paper(first, context_paper) if context_paper \
+                else resolve_question_syllabus(first)
     if _syl_info.get('paper_key'):
         try:
             from .file_manager import _papers as _get_papers
@@ -1564,7 +1709,8 @@ def _display_paper(questions, show_answers=False):
     from collections import defaultdict
     grouped = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     for q in questions:
-        info = resolve_question_syllabus(q)
+        info = _resolve_against_paper(q, context_paper) if context_paper \
+               else resolve_question_syllabus(q)
         subj = info['subject_name'] or q.get('subject') or 'Uncategorised'
         subj_code = info['subject_code'] or ''
         chap = info['chapter_name'] or q.get('chapter') or 'General'
@@ -1793,6 +1939,261 @@ def _display_paper(questions, show_answers=False):
     print()
     print_colored("  " + _rule(), COLORS.CYAN)
 
+# ============================================================
+#  Cross-syllabus link management (CLI)
+# ============================================================
+def _pick_syllabus_paper_subject_chapter():
+    """Cascade: syllabus → paper → subject → chapter.
+    Returns (paper_key, syllabus_code, subj, chap) or None."""
+    from . import syllabus_config as SC
+
+    syllabi = SC.get_syllabi(active_only=True)
+    if not syllabi:
+        print_colored("[!] No syllabi configured.", COLORS.RED)
+        return None
+
+    print()
+    print_colored("  Pick a destination slot:", COLORS.CYAN, bold=True)
+    print("  Syllabi:")
+    for i, s in enumerate(syllabi, 1):
+        lvl = f"  (Level {s['level']})" if s.get('level') else ""
+        print(f"    {i:2}. {s['display_name']}{lvl}")
+    print("     0. Cancel")
+    c = input(color_text("  Choose syllabus: ", COLORS.MAGENTA)).strip()
+    if not c.isdigit() or int(c) == 0 or int(c) > len(syllabi):
+        return None
+    syllabus = syllabi[int(c) - 1]
+
+    papers = SC.get_papers(active_only=True, syllabus_id=syllabus['id'])
+    if not papers:
+        print_colored("[!] No papers in that syllabus.", COLORS.YELLOW)
+        return None
+    print("  Papers:")
+    for i, p in enumerate(papers, 1):
+        print(f"    {i:2}. {p['display_name']}  [{p['paper_key']}]")
+    print("     0. Cancel")
+    c = input(color_text("  Choose paper: ", COLORS.MAGENTA)).strip()
+    if not c.isdigit() or int(c) == 0 or int(c) > len(papers):
+        return None
+    paper = papers[int(c) - 1]
+
+    subjects = SC.get_subjects(paper_key=paper['paper_key'], active_only=True)
+    if not subjects:
+        print_colored("[!] No subjects in that paper.", COLORS.YELLOW)
+        return None
+    print("  Subjects:")
+    for i, s in enumerate(subjects, 1):
+        code = str(s.get('chapter') or '').zfill(2)
+        print(f"    {i:2}. {code} — {s['name']}")
+    print("     0. Cancel")
+    c = input(color_text("  Choose subject: ", COLORS.MAGENTA)).strip()
+    if not c.isdigit() or int(c) == 0 or int(c) > len(subjects):
+        return None
+    subject = subjects[int(c) - 1]
+    subj_code = str(subject.get('chapter') or '').zfill(2)
+
+    chapters = SC.get_chapters(subject_id=subject['id'], active_only=True)
+    if not chapters:
+        print_colored("[!] No chapters in that subject.", COLORS.YELLOW)
+        return None
+    print("  Chapters:")
+    for i, ch in enumerate(chapters, 1):
+        code = str(ch.get('chapter_code') or '').zfill(2)
+        print(f"    {i:2}. {code} — {ch['name']}")
+    print("     0. Cancel")
+    c = input(color_text("  Choose chapter: ", COLORS.MAGENTA)).strip()
+    if not c.isdigit() or int(c) == 0 or int(c) > len(chapters):
+        return None
+    chapter = chapters[int(c) - 1]
+    chap_code = str(chapter.get('chapter_code') or '').zfill(2)
+
+    return (paper['paper_key'], f"{subj_code}.{chap_code}", subj_code, chap_code)
+
+
+def _add_question_link_interactive(q):
+    picked = _pick_syllabus_paper_subject_chapter()
+    if not picked:
+        print_colored("Cancelled.", COLORS.YELLOW)
+        return
+    paper_key, syllabus_code, subj_code, chap_code = picked
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT id FROM question_links
+            WHERE question_id = %s AND paper_key = %s AND syllabus_code = %s
+        """, (q['id'], paper_key, syllabus_code))
+        if cursor.fetchone():
+            print_colored("[!] That exact link already exists.", COLORS.YELLOW)
+            return
+
+        note = input(color_text(
+            "Note (optional, Enter to skip): ",
+            COLORS.MAGENTA)).strip() or None
+
+        cursor.execute("""
+            INSERT INTO question_links
+                (question_id, paper_key, syllabus_code,
+                 subject_code, chapter_code, is_primary, note)
+            VALUES (%s, %s, %s, %s, %s, 0, %s)
+        """, (q['id'], paper_key, syllabus_code,
+              subj_code, chap_code, note))
+        conn.commit()
+        print_colored(f"[✓] Link added: {paper_key} · {syllabus_code}",
+                      COLORS.GREEN)
+    except Exception as e:
+        conn.rollback()
+        print_colored(f"[!] Failed: {e}", COLORS.RED)
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def _delete_question_link_interactive(q):
+    links = get_question_links(q['id'])
+    deletable = [l for l in links if not l['is_primary']]
+    if not deletable:
+        print_colored("[i] No additional links to delete.", COLORS.YELLOW)
+        return
+
+    print()
+    print_colored("  Which link to delete?", COLORS.CYAN, bold=True)
+    for i, l in enumerate(deletable, 1):
+        print(f"    {i:2}. [{l['id']}]  {l['paper_key']} · {l['syllabus_code']}")
+    print("     0. Cancel")
+    c = input(color_text("  Choose: ", COLORS.MAGENTA)).strip()
+    if not c.isdigit() or int(c) == 0 or int(c) > len(deletable):
+        print_colored("Cancelled.", COLORS.YELLOW)
+        return
+    target = deletable[int(c) - 1]
+
+    if input(color_text(
+            f"  Delete link to {target['paper_key']} · "
+            f"{target['syllabus_code']}? (y/n): ",
+            COLORS.MAGENTA)).strip().lower() != 'y':
+        print_colored("Cancelled.", COLORS.YELLOW)
+        return
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM question_links WHERE id = %s", (target['id'],))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    print_colored("[✓] Link deleted.", COLORS.GREEN)
+
+
+def _swap_primary_link_interactive(q):
+    links = get_question_links(q['id'])
+    if len(links) < 2:
+        print_colored("[i] Need at least 2 links to swap.", COLORS.YELLOW)
+        return
+
+    print()
+    print_colored("  Which link becomes the new primary?",
+                  COLORS.CYAN, bold=True)
+    for i, l in enumerate(links, 1):
+        mark = "★" if l['is_primary'] else " "
+        print(f"    {mark} {i:2}. [{l['id']}]  "
+              f"{l['paper_key']} · {l['syllabus_code']}")
+    print("     0. Cancel")
+    c = input(color_text("  Choose: ", COLORS.MAGENTA)).strip()
+    if not c.isdigit() or int(c) == 0 or int(c) > len(links):
+        print_colored("Cancelled.", COLORS.YELLOW)
+        return
+    target = links[int(c) - 1]
+    if target['is_primary']:
+        print_colored("[i] Already primary.", COLORS.YELLOW)
+        return
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE question_links SET is_primary = 0 WHERE question_id = %s",
+            (q['id'],))
+        cursor.execute(
+            "UPDATE question_links SET is_primary = 1 WHERE id = %s",
+            (target['id'],))
+        # Sync back so the detail view / exports use the new primary
+        cursor.execute("""
+            UPDATE questions SET paper = %s, syllabus_code = %s WHERE id = %s
+        """, (target['paper_key'], target['syllabus_code'], q['id']))
+        conn.commit()
+        print_colored(
+            "[✓] Primary swapped. Question's `paper`/`syllabus_code` updated.",
+            COLORS.GREEN)
+    except Exception as e:
+        conn.rollback()
+        print_colored(f"[!] Failed: {e}", COLORS.RED)
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def manage_question_links_interactive(qid):
+    """Submenu for viewing/adding/removing cross-syllabus links."""
+    while True:
+        q = get_question_by_id(qid)
+        if not q:
+            print_colored("[!] Question not found.", COLORS.RED)
+            return
+
+        links = resolve_question_all_syllabi(q)
+
+        print()
+        print_colored(f"  📎  CROSS-SYLLABUS LINKS  ·  Q{qid}",
+                      COLORS.CYAN, bold=True)
+        print_colored("  " + "─" * 62, COLORS.CYAN)
+
+        if not links:
+            print_colored("  (no links yet — the question isn't linked to any syllabus)",
+                          COLORS.YELLOW)
+        else:
+            for i, info in enumerate(links, 1):
+                primary = info.get('is_primary')
+                marker = (color_text("★ Primary", COLORS.GREEN, bold=True)
+                          if primary else color_text("· linked ", COLORS.WHITE))
+                syll = info.get('syllabus_display') or '(orphan)'
+                lvl = (f"  L{info['syllabus_level']}"
+                       if info.get('syllabus_level') else "")
+                print(f"   [{i}]  {marker}   {syll}{lvl}")
+                print(f"          Paper   : "
+                      f"{info.get('paper_display') or info.get('paper_key')}")
+                if info.get('subject_name'):
+                    print(f"          Subject : {info['subject_code']} — "
+                          f"{info['subject_name']}")
+                if info.get('chapter_name'):
+                    print(f"          Chapter : {info['chapter_code']} — "
+                          f"{info['chapter_name']}")
+                print(f"          Code    : "
+                      f"{info.get('code_display') or '—'}")
+                if not primary:
+                    print(f"          Link ID : {info.get('link_id')}")
+                print()
+
+        print_colored("  Actions:", COLORS.WHITE, bold=True)
+        print("    a   add a new link")
+        if any(not l.get('is_primary') for l in links):
+            print("    d   delete a link")
+        if len(links) > 1:
+            print("    m   make a link primary (swap)")
+        print("    q   return to question edit")
+
+        choice = input(color_text("  > ", COLORS.MAGENTA)).strip().lower()
+
+        if choice == 'q' or choice == '':
+            return
+        elif choice == 'a':
+            _add_question_link_interactive(q)
+        elif choice == 'd':
+            _delete_question_link_interactive(q)
+        elif choice == 'm' and len(links) > 1:
+            _swap_primary_link_interactive(q)
+        else:
+            print_colored("[!] Invalid choice.", COLORS.RED)
+
 # ---------- Quick parser ----------
 def parse_quick_input(text):
     parts = text.strip().split()
@@ -1961,30 +2362,27 @@ def find_lectures_for_chapter(paper_key, subj_code, chap_code):
 
 def find_questions_for_chapter(paper_key, subj_code, chap_code):
     """
-    Return list of question rows matching a chapter, resolved via
-    resolve_question_syllabus().
+    Return all question rows linked to this (paper, subject, chapter)
+    slot — reads directly from the question_links junction table so
+    cross-syllabus links are honoured.
     """
     from .db import get_connection
     if not (paper_key and subj_code and chap_code):
         return []
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM questions")
+    cursor.execute("""
+        SELECT q.* FROM questions q
+        JOIN question_links l ON l.question_id = q.id
+        WHERE l.paper_key     = %s
+          AND l.subject_code  = %s
+          AND l.chapter_code  = %s
+        ORDER BY q.question_date, q.question_number
+    """, (paper_key, subj_code, chap_code))
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
-
-    out = []
-    for q in rows:
-        # Match against every (paper, code) pair the question references
-        for code_paper, code in _extract_all_syllabus_codes(q):
-            if code_paper != paper_key:
-                continue
-            m = re.match(r'^(\d{2})\.(\d{2})', code)
-            if m and m.group(1) == subj_code and m.group(2) == chap_code:
-                out.append(q)
-                break
-    return out
+    return rows
 
 def _extract_all_syllabus_codes(q):
     """
@@ -2038,52 +2436,49 @@ def _extract_all_syllabus_codes(q):
 
 def _qb_syllabus_indexes(source_filter=None):
     """
-    Return (by_triple, by_pair, by_paper) built fresh from the questions
-    table. If `source_filter` is given, only questions matching that
-    source are indexed.
+    Return (by_triple, by_pair, by_paper) built fresh from
+    question_links. If `source_filter` is given, only questions matching
+    that source are indexed.
     """
     from collections import defaultdict
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM questions")
+    cursor.execute("""
+        SELECT q.*,
+               l.paper_key    AS link_paper,
+               l.subject_code AS link_subj,
+               l.chapter_code AS link_chap
+        FROM questions q
+        JOIN question_links l ON l.question_id = q.id
+    """)
     rows = cursor.fetchall()
     cursor.close(); conn.close()
 
     if source_filter is not None:
         rows = _filter_by_source(rows, source_filter)
 
-    bt = defaultdict(list)
-    bp = defaultdict(list)
-    bpp = defaultdict(list)
-    for q in rows:
-        info = resolve_question_syllabus(q)
-        pk = info['paper_key']
-        if not pk:
+    bt  = defaultdict(list)   # (paper, subj, chap) → [q]
+    bp  = defaultdict(list)   # (paper, subj)       → [q]
+    bpp = defaultdict(list)   # paper               → [q]
+
+    seen_triple, seen_pair, seen_paper = set(), set(), set()
+    for r in rows:
+        qid = r['id']
+        pk  = r['link_paper']
+        s   = r['link_subj']
+        c   = r['link_chap']
+        if not (pk and s):
             continue
-        bpp[pk].append(q)
 
-        # Index into every chapter this question references
-        all_pairs = _extract_all_syllabus_codes(q)
-        if not all_pairs and info['subject_code']:
-            all_pairs = [(pk, f"{info['subject_code']}.{info['chapter_code'] or '00'}")]
-
-        seen_triples = set()
-        for paper, code in all_pairs:
-            if not paper:
-                paper = pk
-            m = re.match(r'^(\d{2})(?:\.(\d{2}))?', code)
-            if not m:
-                continue
-            subj = m.group(1)
-            chap = m.group(2) or info['chapter_code']
-            if not subj or not chap:
-                continue
-            t = (paper, subj, chap)
-            if t in seen_triples:
-                continue
-            seen_triples.add(t)
-            bp[(paper, subj)].append(q)
-            bt[t].append(q)
+        if c and (qid, pk, s, c) not in seen_triple:
+            seen_triple.add((qid, pk, s, c))
+            bt[(pk, s, c)].append(r)
+        if (qid, pk, s) not in seen_pair:
+            seen_pair.add((qid, pk, s))
+            bp[(pk, s)].append(r)
+        if (qid, pk) not in seen_paper:
+            seen_paper.add((qid, pk))
+            bpp[pk].append(r)
 
     return bt, bp, bpp
 
@@ -2725,103 +3120,108 @@ def question_export_menu():
         if choice == '0':
             return
 
-        if choice == '1':
-            from .question_converter import export_to_file
-            from .question_converter.db_handler import get_questions as get_qs
-            qs = get_qs()
-            if not qs:
+        global _last_filtered_questions
+
+        # ---- Options 1-5 now share the same filter prompt as 6-7 ----
+        if choice in ('1', '2', '3', '4', '5'):
+            filtered = _get_export_questions()
+            if filtered is None:
+                # User cancelled the export-scope prompt
+                continue
+            ids = [q['id'] for q in filtered if q.get('id')]
+            if not ids:
                 print_colored("[i] No questions to export.", COLORS.YELLOW)
                 continue
-            default = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            hint = export_default_hint('questions', default)
-            outfile = input(color_text(f"Output (default: {hint}): ", COLORS.MAGENTA)).strip() or default
-            outfile = resolve_export_path(outfile, 'questions')
-            try:
-                export_to_file(qs, outfile, 'txt', args=SimpleNamespace(verbose=True))
-                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
-            except Exception as e:
-                print_colored(f"[!] {e}", COLORS.RED)
 
-        elif choice == '2':
-            export_questions_csv()
-        elif choice == '3':
-            from .question_converter import export_to_file
-            from .question_converter.db_handler import get_questions as get_qs
-            qs = get_qs()
-            if not qs:
-                print_colored("[i] No questions to export.", COLORS.YELLOW); continue
-            default = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            hint = export_default_hint('questions', default)
-            outfile = input(color_text(f"Output (default: {hint}): ", COLORS.MAGENTA)).strip() or default
-            outfile = resolve_export_path(outfile, 'questions')
-            try:
-                export_to_file(qs, outfile, 'json', args=SimpleNamespace(verbose=True))
-                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
-            except Exception as e:
-                print_colored(f"[!] {e}", COLORS.RED)
-        elif choice == '4':
-            from .question_converter import export_to_file
-            from .question_converter.db_handler import get_questions as get_qs
-            qs = get_qs()
-            if not qs:
-                print_colored("[i] No questions to export.", COLORS.YELLOW); continue
-            default = f"questions_export_moodle_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
-            hint = export_default_hint('questions', default)
-            outfile = input(color_text(f"Output (default: {hint}): ", COLORS.MAGENTA)).strip() or default
-            outfile = resolve_export_path(outfile, 'questions')
-            try:
-                export_to_file(qs, outfile, 'xml', args=SimpleNamespace(verbose=True))
-                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
-            except Exception as e:
-                print_colored(f"[!] {e}", COLORS.RED)
-        elif choice == '5':
-            from .question_converter import export_to_file
-            from .question_converter.db_handler import get_questions as get_qs
-            qs = get_qs()
-            if not qs:
-                print_colored("[i] No questions to export.", COLORS.YELLOW); continue
-            default = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-            hint = export_default_hint('questions', default)
-            outfile = input(color_text(f"Output (default: {hint}): ", COLORS.MAGENTA)).strip() or default
-            outfile = resolve_export_path(outfile, 'questions')
-            try:
-                export_to_file(qs, outfile, 'html', args=SimpleNamespace(verbose=True))
-                print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
-            except Exception as e:
-                print_colored(f"[!] {e}", COLORS.RED)
+            if choice == '1':
+                export_questions_txt(question_ids=ids)
+            elif choice == '2':
+                export_questions_csv(question_ids=ids)
+            elif choice == '3':
+                # JSON via converter (preserves also_in and passage inline)
+                from .question_converter import export_to_file
+                default = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                hint = export_default_hint('questions', default)
+                outfile = input(color_text(f"Output (default: {hint}): ",
+                                           COLORS.MAGENTA)).strip() or default
+                outfile = resolve_export_path(outfile, 'questions')
+                try:
+                    export_to_file(filtered, outfile, 'json',
+                                   args=SimpleNamespace(verbose=True))
+                    print_colored(f"[✓] Exported {len(filtered)} question(s) to {outfile}",
+                                  COLORS.GREEN)
+                except Exception as e:
+                    print_colored(f"[!] {e}", COLORS.RED)
+            elif choice == '4':
+                from .question_converter import export_to_file
+                default = f"questions_export_moodle_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
+                hint = export_default_hint('questions', default)
+                outfile = input(color_text(f"Output (default: {hint}): ",
+                                           COLORS.MAGENTA)).strip() or default
+                outfile = resolve_export_path(outfile, 'questions')
+                try:
+                    export_to_file(filtered, outfile, 'xml',
+                                   args=SimpleNamespace(verbose=True))
+                    print_colored(f"[✓] Exported {len(filtered)} question(s) to {outfile}",
+                                  COLORS.GREEN)
+                except Exception as e:
+                    print_colored(f"[!] {e}", COLORS.RED)
+            elif choice == '5':
+                from .question_converter import export_to_file
+                default = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                hint = export_default_hint('questions', default)
+                outfile = input(color_text(f"Output (default: {hint}): ",
+                                           COLORS.MAGENTA)).strip() or default
+                outfile = resolve_export_path(outfile, 'questions')
+                try:
+                    export_to_file(filtered, outfile, 'html',
+                                   args=SimpleNamespace(verbose=True))
+                    print_colored(f"[✓] Exported {len(filtered)} question(s) to {outfile}",
+                                  COLORS.GREEN)
+                except Exception as e:
+                    print_colored(f"[!] {e}", COLORS.RED)
+
         elif choice == '6':
             filtered, cancelled = _get_filtered_questions_interactive()
             if cancelled or not filtered:
                 continue
-            global _last_filtered_questions
             _last_filtered_questions = filtered
             from .question_converter.exam_output import create_exam_html
             default = f"exam_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
             hint = export_default_hint('exams', default)
-            outfile = input(color_text(f"Output (default: {hint}): ", COLORS.MAGENTA)).strip() or default
+            outfile = input(color_text(f"Output (default: {hint}): ",
+                                       COLORS.MAGENTA)).strip() or default
             outfile = resolve_export_path(outfile, 'exams')
-            t = input(color_text("Time limit in minutes (default 90): ", COLORS.MAGENTA)).strip()
+            t = input(color_text("Time limit in minutes (default 90): ",
+                                 COLORS.MAGENTA)).strip()
             time_min = int(t) if t.isdigit() else 90
-            create_exam_html(filtered, outfile, verbose=True, time_minutes=time_min, pass_marks=45)
+            create_exam_html(filtered, outfile, verbose=True,
+                             time_minutes=time_min, pass_marks=45)
             print_colored(f"[✓] Exported to {outfile}", COLORS.GREEN)
+
         elif choice == '7':
             filtered, cancelled = _get_filtered_questions_interactive()
             if cancelled or not filtered:
                 continue
             _last_filtered_questions = filtered
-            fmt = input(color_text("Format (xml / json / html / txt): ", COLORS.MAGENTA)).strip()
+            fmt = input(color_text("Format (xml / json / html / txt): ",
+                                   COLORS.MAGENTA)).strip()
             if not fmt:
                 continue
             default = f"questions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{fmt}"
             hint = export_default_hint('questions', default)
-            outfile = input(color_text(f"Output (default: {hint}): ", COLORS.MAGENTA)).strip() or default
+            outfile = input(color_text(f"Output (default: {hint}): ",
+                                       COLORS.MAGENTA)).strip() or default
             outfile = resolve_export_path(outfile, 'questions')
             try:
                 from .question_converter import export_to_file
-                export_to_file(filtered, outfile, fmt, args=SimpleNamespace(verbose=True))
-                print_colored(f"[✓] Exported {len(filtered)} questions to {outfile}", COLORS.GREEN)
+                export_to_file(filtered, outfile, fmt,
+                               args=SimpleNamespace(verbose=True))
+                print_colored(f"[✓] Exported {len(filtered)} question(s) to {outfile}",
+                              COLORS.GREEN)
             except Exception as e:
                 print_colored(f"[!] {e}", COLORS.RED)
+
         else:
             print_colored("[!] Invalid option.", COLORS.RED)
 
@@ -3855,6 +4255,7 @@ def update_question_interactive():
             'marks', 'chapter', 'question_number', 'syllabus_code', 'source',
             'type', 'level', 'alias',
             'nepali_transcription', 'english_transcription', 'notes', 'exam_type',
+            'links',
         ]
 
         answer_map = {
@@ -3916,6 +4317,22 @@ def update_question_interactive():
             print()
             print_colored(f"  {label}", COLORS.CYAN, bold=True)
             for f in group:
+                # Virtual field: link count, sourced from question_links
+                if f == 'links':
+                    n_total = len(get_question_links(int(qid)))
+                    n_extra = max(0, n_total - 1)
+                    if n_total == 0:
+                        display_val = color_text("(none)", COLORS.YELLOW)
+                    else:
+                        display_val = color_text(
+                            f"{n_total} link(s)"
+                            + (f"  ({n_extra} extra)" if n_extra else
+                               "  (primary only)"),
+                            COLORS.CYAN)
+                    print(f"   {counter:2}. {'links':28}: {display_val}")
+                    counter += 1
+                    continue
+
                 val = row.get(f)
                 if val is None or val == '':
                     display_val = color_text("None", COLORS.YELLOW)
@@ -3959,6 +4376,14 @@ def update_question_interactive():
 
         field = flat_fields[idx - 1]
         current = row.get(field, '')
+
+        # ---------- Special: links (virtual field) ----------
+        if field == 'links':
+            manage_question_links_interactive(int(qid))
+            refreshed = get_question_by_id(int(qid))
+            if refreshed:
+                row.update(refreshed)
+            continue
 
         # ---------- Special: type (rebuild groups on change) ----------
         if field == 'type':
@@ -4240,13 +4665,31 @@ def _json_safe_default(o):
     raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
 
 # ---------- Export / Import (CSV) ----------
-def export_questions_csv():
+def export_questions_csv(question_ids=None):
     print("\n" + "═" * 50)
     print_colored("  EXPORT QUESTIONS TO CSV (FULL)", COLORS.CYAN, bold=True)
     print("═" * 50)
 
-    print_colored("[i] Fetching questions from database...", COLORS.BLUE)
-    rows = get_all_questions()
+    if question_ids is not None:
+        if not question_ids:
+            print_colored("[i] No questions selected.", COLORS.YELLOW)
+            return
+        print_colored(f"[i] Fetching {len(question_ids)} selected question(s)...",
+                      COLORS.BLUE)
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        placeholders = ','.join(['%s'] * len(question_ids))
+        cursor.execute(
+            f"SELECT * FROM questions WHERE id IN ({placeholders}) "
+            f"ORDER BY question_date DESC, question_number ASC",
+            list(question_ids))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+    else:
+        print_colored("[i] Fetching questions from database...", COLORS.BLUE)
+        rows = get_all_questions()
+
     if not rows:
         print_colored("[i] No questions to export.", COLORS.YELLOW)
         return
@@ -4298,6 +4741,14 @@ def export_questions_csv():
         pairs = cursor.fetchall()
         cursor.execute("SELECT * FROM question_hints WHERE question_id = %s ORDER BY hint_number", (qid,))
         hints = cursor.fetchall()
+
+        cursor.execute("""
+            SELECT paper_key, syllabus_code, note
+            FROM question_links
+            WHERE question_id = %s AND is_primary = 0
+            ORDER BY id
+        """, (qid,))
+        extra_links = cursor.fetchall()
         cursor.close()
 
         out_row = {}
@@ -4315,12 +4766,14 @@ def export_questions_csv():
                                              default=_json_safe_default) if pairs else None
         out_row['hints_json']   = json.dumps(hints, ensure_ascii=False,
                                              default=_json_safe_default) if hints else None
+        out_row['also_in_json'] = json.dumps(extra_links, ensure_ascii=False,
+                                             default=_json_safe_default) if extra_links else None
 
         data.append(out_row)
 
     conn.close()
 
-    fieldnames = export_fields + ['options_json', 'pairs_json', 'hints_json']
+    fieldnames = export_fields + ['options_json', 'pairs_json', 'hints_json', 'also_in_json']
     print_colored(f"[i] Writing CSV file: {filename}...", COLORS.BLUE)
     try:
         with open(filename, 'w', newline='', encoding='utf-8') as f:
@@ -4387,6 +4840,23 @@ def import_questions_csv():
                     row[json_col] = None
             else:
                 row[json_col] = None
+
+        # Parse also_in_json → list of "paper|code" strings
+        if row.get('also_in_json'):
+            try:
+                _links = json.loads(row['also_in_json'])
+                if isinstance(_links, list):
+                    row['also_in'] = [
+                        (f"{l.get('paper_key','')}|{l.get('syllabus_code','')}"
+                         + (f"|{l.get('note')}" if l.get('note') else ""))
+                        for l in _links if isinstance(l, dict) and l.get('paper_key')
+                    ]
+                else:
+                    row['also_in'] = []
+            except json.JSONDecodeError:
+                row['also_in'] = []
+        else:
+            row['also_in'] = []
 
         if 'question_number' in row:
             row['question_no'] = row['question_number']
@@ -4457,6 +4927,7 @@ def import_questions_csv():
             'pairs': row.get('pairs_json'),
             'hints': row.get('hints_json'),
             'passage_id': row.get('passage_id'),
+            'also_in': row.get('also_in') or [],
         }
         q_dict = {k: v for k, v in q_dict.items() if v is not None}
 
@@ -4499,12 +4970,30 @@ def import_questions_csv():
     print(f"  ⏱️  Time    : {elapsed:.2f}s")
     print("═" * 50)
 
-def export_questions_txt():
+def export_questions_txt(question_ids=None):
     print("\n" + "═" * 50)
     print_colored("  📤 EXPORT TO TXT", COLORS.CYAN, bold=True)
     print("═" * 50)
 
-    rows = get_all_questions()
+    if question_ids is not None:
+        if not question_ids:
+            print_colored("[i] No questions selected.", COLORS.YELLOW)
+            return
+        print_colored(f"[i] Fetching {len(question_ids)} selected question(s)...",
+                      COLORS.BLUE)
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        placeholders = ','.join(['%s'] * len(question_ids))
+        cursor.execute(
+            f"SELECT * FROM questions WHERE id IN ({placeholders}) "
+            f"ORDER BY question_date DESC, question_number ASC",
+            list(question_ids))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+    else:
+        rows = get_all_questions()
+
     if not rows:
         print_colored("[i] No questions to export.", COLORS.YELLOW)
         return
@@ -4584,6 +5073,15 @@ def export_questions_txt():
                         f.write(f"{labels.get(key, key)}: {val}\n")
                 if q.get('syllabus_code'):
                     f.write(f"Syllabus Code: {q['syllabus_code']}\n")
+
+                # Cross-syllabus links
+                for _l in get_question_links(q['id']):
+                    if _l['is_primary']:
+                        continue
+                    line = f"Also in: {_l['paper_key']} | {_l['syllabus_code']}"
+                    if _l.get('note'):
+                        line += f" | {_l['note']}"
+                    f.write(f"{line}\n")
                 # Only write Exam Type when it differs from the default
                 et = (q.get('exam_type') or 'open').lower()
                 if et != 'open':
@@ -4861,12 +5359,30 @@ def import_questions_txt():
     conn.close()
     print(f"\n[✓] Import complete: {added} added, {updated} updated, {no_change} unchanged, {skipped} skipped.")
 
-def export_questions_json():
+def export_questions_json(question_ids=None):
     print("\n" + "═" * 50)
     print_colored("  EXPORT QUESTIONS TO JSON", COLORS.CYAN, bold=True)
     print("═" * 50)
 
-    rows = get_all_questions()
+    if question_ids is not None:
+        if not question_ids:
+            print_colored("[i] No questions selected.", COLORS.YELLOW)
+            return
+        print_colored(f"[i] Fetching {len(question_ids)} selected question(s)...",
+                      COLORS.BLUE)
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        placeholders = ','.join(['%s'] * len(question_ids))
+        cursor.execute(
+            f"SELECT * FROM questions WHERE id IN ({placeholders}) "
+            f"ORDER BY question_date DESC, question_number ASC",
+            list(question_ids))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+    else:
+        rows = get_all_questions()
+
     if not rows:
         print_colored("[i] No questions to export.", COLORS.YELLOW)
         return
@@ -4890,6 +5406,15 @@ def export_questions_json():
         clean_row = row.copy()
         clean_row.pop('created_at', None)
         clean_row.pop('updated_at', None)
+
+        # Attach non-primary links
+        links = get_question_links(row['id'])
+        clean_row['also_in'] = [
+            {'paper_key':   l['paper_key'],
+             'code':        l['syllabus_code'],
+             'note':        l.get('note')}
+            for l in links if not l['is_primary']
+        ]
         if 'question_date' in clean_row and clean_row['question_date']:
             if hasattr(clean_row['question_date'], 'isoformat'):
                 clean_row['question_date'] = clean_row['question_date'].isoformat()
@@ -4984,6 +5509,17 @@ def import_questions_json():
         if date and institution and level and paper is not None and group is not None and question_number:
             dup_id = check_duplicate(date, institution, level, paper, group, question_number)
 
+        # Attach any cross-syllabus links from the JSON payload
+        _also = obj.get('also_in') or []
+        def _write_links(target_id):
+            if not _also:
+                return
+            try:
+                from .question_converter.db_handler import _apply_also_in
+                _apply_also_in(target_id, _also)
+            except Exception:
+                pass
+
         if dup_id:
             if choice == '1':
                 skipped += 1
@@ -5003,9 +5539,11 @@ def import_questions_json():
                 status = update_question(dup_id, **updates)
                 if status == 'updated':
                     updated += 1
+                    _write_links(dup_id)
                     print(f"  [{idx}/{total}] Updated Q{question_number} (ID: {dup_id})     ")
                 elif status == 'no_change':
                     no_change += 1
+                    _write_links(dup_id)
                     print(f"  [{idx}/{total}] Q{question_number} (ID: {dup_id}) already up-to-date.")
                 else:
                     print_colored(f"  [{idx}/{total}] Error updating Q{question_number}: {status}", COLORS.RED)
@@ -5025,6 +5563,7 @@ def import_questions_json():
             try:
                 cursor.execute(f"INSERT INTO {TABLE_NAME} ({cols}) VALUES ({placeholders})", values)
                 new_id = cursor.lastrowid
+                _write_links(new_id)
                 added += 1
                 print(f"  [{idx}/{total}] Added Q{question_number} (ID: {new_id})     ")
             except Exception as e:
@@ -5067,13 +5606,33 @@ def get_distinct_values(column, search_term, limit=10):
     return result
 
 def get_questions_by_chapter(chapter_code):
+    """
+    Accepts either a raw code ('06.03') or a chapter title with a code
+    in parentheses ('Introduction (06.03)'). Uses question_links so
+    cross-syllabus questions are included.
+    """
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
-    cursor.execute(f"""
-        SELECT * FROM {TABLE_NAME}
-        WHERE chapter LIKE %s
-        ORDER BY question_number
-    """, (f"%{chapter_code}%",))
+
+    # Try to pull a syllabus code out of the input
+    m = re.search(r'\(([\d.]+(?:-\d+)?)\)', chapter_code) \
+        or re.match(r'^\d{1,2}\.\d{1,2}', chapter_code)
+    if m:
+        code = m.group(1) if m.lastindex else m.group(0)
+        cursor.execute("""
+            SELECT q.* FROM questions q
+            JOIN question_links l ON l.question_id = q.id
+            WHERE l.syllabus_code = %s
+            ORDER BY q.question_number
+        """, (code,))
+    else:
+        # Fallback: text match on the chapter column (legacy behaviour)
+        cursor.execute(f"""
+            SELECT * FROM questions
+            WHERE chapter LIKE %s
+            ORDER BY question_number
+        """, (f"%{chapter_code}%",))
+
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -5426,6 +5985,31 @@ def _bulk_update_filtered():
                 f"WHERE id IN ({placeholders})",
                 [new_value] + ids,
             )
+
+            # If we just changed paper or syllabus_code, sync the
+            # PRIMARY question_links row so tree/browse views stay correct.
+            if field_name in ('paper', 'syllabus_code'):
+                for qid in ids:
+                    cursor.execute(
+                        "SELECT paper, syllabus_code FROM questions WHERE id = %s",
+                        (qid,))
+                    r = cursor.fetchone()
+                    if not r:
+                        continue
+                    pk, code = r[0], (r[1] or '').strip()
+                    m = re.match(r'^(\d{1,2})\.(\d{1,2})', code)
+                    if not pk or not m:
+                        continue
+                    subj = f"{int(m.group(1)):02d}"
+                    chap = f"{int(m.group(2)):02d}"
+                    cursor.execute("""
+                        UPDATE question_links
+                        SET paper_key     = %s,
+                            syllabus_code = %s,
+                            subject_code  = %s,
+                            chapter_code  = %s
+                        WHERE question_id = %s AND is_primary = 1
+                    """, (pk, f"{subj}.{chap}", subj, chap, qid))
             conn.commit()
             cursor.execute(
                 f"SELECT COUNT(*) FROM questions WHERE id IN ({placeholders})",
@@ -5656,15 +6240,57 @@ def bulk_rename_interactive():
         if old is None and new is None:
             print_colored("[i] Old and new are both NULL — nothing to do.", COLORS.YELLOW)
             return
-        elif old is None:
+
+        # Capture the affected IDs first so we can sync question_links
+        if old is None:
+            cursor.execute(
+                f"SELECT id FROM questions WHERE {col_expr} IS NULL")
+        elif new is None:
+            cursor.execute(
+                f"SELECT id FROM questions WHERE {col_expr} = %s", (old,))
+        else:
+            cursor.execute(
+                f"SELECT id FROM questions WHERE {col_expr} = %s", (old,))
+        affected_ids = [r[0] for r in cursor.fetchall()]
+
+        if old is None:
             cursor.execute(f"UPDATE questions SET {col_expr} = %s WHERE {col_expr} IS NULL", (new,))
         elif new is None:
             cursor.execute(f"UPDATE questions SET {col_expr} = NULL WHERE {col_expr} = %s", (old,))
         else:
             cursor.execute(f"UPDATE questions SET {col_expr} = %s WHERE {col_expr} = %s", (new, old))
+
+        # Sync primary link rows if we just changed paper or syllabus_code
+        if column in ('paper', 'syllabus_code') and affected_ids:
+            for qid in affected_ids:
+                cursor.execute(
+                    "SELECT paper, syllabus_code FROM questions WHERE id = %s",
+                    (qid,))
+                r = cursor.fetchone()
+                if not r:
+                    continue
+                pk, code = r[0], (r[1] or '').strip()
+                m = re.match(r'^(\d{1,2})\.(\d{1,2})', code)
+                if not pk or not m:
+                    continue
+                subj = f"{int(m.group(1)):02d}"
+                chap = f"{int(m.group(2)):02d}"
+                cursor.execute("""
+                    UPDATE question_links
+                    SET paper_key     = %s,
+                        syllabus_code = %s,
+                        subject_code  = %s,
+                        chapter_code  = %s
+                    WHERE question_id = %s AND is_primary = 1
+                """, (pk, f"{subj}.{chap}", subj, chap, qid))
+
         conn.commit()
         updated = cursor.rowcount
         print_colored(f"\n[✓] Updated {updated} row(s).", COLORS.GREEN)
+        if column in ('paper', 'syllabus_code'):
+            print_colored(
+                f"[✓] Synced primary question_links rows for {len(affected_ids)} "
+                f"question(s).", COLORS.GREEN)
     except Exception as e:
         conn.rollback()
         print_colored(f"\n[!] Failed: {e}", COLORS.RED)

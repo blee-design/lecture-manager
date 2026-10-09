@@ -35,6 +35,7 @@ VALID_FIELD_NAMES = {
     # Metadata fields (for inline context)
     'date', 'institution', 'level', 'paper', 'group', 'subject', 'notes',
     'question_number', 'question number',    'syllabus code',
+    'also in',
 }
 
 # ----- PASSAGE FEATURE: extract passages from content -----
@@ -147,6 +148,16 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
     # Get the question text for error reporting
     question_text = question.get("text", "")
     question_no = question.get("question_no", "?")
+
+    # ---- Cross-syllabus links: accumulate (may appear many times) ----
+    if field_name == 'also in':
+        if 'also_in' not in question:
+            question['also_in'] = []
+        for line in (field_content or '').split('\n'):
+            line = line.strip()
+            if line:
+                question['also_in'].append(line)
+        return
 
     # ===== HANDLE HINT FIELDS FIRST (before validation) =====
     # Special handling for hint fields (Hint 1, Hint 1 Clear Incorrect, etc.)

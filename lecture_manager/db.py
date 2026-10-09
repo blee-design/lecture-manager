@@ -1356,6 +1356,54 @@ def _baseline_migration_v1(cursor):
                           COLORS.YELLOW)
         print_colored("[✓] Added 'passage_id' to questions.", COLORS.GREEN)
 
+    # ---------- question_links: cross-syllabus linking ----------
+    cursor.execute("SHOW TABLES LIKE 'question_links'")
+    if not cursor.fetchone():
+        cursor.execute("""
+        CREATE TABLE question_links (
+            id             INT AUTO_INCREMENT PRIMARY KEY,
+            question_id    INT NOT NULL,
+            paper_key      VARCHAR(50) NOT NULL,
+            syllabus_code  VARCHAR(20) NOT NULL,
+            subject_code   CHAR(2)     NOT NULL,
+            chapter_code   CHAR(2)     NULL,
+            is_primary     BOOLEAN     DEFAULT FALSE,
+            note           VARCHAR(255) NULL,
+            created_at     DATETIME    DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_link (question_id, paper_key, syllabus_code),
+            INDEX idx_paper_code (paper_key, subject_code, chapter_code),
+            INDEX idx_question (question_id),
+            FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        """)
+        print_colored("[✓] Created 'question_links' table.", COLORS.GREEN)
+
+        # Backfill ONE primary link per existing question from its syllabus_code
+        import re as _re
+        cursor.execute("""
+            SELECT id, paper, syllabus_code
+            FROM questions
+            WHERE paper IS NOT NULL AND syllabus_code IS NOT NULL
+        """)
+        seeded = 0
+        for qid, paper_key, code in cursor.fetchall():
+            m = _re.match(r'^(\d{1,2})\.(\d{1,2})', (code or '').strip())
+            if not m:
+                continue
+            subj = f"{int(m.group(1)):02d}"
+            chap = f"{int(m.group(2)):02d}"
+            norm = f"{subj}.{chap}"
+            cursor.execute("""
+                INSERT IGNORE INTO question_links
+                    (question_id, paper_key, syllabus_code,
+                     subject_code, chapter_code, is_primary)
+                VALUES (%s, %s, %s, %s, %s, 1)
+            """, (qid, paper_key, norm, subj, chap))
+            seeded += 1
+        if seeded:
+            print_colored(f"[✓] Seeded {seeded} question_links row(s).",
+                          COLORS.GREEN)
+
     # NO cursor.close() / conn.close() here — the SchemaManager owns
     # the connection and will close it after all migrations run.
 

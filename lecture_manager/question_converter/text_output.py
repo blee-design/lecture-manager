@@ -43,6 +43,17 @@ def create_text_output(questions, output_file, verbose=False):
         ('source', 'Source'),
     ]
 
+    # Pre-fetch non-primary links for every question so we can emit
+    # 'Also in:' lines during the write loop.
+    from ..question_bank import get_question_links
+    _extra_links = {}
+    for q in questions:
+        qid = q.get('id')
+        if qid:
+            _extra_links[qid] = [
+                l for l in get_question_links(qid) if not l['is_primary']
+            ]
+
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write("# Exported Question Bank (Full Metadata)\n")
         f.write(f"# Total: {len(questions)} questions\n")
@@ -67,6 +78,13 @@ def create_text_output(questions, output_file, verbose=False):
                 val = q.get(field)
                 if val is not None and str(val).strip():
                     f.write(f"{label}: {val}\n")
+
+            # ---- Extra cross-syllabus links ----
+            for _l in _extra_links.get(q.get('id') or 0, []):
+                line = f"Also in: {_l['paper_key']} | {_l['syllabus_code']}"
+                if _l.get('note'):
+                    line += f" | {_l['note']}"
+                f.write(f"{line}\n")
 
             # ---- Question number (no text on this line) ----
             qno = q.get("question_no")

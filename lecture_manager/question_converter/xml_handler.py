@@ -602,6 +602,8 @@ def xml_to_questions(input_file, verbose=False):
                     except (ValueError, TypeError):
                         pass
                 elif key == 'notes':    question['notes'] = val
+                elif key == 'alsoin':
+                    question.setdefault('also_in', []).append(val)
             
                 # Parse hints
                 question["hints"] = []
@@ -874,6 +876,15 @@ def create_moodle_xml(questions, output_file, verbose=False):
             ('notes',    q.get('notes')),
         ]
         tag_pairs = [(k, str(v).strip()) for k, v in tag_pairs if v]
+
+        # Cross-syllabus links → one <tag> per link
+        for _l in (q.get('also_in') or []):
+            if not _l.get('paper_key'):
+                continue
+            _val = f"{_l['paper_key']}|{_l.get('code','')}"
+            if _l.get('note'):
+                _val += f"|{_l['note']}"
+            tag_pairs.append(('alsoin', _val))
         if tag_pairs:
             tags_el = doc.createElement("tags")
             for key, val in tag_pairs:
