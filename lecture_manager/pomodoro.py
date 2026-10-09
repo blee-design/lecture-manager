@@ -11,6 +11,7 @@ import random
 from tkinter import ttk, messagebox, scrolledtext, simpledialog, filedialog
 from datetime import datetime
 import os
+import re
 from .db import get_connection
 import signal
 signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -41,6 +42,14 @@ def load_quotes():
         return []
 
 QUOTES = load_quotes()
+
+
+def _strip_number_prefix(name):
+    """Remove a leading '1. ' / '01 - ' / '1) ' / '1:' style number
+    from a subject name so the UI can re-number it per paper."""
+    if not name:
+        return ''
+    return re.sub(r'^\s*\d+\s*[.)\-:]\s*', '', str(name)).strip()
 
 # ====================== STYLE CONFIGURATION ======================
 # ---- Modern palette (module-level so other functions can reuse) ----
@@ -393,6 +402,7 @@ class PomodoroApp:
 
         self._after_id = None
         self.task_var = tk.StringVar()
+        self._subject_label_to_name = {}
 
         # pause tracking
         self.pauses = []
@@ -818,6 +828,8 @@ class PomodoroApp:
         self.subject_combo = ttk.Combobox(sc, textvariable=self.subject_var,
                                           state='readonly')
         self.subject_combo.grid(row=3, column=0, sticky='ew')
+        self.subject_combo.bind('<<ComboboxSelected>>',
+                                self.on_subject_combo_select)
 
         self.load_syllabus_list()
         self.refresh_subject_list()
@@ -1381,33 +1393,69 @@ class PomodoroApp:
 
     def refresh_subject_list(self):
         """
-        Load subjects for whichever syllabus is selected above.
-        Filters via papers.syllabus_id → syllabi.syllabus_key.
+        Load subjects for the currently selected syllabus, grouped by
+        paper. Each paper's subjects are re-numbered from 1 in the
+        dropdown — independently of whatever number is baked into the
+        stored name.
         """
+        from collections import OrderedDict
+
         syllabus_key = self._syllabus_map.get(self.syllabus_var.get())
 
-        subjects = []
-        if syllabus_key:
-            conn = get_connection()
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute("""
-                SELECT DISTINCT s.name
-                FROM subjects s
-                JOIN papers p   ON p.paper_key = s.paper
-                JOIN syllabi sy ON sy.id       = p.syllabus_id
-                WHERE s.active = 1 AND sy.syllabus_key = %s
-                ORDER BY s.paper, s.chapter, s.name
-            """, (syllabus_key,))
-            subjects = [r['name'] for r in cursor.fetchall()]
-            cursor.close()
-            conn.close()
-
-        subjects = list(dict.fromkeys(subjects))
-        self.subject_combo['values'] = subjects
-        if subjects:
-            self.subject_var.set(subjects[0])
-        else:
+        if not syllabus_key:
+            self.subject_combo['values'] = []
             self.subject_var.set('')
+            self._subject_label_to_name = {}
+            return
+
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT
+                p.paper_key,
+                p.display_name  AS paper_display,
+                s.chapter       AS subject_code,
+                s.name          AS subject_name
+            FROM subjects s
+            JOIN papers p   ON p.paper_key = s.paper
+            JOIN syllabi sy ON sy.id       = p.syllabus_id
+            WHERE s.active = 1
+              AND sy.syllabus_key = %s
+            ORDER BY p.display_order, p.display_name,
+                     s.chapter, s.name
+        """, (syllabus_key,))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # Group rows by paper, preserving query order
+        by_paper = OrderedDict()
+        for r in rows:
+            by_paper.setdefault(r['paper_key'], {
+                'display':  r['paper_display'],
+                'subjects': [],
+            })['subjects'].append(r)
+
+        values = []
+        label_to_name = {}
+
+        for paper_key, bucket in by_paper.items():
+            # Visual header — not a real subject
+            header = f"── {bucket['display']} ──"
+            values.append(header)
+
+            for idx, subj in enumerate(bucket['subjects'], 1):
+                bare = _strip_number_prefix(subj['subject_name'])
+                label = f"   {idx:>2}. {bare}"
+                values.append(label)
+                label_to_name[label] = subj['subject_name']   # canonical DB name
+
+        self.subject_combo['values'] = values
+        self._subject_label_to_name = label_to_name
+
+        # Auto-select the first real subject (skip the header row)
+        first_real = next((v for v in values if not v.startswith('──')), None)
+        self.subject_var.set(first_real or '')
 
     def load_syllabus_list(self):
         """Populate the syllabus dropdown with all active syllabi."""
@@ -1435,6 +1483,24 @@ class PomodoroApp:
         """Reload the subject list when the syllabus selection changes."""
         self.subject_var.set('')
         self.refresh_subject_list()
+
+    def on_subject_combo_select(self, event=None):
+        """
+        If the user picks a paper header row, jump to that paper's first
+        real subject. Otherwise do nothing.
+        """
+        label = self.subject_var.get()
+        if not label or not label.startswith('──'):
+            return
+        values = list(self.subject_combo['values'])
+        try:
+            idx = values.index(label)
+        except ValueError:
+            return
+        for v in values[idx + 1:]:
+            if not v.startswith('──'):
+                self.subject_var.set(v)
+                return
 
     def update_task_combo(self):
         options = []
@@ -2175,7 +2241,13 @@ class PomodoroApp:
 
     def log_work_session(self):
         """Insert a log entry for a completed work session."""
-        subject_name = _strip_syllabus_tag(self.subject_var.get())
+        label = self.subject_var.get()
+        # Map the display label back to the canonical DB name
+        subject_name = self._subject_label_to_name.get(label)
+        if not subject_name:
+            subject_name = _strip_number_prefix(
+                _strip_syllabus_tag(label)
+            )
         subject_id = None
         if subject_name:
             try:
@@ -2586,6 +2658,16 @@ class PomodoroApp:
             pass
 
     # ---------- STATE PERSISTENCE ----------
+    def _current_canonical_subject(self):
+        """Return the DB-canonical subject name for the current selection."""
+        label = self.subject_var.get()
+        if not label or label.startswith('──'):
+            return ''
+        canonical = self._subject_label_to_name.get(label)
+        if canonical:
+            return canonical
+        return _strip_number_prefix(_strip_syllabus_tag(label))
+
     def save_state(self):
         try:
             conn = get_connection()
@@ -2600,7 +2682,7 @@ class PomodoroApp:
                 self.current_phase,
                 self.remaining_seconds,
                 self.notes_text.get("1.0", tk.END).strip(),
-                self.subject_var.get().strip(),
+                self._current_canonical_subject(),
                 self.cycles_completed,
                 self.type_var.get().strip(),   # session_type
                 current_task_id                # task_id (can be None)
@@ -2661,13 +2743,26 @@ class PomodoroApp:
             self.cycles_completed = state['cycles_completed']
 
             if state.get('subject'):
-                bare = _strip_syllabus_tag(state['subject'])
+                canonical = state['subject'].strip()
                 chosen = None
-                for v in self.subject_combo['values']:
-                    if _strip_syllabus_tag(v) == bare:
-                        chosen = v
+                # 1. Exact match via the label map
+                for label, name in self._subject_label_to_name.items():
+                    if name == canonical:
+                        chosen = label
                         break
-                self.subject_var.set(chosen or bare)
+                # 2. Fallback: match by stripping the number prefix
+                if not chosen:
+                    bare = _strip_number_prefix(
+                        _strip_syllabus_tag(canonical)
+                    )
+                    for label in self.subject_combo['values']:
+                        if label.startswith('──'):
+                            continue
+                        if _strip_number_prefix(
+                                _strip_syllabus_tag(label)) == bare:
+                            chosen = label
+                            break
+                self.subject_var.set(chosen or canonical)
             else:
                 self.subject_var.set('')
 
