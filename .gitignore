@@ -2,16 +2,32 @@
 #  Python / build artifacts
 # ============================================================
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
 *.py~
 *.so
-
-build/
-dist/
+*.egg
 *.egg-info/
 .eggs/
+build/
+dist/
+pip-wheel-metadata/
+share/python-wheels/
+MANIFEST
+
+# ============================================================
+#  Python test / type / lint caches
+# ============================================================
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 
 # ============================================================
 #  Virtual environments
@@ -20,6 +36,7 @@ venv/
 env/
 .venv/
 ENV/
+virtualenv/
 
 # ============================================================
 #  Secrets and OAuth (NEVER commit these)
@@ -29,8 +46,14 @@ youtube_token.pickle
 cookies.txt
 cookies
 .lecture_manager_config.json
+.lecture_share.json
 .pypirc
 .secrets/
+.env
+.env.*
+!.env.example
+.db_pass
+.mysql_root_pass
 
 # ============================================================
 #  User data — regenerable exports
@@ -40,6 +63,7 @@ lectures_export*.csv
 questions_export*.json
 questions_export*.csv
 questions_export*.xml
+questions_export*.txt
 questions_export_*.html
 questions-*.xml
 facebook_export*.json
@@ -54,6 +78,16 @@ downloads/
 .lecture_trash/
 backups/
 *.sql
+*.db
+*.sqlite3
+
+# ============================================================
+#  Runtime state files (pid / flags)
+# ============================================================
+*.pid
+.web.pid
+.mariadb.pid
+.update_needed
 
 # ============================================================
 #  Exports folder (keep the folder, ignore contents)
@@ -77,12 +111,16 @@ docs/questions_formatting_prompt.txt
 *.bak
 *.temp.*
 *.zip
+*.tar
+*.tar.gz
+*.tar.xz
 *.kate-swp
 
 # ============================================================
 #  Packed snapshots (kept in dist/, ignored there)
 # ============================================================
 lecture-manager-*.py
+packer-output*.py
 
 # ============================================================
 #  IDE / editors
@@ -91,6 +129,11 @@ lecture-manager-*.py
 .idea/
 *.swp
 *.swo
+*~
+.#*
+#*#
+*.orig
+*.rej
 
 # ============================================================
 #  OS metadata
@@ -103,6 +146,7 @@ desktop.ini
 #  Logs
 # ============================================================
 *.log
+logs/
 
 # ============================================================
 #  Personal syllabus seeds — not for redistribution
