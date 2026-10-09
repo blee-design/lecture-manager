@@ -1,4 +1,66 @@
-# File xml_handler.py
+# ============================================================================
+#  ⚠️  MOODLE XML — DO NOT ADD NON-MOODLE ELEMENTS  ⚠️
+# ============================================================================
+#
+#  This module produces XML for direct import into Moodle's question bank.
+#  Every element we emit MUST be part of Moodle's official question XML
+#  schema (https://docs.moodle.org/en/Development:Question_import_format).
+#
+#  If you add a custom <tag>, <element>, or attribute that Moodle does not
+#  recognise, one of two things happens on import:
+#
+#     1. Moodle silently ignores it   (harmless but useless)
+#     2. Moodle rejects the file      (the whole import fails)
+#
+#  Neither is acceptable. This file is a Moodle-facing boundary.
+#
+#  ---------------------------------------------------------------------------
+#  RULES FOR CONTRIBUTORS
+#  ---------------------------------------------------------------------------
+#
+#  ✅ ALLOWED  — Moodle-standard elements only. Examples already in use:
+#                 <question type="…">, <name>, <questiontext>,
+#                 <generalfeedback>, <defaultgrade>, <penalty>, <hidden>,
+#                 <idnumber>, <answer>, <feedback>, <subquestion>,
+#                 <hint>, <shuffleanswers>, <single>, <answernumbering>,
+#                 <correctfeedback>, <partiallycorrectfeedback>,
+#                 <incorrectfeedback>, <shownumcorrect>,
+#                 <responseformat>, <responserequired>,
+#                 <responsefieldlines>, <attachments>,
+#                 <attachmentsrequired>, <maxbytes>, <filetypeslist>,
+#                 <graderinfo>, <responsetemplate>, <tags>/<tag>/<text>
+#
+#  ❌ FORBIDDEN — anything invented for Lecture Manager. Specifically:
+#                 - cross-syllabus links ("Also in:", also_in)
+#                 - passage_id / passage text
+#                 - internal database IDs (except in <idnumber>)
+#                 - source / exam_type / alias as raw XML
+#                 - custom attributes like question_id="…"
+#                 - foreign namespaces
+#
+#  ℹ️  WHERE INTERNAL DATA GOES
+#      Fields that need to survive a round-trip but aren't Moodle concepts
+#      are carried inside Moodle-native containers:
+#        • <idnumber>  → "paper|level|syllabus_code"
+#        • <tags>      → "source:…", "chapter:…", "group:…" (free-form)
+#      They show up as Moodle tags on import. Moodle accepts them; they do
+#      not break the import. That is the ONLY sanctioned extension point.
+#
+#  ℹ️  FOR BACKUP / MIGRATION USE TXT / JSON / CSV — NEVER XML
+#      XML is one-way: Lecture Manager → Moodle. It is NOT a backup
+#      format. If you need to preserve passages, cross-syllabus links,
+#      or any future internal field, use one of the other exporters.
+#      The XML reader (`xml_to_questions`) is provided so you can pull
+#      questions back from a Moodle export, but it will only see what
+#      Moodle itself kept.
+#
+#  ---------------------------------------------------------------------------
+#  BEFORE EDITING THIS FILE, ASK:
+#      1. Is the element I want to add in the Moodle question XML spec?
+#      2. If no → can it fit inside <idnumber> or a <tag> instead?
+#      3. If neither → use TXT / JSON / CSV. Do not touch this file.
+#
+# ============================================================================
 
 from xml.dom.minidom import Document, parse
 import sys
@@ -602,8 +664,6 @@ def xml_to_questions(input_file, verbose=False):
                     except (ValueError, TypeError):
                         pass
                 elif key == 'notes':    question['notes'] = val
-                elif key == 'alsoin':
-                    question.setdefault('also_in', []).append(val)
             
                 # Parse hints
                 question["hints"] = []
@@ -876,15 +936,6 @@ def create_moodle_xml(questions, output_file, verbose=False):
             ('notes',    q.get('notes')),
         ]
         tag_pairs = [(k, str(v).strip()) for k, v in tag_pairs if v]
-
-        # Cross-syllabus links → one <tag> per link
-        for _l in (q.get('also_in') or []):
-            if not _l.get('paper_key'):
-                continue
-            _val = f"{_l['paper_key']}|{_l.get('code','')}"
-            if _l.get('note'):
-                _val += f"|{_l['note']}"
-            tag_pairs.append(('alsoin', _val))
         if tag_pairs:
             tags_el = doc.createElement("tags")
             for key, val in tag_pairs:

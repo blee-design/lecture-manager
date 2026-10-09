@@ -82,6 +82,81 @@ def create_html_output(questions, output_file, verbose=False, shuffle_applied=Fa
         
         return text
 
+    # Preload passages once, so each question can inline its own copy.
+    from ..question_bank import get_passage
+    _passage_cache = {}
+
+    def _passage_block(pid):
+        if not pid:
+            return ""
+        if pid not in _passage_cache:
+            _passage_cache[pid] = get_passage(pid)
+        p = _passage_cache[pid]
+        if not p or not p.get('content'):
+            return ""
+        body = sanitize(p['content'].replace('\n', '<br>'))
+        return (
+            '<div class="reading-passage">'
+            '<div class="passage-label">📖 Reading Passage</div>'
+            f'<div class="passage-body">{body}</div>'
+            '</div>'
+        )
+
+    def _also_in_block(q):
+        links = q.get('also_in') or []
+        if not links:
+            return ""
+        bits = []
+        for l in links:
+            pk = (l.get('paper_key') or '').strip()
+            code = (l.get('code') or '').strip()
+            if not pk:
+                continue
+            bits.append(f"{pk} · {code}" if code else pk)
+        if not bits:
+            return ""
+        return ('<div class="also-in">🔗 Also appears in: '
+                + ' · '.join(bits)
+                + '</div>')
+
+
+    # Preload passages once, so each question can inline its own copy.
+    from ..question_bank import get_passage
+    _passage_cache = {}
+
+    def _passage_block(pid):
+        if not pid:
+            return ""
+        if pid not in _passage_cache:
+            _passage_cache[pid] = get_passage(pid)
+        p = _passage_cache[pid]
+        if not p or not p.get('content'):
+            return ""
+        body = sanitize(p['content'].replace('\n', '<br>'))
+        return (
+            '<div class="reading-passage">'
+            '<div class="passage-label">📖 Reading Passage</div>'
+            f'<div class="passage-body">{body}</div>'
+            '</div>'
+        )
+
+    def _also_in_block(q):
+        links = q.get('also_in') or []
+        if not links:
+            return ""
+        bits = []
+        for l in links:
+            pk = (l.get('paper_key') or '').strip()
+            code = (l.get('code') or '').strip()
+            if not pk:
+                continue
+            bits.append(f"{pk} · {code}" if code else pk)
+        if not bits:
+            return ""
+        return ('<div class="also-in">🔗 Also appears in: '
+                + ' · '.join(bits)
+                + '</div>')
+
     # Build filter buttons based on actual question types present
     all_types = set(q.get("type", "multichoice") for q in questions)
     type_count = {t: sum(1 for q in questions if q.get("type") == t) for t in all_types}
@@ -156,13 +231,23 @@ def create_html_output(questions, output_file, verbose=False, shuffle_applied=Fa
                 full_questions_html += '<div class="group"><div class="group-questions">'
                 group_opened = True
 
-        # Now output the question card (same as before)
+        # Inline the linked passage (if any) above the question stem
+        _p_html = _passage_block(q.get('passage_id'))
+        _a_html = _also_in_block(q)
+
+        # Inline the linked passage (if any) above the question stem
+        _p_html = _passage_block(q.get('passage_id'))
+        _a_html = _also_in_block(q)
+
+        # Now output the question card
         full_questions_html += f'''
         <div class="question-card" data-question-id="{i}" data-question-type="{q_type}">
             <div class="question-header">
                 <div class="q-number">Question {q_no}</div>
                 <div class="q-type {q_type}">{q_type.upper()}</div>
             </div>
+            {_a_html}
+            {_p_html}
             <div class="q-text">{q_text}</div>
         '''
 
@@ -545,6 +630,64 @@ def create_html_output(questions, output_file, verbose=False, shuffle_applied=Fa
             line-height: 1.5;
             margin: 1rem 0;
             white-space: pre-wrap;
+        }}
+        .reading-passage {{
+            background: rgba(99, 102, 241, 0.08);
+            border-left: 4px solid #6366f1;
+            border-radius: 0.75rem;
+            padding: 1rem 1.25rem;
+            margin: 0.75rem 0 1rem 0;
+        }}
+        .passage-label {{
+            font-weight: 700;
+            color: #6366f1;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.5rem;
+        }}
+        .passage-body {{
+            white-space: pre-wrap;
+            line-height: 1.55;
+            font-size: 1rem;
+        }}
+        .also-in {{
+            display: inline-block;
+            margin: 0.35rem 0 0.5rem 0;
+            padding: 0.25rem 0.75rem;
+            background: var(--toggle-bg);
+            border-radius: 1rem;
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+        }}
+        .reading-passage {{
+            background: rgba(99, 102, 241, 0.08);
+            border-left: 4px solid #6366f1;
+            border-radius: 0.75rem;
+            padding: 1rem 1.25rem;
+            margin: 0.75rem 0 1rem 0;
+        }}
+        .passage-label {{
+            font-weight: 700;
+            color: #6366f1;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.5rem;
+        }}
+        .passage-body {{
+            white-space: pre-wrap;
+            line-height: 1.55;
+            font-size: 1rem;
+        }}
+        .also-in {{
+            display: inline-block;
+            margin: 0.35rem 0 0.5rem 0;
+            padding: 0.25rem 0.75rem;
+            background: var(--toggle-bg);
+            border-radius: 1rem;
+            font-size: 0.78rem;
+            color: var(--text-secondary);
         }}
         .feedback {{
             background: var(--toggle-bg);

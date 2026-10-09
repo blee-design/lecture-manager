@@ -43,6 +43,47 @@ def safe_html(text):
 def create_exam_html(questions, output_file, verbose=False, time_minutes=90, pass_marks=45):
     log(f"Creating exam HTML with {len(questions)} questions, time limit {time_minutes} min, pass mark {pass_marks}%", "INFO", verbose)
 
+    # Preload any linked passages so we can inline them above the question.
+    # Inlining (not a separate panel) keeps the passage glued to its question.
+    from ..question_bank import get_passage
+    _passage_cache = {}
+
+    def _passage_html(pid):
+        if not pid:
+            return ""
+        if pid not in _passage_cache:
+            _passage_cache[pid] = get_passage(pid)
+        p = _passage_cache[pid]
+        if not p or not p.get('content'):
+            return ""
+        body = p['content'].replace('\n', '<br>')
+        return (
+            '<div class="reading-passage">'
+            '<div class="passage-label">📖 Reading Passage</div>'
+            f'<div class="passage-body">{body}</div>'
+            '</div>'
+        )
+
+        # Preload any linked passages so we can inline them above the question.
+    from ..question_bank import get_passage
+    _passage_cache = {}
+
+    def _passage_html(pid):
+        if not pid:
+            return ""
+        if pid not in _passage_cache:
+            _passage_cache[pid] = get_passage(pid)
+        p = _passage_cache[pid]
+        if not p or not p.get('content'):
+            return ""
+        body = p['content'].replace('\n', '<br>')
+        return (
+            '<div class="reading-passage">'
+            '<div class="passage-label">📖 Reading Passage</div>'
+            f'<div class="passage-body">{body}</div>'
+            '</div>'
+        )
+
     exam_questions = []
     total_max_raw = 0
     for i, q in enumerate(questions, 1):
@@ -59,6 +100,11 @@ def create_exam_html(questions, output_file, verbose=False, time_minutes=90, pas
                 _raw = f"{_nep}<br><br>{_eng}"
             else:
                 _raw = _nep or _eng
+
+        # Inline the linked passage (if any) above the question stem
+        _p_html = _passage_html(q.get('passage_id'))
+        if _p_html:
+            _raw = _p_html + _raw
 
         q_data = {
             "id": i,
@@ -187,6 +233,46 @@ def create_exam_html(questions, output_file, verbose=False, time_minutes=90, pas
                 margin: 1rem 0;
                 border: 1px solid var(--border-light);
                 position: relative;
+            }}
+            .reading-passage {{
+                background: rgba(99, 102, 241, 0.08);
+                border-left: 4px solid #6366f1;
+                border-radius: 0.75rem;
+                padding: 1rem 1.25rem;
+                margin-bottom: 1.25rem;
+            }}
+            .passage-label {{
+                font-weight: 700;
+                color: #6366f1;
+                font-size: 0.85rem;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 0.5rem;
+            }}
+            .passage-body {{
+                white-space: pre-wrap;
+                line-height: 1.55;
+                font-size: 1rem;
+            }}
+            .reading-passage {{
+                background: rgba(99, 102, 241, 0.08);
+                border-left: 4px solid #6366f1;
+                border-radius: 0.75rem;
+                padding: 1rem 1.25rem;
+                margin-bottom: 1.25rem;
+            }}
+            .passage-label {{
+                font-weight: 700;
+                color: #6366f1;
+                font-size: 0.85rem;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 0.5rem;
+            }}
+            .passage-body {{
+                white-space: pre-wrap;
+                line-height: 1.55;
+                font-size: 1rem;
             }}
             .q-text {{
                 font-size: 1.2rem;

@@ -4998,9 +4998,13 @@ def export_questions_txt(question_ids=None):
         print_colored("[i] No questions to export.", COLORS.YELLOW)
         return
 
+    # Batch-load children once (avoids N+1 queries)
+    rows = _attach_children_to_questions(rows)
+
     default_name = "questions_export.txt"
     hint = export_default_hint('questions', default_name)
-    filename = input(color_text(f"Enter TXT filename (default: {hint}): ", COLORS.MAGENTA)).strip()
+    filename = input(color_text(f"Enter TXT filename (default: {hint}): ",
+                                COLORS.MAGENTA)).strip()
     if not filename:
         filename = default_name
     if not filename.endswith('.txt'):
@@ -5013,22 +5017,36 @@ def export_questions_txt(question_ids=None):
     ]
     labels = {
         'question_date': 'Date',
-        'institution': 'Institution',
-        'level': 'Level',
-        'paper': 'Paper',
-        'group': 'Group',
-        'subject': 'Subject',
-        'chapter': 'Chapter',
-        'marks': 'Marks',
-        'notes': 'Notes',
-        'source': 'Source'
+        'institution':   'Institution',
+        'level':         'Level',
+        'paper':         'Paper',
+        'group':         'Group',
+        'subject':       'Subject',
+        'chapter':       'Chapter',
+        'marks':         'Marks',
+        'notes':         'Notes',
+        'source':        'Source',
     }
+
+    # ---- Collect unique passages → assign local 1..N markers ----
+    used_passages = {}
+    for q in rows:
+        pid = q.get('passage_id')
+        if pid and pid not in used_passages:
+            used_passages[pid] = len(used_passages) + 1
+
+    passage_content = {}
+    for pid in used_passages:
+        p = get_passage(pid)
+        if p:
+            passage_content[pid] = p['content']
 
     total = len(rows)
     import time
     start_time = time.time()
 
-    print_colored(f"\n📤 Exporting {total} questions to {filename}...", COLORS.CYAN)
+    print_colored(f"\n📤 Exporting {total} questions to {filename}...",
+                  COLORS.CYAN)
 
     type_counts = {}
     exported = 0
@@ -5038,13 +5056,20 @@ def export_questions_txt(question_ids=None):
         with open(filename, 'w', encoding='utf-8') as f:
             f.write("# Exported Question Bank (with IDs)\n")
             f.write(f"# Total: {total} questions\n")
+            if used_passages:
+                f.write(f"# Passages: {len(used_passages)}\n")
             f.write("# Each block is separated by '---'\n")
             f.write("# The 'Question No.' line must come first in each block.\n\n")
 
-            for idx, row in enumerate(rows, 1):
-                q = get_question_by_id(row['id'])
+            # ---- Passages first ----
+            for pid, num in used_passages.items():
+                if pid not in passage_content:
+                    continue
+                f.write(f"[passage:{num}]\n")
+                f.write(passage_content[pid].rstrip() + "\n\n")
+
+            for idx, q in enumerate(rows, 1):
                 if not q:
-                    print_colored(f"[!] Skipping question {row['id']} (not found)", COLORS.YELLOW)
                     skipped += 1
                     continue
 
@@ -5053,16 +5078,20 @@ def export_questions_txt(question_ids=None):
 
                 f.write("---\n")
 
+                # ---- Question No. line: NO TEXT, only the number ----
                 qno = q.get('question_number', '')
-                q_text = q.get('nepali_transcription') or q.get('english_transcription') or ''
+                marker = ""
+                if q.get('passage_id') and q['passage_id'] in used_passages:
+                    marker = f" (passage:{used_passages[q['passage_id']]})"
                 if qno:
-                    f.write(f"Question No. {qno}: {q_text}\n")
+                    f.write(f"Question No. {qno}{marker}:\n")
                 else:
-                    f.write(f"Question: {q_text}\n")
+                    f.write(f"Question{marker}:\n")
 
                 if q.get('id'):
                     f.write(f"ID: {q['id']}\n")
 
+                # ---- Metadata ----
                 for key in field_order:
                     val = q.get(key)
                     if val is not None and val != '':
@@ -5074,7 +5103,7 @@ def export_questions_txt(question_ids=None):
                 if q.get('syllabus_code'):
                     f.write(f"Syllabus Code: {q['syllabus_code']}\n")
 
-                # Cross-syllabus links
+                # ---- Cross-syllabus links ----
                 for _l in get_question_links(q['id']):
                     if _l['is_primary']:
                         continue
@@ -5082,35 +5111,55 @@ def export_questions_txt(question_ids=None):
                     if _l.get('note'):
                         line += f" | {_l['note']}"
                     f.write(f"{line}\n")
-                # Only write Exam Type when it differs from the default
+
+                # ---- Exam Type (only if non-default) ----
                 et = (q.get('exam_type') or 'open').lower()
                 if et != 'open':
                     nice = {
-                        'internal': 'Internal',
+                        'internal':    'Internal',
                         'promotional': 'Promotional',
-                        'other': 'Other',
+                        'other':       'Other',
                     }.get(et, et.capitalize())
                     f.write(f"Exam Type: {nice}\n")
 
-                nep = q.get('nepali_transcription', '').strip()
-                eng = q.get('english_transcription', '').strip()
-                if nep:
-                    f.write(f"Nepali: {nep}\n")
-                if eng:
-                    f.write(f"English: {eng}\n")
+                # ---- Question text: Nepali / English only (no dup) ----
+                nep = (q.get('nepali_transcription') or '').strip()
+                eng = (q.get('english_transcription') or '').strip()
 
+                if nep and eng and nep.lower() == eng.lower():
+                    # Identical → keep only one (prefer Nepali)
+                    f.write(f"Nepali: {nep}\n")
+                else:
+                    if nep:
+                        f.write(f"Nepali: {nep}\n")
+                    if eng:
+                        f.write(f"English: {eng}\n")
+
+                if not nep and not eng:
+                    # No split transcription — fall back to combined text
+                    _fb = (q.get('text') or '').strip()
+                    if _fb:
+                        if re.search(r'[\u0900-\u097F]', _fb):
+                            f.write(f"Nepali: {_fb}\n")
+                        else:
+                            f.write(f"English: {_fb}\n")
+
+                # ---- Type ----
                 f.write(f"Type: {q_type}\n")
 
+                # ---- Type-specific content ----
                 if q_type == "multichoice":
                     for opt in q.get('options', []):
-                        marker = " *" if opt.get('correct', False) else ""
-                        f.write(f"Option: {opt.get('text', '')}{marker}\n")
+                        marker_opt = " *" if opt.get('correct', False) else ""
+                        f.write(f"Option: {opt.get('text', '')}{marker_opt}\n")
                     if q.get('grade', 1) != 1:
                         f.write(f"Grade: {q.get('grade', 1)}\n")
                     if q.get('penalty', 0) != 0:
                         f.write(f"Penalty: {q.get('penalty', 0)}\n")
-                    if q.get('fraction_correct', 100) != 100 or q.get('fraction_wrong', -20) != -20:
-                        f.write(f"Fraction: {q.get('fraction_correct', 100)} {q.get('fraction_wrong', -20)}\n")
+                    if (q.get('fraction_correct', 100) != 100
+                            or q.get('fraction_wrong', -20) != -20):
+                        f.write(f"Fraction: {q.get('fraction_correct', 100)} "
+                                f"{q.get('fraction_wrong', -20)}\n")
 
                 elif q_type == "truefalse":
                     for opt in q.get('options', []):
@@ -5122,11 +5171,9 @@ def export_questions_txt(question_ids=None):
                     if q.get('penalty', 0) != 0:
                         f.write(f"Penalty: {q.get('penalty', 0)}\n")
                     if q.get('feedback_true'):
-                        f.write(f"Feedback True: {q.get('feedback_true')}\n")
+                        f.write(f"Feedback True: {q['feedback_true']}\n")
                     if q.get('feedback_false'):
-                        f.write(f"Feedback False: {q.get('feedback_false')}\n")
-                    if q.get('fraction_correct', 100) != 100 or q.get('fraction_wrong', -20) != -20:
-                        f.write(f"Fraction: {q.get('fraction_correct', 100)} {q.get('fraction_wrong', -20)}\n")
+                        f.write(f"Feedback False: {q['feedback_false']}\n")
 
                 elif q_type == "matching":
                     for pair in q.get('pairs', []):
@@ -5140,17 +5187,20 @@ def export_questions_txt(question_ids=None):
                         f.write("Shuffle Answers: false\n")
                     if q.get('show_num_correct', False):
                         f.write("Show Number Correct: true\n")
-                    if q.get('correct_feedback') and q.get('correct_feedback') != "Your answer is correct.":
-                        f.write(f"Correct Feedback: {q.get('correct_feedback')}\n")
-                    if q.get('partially_correct_feedback') and q.get('partially_correct_feedback') != "Your answer is partially correct.":
-                        f.write(f"Partially Correct Feedback: {q.get('partially_correct_feedback')}\n")
-                    if q.get('incorrect_feedback') and q.get('incorrect_feedback') != "Your answer is incorrect.":
-                        f.write(f"Incorrect Feedback: {q.get('incorrect_feedback')}\n")
-                    for hint in q.get('hints', []):
-                        f.write(f"Hint: {hint.get('text', '')}\n")
-                        if hint.get('clear_incorrect', False):
+                    if q.get('correct_feedback') and \
+                       q['correct_feedback'] != "Your answer is correct.":
+                        f.write(f"Correct Feedback: {q['correct_feedback']}\n")
+                    if q.get('partially_correct_feedback') and \
+                       q['partially_correct_feedback'] != "Your answer is partially correct.":
+                        f.write(f"Partially Correct Feedback: {q['partially_correct_feedback']}\n")
+                    if q.get('incorrect_feedback') and \
+                       q['incorrect_feedback'] != "Your answer is incorrect.":
+                        f.write(f"Incorrect Feedback: {q['incorrect_feedback']}\n")
+                    for h in q.get('hints', []):
+                        f.write(f"Hint: {h.get('text', '')}\n")
+                        if h.get('clear_incorrect', False):
                             f.write("Hint Clear Incorrect: true\n")
-                        if hint.get('show_num_correct', False):
+                        if h.get('show_num_correct', False):
                             f.write("Hint Show Number Correct: true\n")
 
                 else:  # essay
@@ -5161,18 +5211,18 @@ def export_questions_txt(question_ids=None):
                     if q.get('attachments', 0) > 0:
                         f.write(f"Attachments: {q.get('attachments')}\n")
                         f.write(f"FileTypes: {q.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg')}\n")
-                        max_mb = q.get('maxbytes', 2 * 1024 * 1024) / (1024 * 1024)
-                        f.write(f"MaxFileSizeMB: {max_mb:.0f}\n")
+                        _mb = q.get('maxbytes', 2 * 1024 * 1024) / (1024 * 1024)
+                        f.write(f"MaxFileSizeMB: {_mb:.0f}\n")
                     if q.get('grader_info'):
-                        f.write(f"Grader Information: {q.get('grader_info')}\n")
+                        f.write(f"Grader Information: {q['grader_info']}\n")
 
-                # ---- Common to ALL question types ----
+                # ---- Feedback / explanation (common) ----
                 if q.get('feedback_true'):
                     f.write(f"Feedback True: {q['feedback_true']}\n")
                 if q.get('feedback_false'):
                     f.write(f"Feedback False: {q['feedback_false']}\n")
                 if q.get('general_feedback'):
-                    f.write(f"General Feedback: {q.get('general_feedback')}\n")
+                    f.write(f"General Feedback: {q['general_feedback']}\n")
 
                 f.write("\n")
                 exported += 1
@@ -5195,7 +5245,8 @@ def export_questions_txt(question_ids=None):
     print(f"  💾 File size  : {file_size:.2f} KB")
     print(f"  ⏱️  Time       : {elapsed:.2f}s")
     if type_counts:
-        print(f"  📈 Types      : {', '.join(f'{k}: {v}' for k, v in type_counts.items())}")
+        print(f"  📈 Types      : " +
+              ", ".join(f"{k}: {v}" for k, v in type_counts.items()))
     print("═" * 60)
 
 def import_questions_txt():
