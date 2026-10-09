@@ -415,8 +415,10 @@ class PomodoroApp:
 
         self.build_ui()
         self.update_streak_display()
-        self.restore_state_if_any()          # Restores phase, remaining time, subject, notes, cycles_completed
         self.update_display()
+        # Defer restore until the window has been drawn. Otherwise the
+        # askyesno dialog can appear behind the main window or be skipped.
+        self.root.after(300, self.restore_state_if_any)
         self.refresh_task_list()
         self.refresh_log()
         self.update_progress()
@@ -2716,12 +2718,23 @@ class PomodoroApp:
             row = cursor.fetchone()
             cursor.close()
             conn.close()
-            if row and row['remaining_seconds'] > 0:
-                updated = row['updated_at']
-                if updated and (datetime.now() - updated).total_seconds() < 7200:
-                    return row
-            return None
-        except Exception:
+            if not row:
+                print("[Pomodoro] No state row — nothing to resume.")
+                return None
+            if row['remaining_seconds'] <= 0:
+                print(f"[Pomodoro] remaining_seconds={row['remaining_seconds']} "
+                      f"— nothing to resume.")
+                return None
+            updated = row['updated_at']
+            age = (datetime.now() - updated).total_seconds() if updated else None
+            if age is None or age >= 7200:
+                print(f"[Pomodoro] state is {int(age)}s old (≥7200) — expired.")
+                return None
+            print(f"[Pomodoro] Loaded state: phase={row['current_phase']}, "
+                  f"remaining={row['remaining_seconds']}s, age={int(age)}s")
+            return row
+        except Exception as e:
+            print(f"[Pomodoro] load_state failed: {e}")
             return None
 
     def restore_state_if_any(self):
