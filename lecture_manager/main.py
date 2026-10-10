@@ -443,32 +443,43 @@ def syllabus_menu():
             if not raw:
                 continue
             path = resolve_import_path(raw, 'syllabus')
-            # Ask whether to import into the current syllabus, or create a new one
+            # Ask what to do with the file
             print()
             print("Import into:")
-            print("  1. Current syllabus (merge papers into it)")
-            print("  2. As a new syllabus (create fresh from the file)")
+            print("  1. Current syllabus — merge  (add new only, skip existing)")
+            print("  2. Current syllabus — update (add new + overwrite existing)")
+            print("  3. As a new syllabus        (create fresh from the file)")
             print("  0. Cancel")
-            mode = input("Choose (1/2/0): ").strip()
+            mode = input("Choose (1/2/3/0): ").strip()
             if mode == '0' or not mode:
                 continue
+
+            target_id = None
+            update_existing = False
 
             if mode == '1':
                 target_id = current['id']
             elif mode == '2':
-                # Let the file's syllabus_key create a new syllabi row
-                target_id = None  # SC.import_syllabus will create from file
+                target_id = current['id']
+                update_existing = True
+            elif mode == '3':
+                target_id = None
             else:
                 print_colored("[!] Invalid choice.", COLORS.RED)
                 continue
 
             try:
-                result = SC.import_syllabus(path, target_syllabus_id=target_id)
+                result = SC.import_syllabus(
+                    path,
+                    target_syllabus_id=target_id,
+                    update_existing=update_existing,
+                )
                 if isinstance(result, tuple) and len(result) == 3:
                     p, s, c = result
                     print_colored(
-                        f"[✓] Imported {p} new papers, {s} new subjects, {c} new chapters.",
-                        COLORS.GREEN
+                        f"[✓] Import complete: {p} new papers, "
+                        f"{s} new subjects, {c} new chapters.",
+                        COLORS.GREEN,
                     )
                 reload_paper_cache()
             except Exception as e:

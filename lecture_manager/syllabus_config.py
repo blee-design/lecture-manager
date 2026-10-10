@@ -604,11 +604,14 @@ def export_syllabus(filepath, syllabus_id=None, verbose=True):
     return True
 
 def import_syllabus(filepath, merge=True, target_syllabus_id=None,
-                    verbose=True):
+                    update_existing=False, verbose=True):
     """
     Read a syllabus JSON file and import it.
 
-    Accepts both v3 (top-level "syllabi") and v2 (flat "papers") formats.
+    Modes:
+      merge=True,  update_existing=False  →  add new only, skip existing (default)
+      merge=True,  update_existing=True   →  add new + OVERWRITE existing rows
+      merge=False                          →  wipe all then import (destructive)
 
     Returns (papers_added, subjects_added, chapters_added).
     """
@@ -678,13 +681,18 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
         print(f"  🔖 Format : v{version}"
               + (f"  ·  {len(data.get('syllabi', data.get('papers', [])))} syllabi"
                  if version >= 3 else f"  ·  {len(data.get('papers', []))} papers"))
-        mode_label = "Wipe existing then import" if not merge else "Merge (add new only)"
+        if update_existing:
+            mode_label = "Update (add new + overwrite existing)"
+        elif not merge:
+            mode_label = "Wipe existing then import"
+        else:
+            mode_label = "Merge (add new only)"
         print(f"  ⚙️  Mode   : {mode_label}")
         if target_syllabus_id is not None:
             t = next((s for s in get_syllabi(active_only=False)
                       if s['id'] == target_syllabus_id), None)
             if t:
-                print(f"  🎯 Target : {t['display_name']}  (papers will be forced here)")
+                print(f"  🎯 Target : {t['display_name']}  (papers forced here)")
         print()
 
     # ---------- wipe if requested ----------
@@ -736,7 +744,9 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
     papers_added = 0
     subjects_added = 0
     chapters_added = 0
-
+    papers_updated = 0
+    subjects_updated = 0
+    chapters_updated = 0
     papers_skipped = 0
     subjects_skipped = 0
     chapters_skipped = 0
@@ -756,6 +766,15 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
         if existing_syl:
             syllabus_id = existing_syl['id']
             syllabi_existing += 1
+            if update_existing:
+                upd = {}
+                for k, v in (('display_name', syl_spec.get('display_name')),
+                             ('level',        syl_spec.get('level')),
+                             ('description',  syl_spec.get('description'))):
+                    if v is not None and existing_syl.get(k) != v:
+                        upd[k] = v
+                if upd:
+                    update_syllabus(syllabus_id, **upd)
         else:
             syllabus_id = add_syllabus(
                 syllabus_key,
@@ -779,9 +798,33 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
             )
             if existing_p:
                 pid = existing_p['id']
-                papers_skipped += 1
-                if not existing_p.get('syllabus_id'):
-                    update_paper(pid, syllabus_id=syllabus_id)
+                if update_existing:
+                    upd = {}
+                    for k, v in (
+                        ('display_name',  p.get("display_name", pkey)),
+                        ('folder_name',   p.get("folder_name", pkey)),
+                        ('keywords',      p.get("keywords", "") or ""),
+                        ('display_order', p.get("display_order")),
+                    ):
+                        if v is None:
+                            continue
+                        if k == 'keywords':
+                            if (existing_p.get('keywords') or '') != (v or ''):
+                                upd[k] = v
+                        else:
+                            if existing_p.get(k) != v:
+                                upd[k] = v
+                    if not existing_p.get('syllabus_id'):
+                        upd['syllabus_id'] = syllabus_id
+                    if upd:
+                        update_paper(pid, **upd)
+                        papers_updated += 1
+                    else:
+                        papers_skipped += 1
+                else:
+                    papers_skipped += 1
+                    if not existing_p.get('syllabus_id'):
+                        update_paper(pid, syllabus_id=syllabus_id)
             else:
                 pid = add_paper(
                     pkey,
@@ -804,7 +847,15 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
                 existing_s = get_subject_by_paper_and_code(pkey, s_code)
                 if existing_s:
                     sid = existing_s["id"]
-                    subjects_skipped += 1
+                    if update_existing:
+                        new_name = s.get("name") or existing_s["name"]
+                        if existing_s["name"] != new_name:
+                            update_subject(sid, name=new_name)
+                            subjects_updated += 1
+                        else:
+                            subjects_skipped += 1
+                    else:
+                        subjects_skipped += 1
                 else:
                     sid = add_subject(s["name"], pkey, chapter=s_code)
                     if sid:
@@ -813,22 +864,43 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
                 if not sid:
                     continue
 
+                # Snapshot existing chapters once per subject
                 existing_chapters = {
-                    str(c["chapter_code"]).zfill(2)
+                    str(c["chapter_code"]).zfill(2): c
                     for c in get_chapters(subject_id=sid, active_only=False)
                 }
+
                 for c in s.get("chapters", []):
                     code = str(c.get("chapter_code") or "").zfill(2)
                     cname = c.get("name") or ""
+                    cdesc = c.get("description") or None
+                    corder = c.get("display_order")
+
                     if not code or not cname:
                         continue
-                    if code in existing_chapters:
-                        chapters_skipped += 1
-                        continue
-                    if add_chapter(sid, code, cname,
-                                   description=c.get("description") or None,
-                                   display_order=c.get("display_order")):
-                        chapters_added += 1
+
+                    existing_c = existing_chapters.get(code)
+                    if existing_c:
+                        if update_existing:
+                            upd = {}
+                            if existing_c.get('name') != cname:
+                                upd['name'] = cname
+                            if (existing_c.get('description') or '') != (cdesc or ''):
+                                upd['description'] = cdesc
+                            if corder is not None and existing_c.get('display_order') != corder:
+                                upd['display_order'] = corder
+                            if upd:
+                                update_chapter(existing_c['id'], **upd)
+                                chapters_updated += 1
+                            else:
+                                chapters_skipped += 1
+                        else:
+                            chapters_skipped += 1
+                    else:
+                        if add_chapter(sid, code, cname,
+                                       description=cdesc,
+                                       display_order=corder):
+                            chapters_added += 1
 
     # ---------- summary ----------
     elapsed = time.time() - t0
@@ -848,36 +920,53 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
             print_colored(f"     ✓ {papers_added} new paper"
                           f"{'s' if papers_added != 1 else ''} created",
                           COLORS.GREEN)
+        if papers_updated:
+            print_colored(f"     ↻ {papers_updated} paper"
+                          f"{'s' if papers_updated != 1 else ''} updated",
+                          COLORS.MAGENTA)
         if papers_skipped:
             print_colored(f"     ⏭️  {papers_skipped} existing paper"
-                          f"{'s' if papers_skipped != 1 else ''} skipped",
+                          f"{'s' if papers_skipped != 1 else ''} unchanged",
                           COLORS.BLUE)
 
         if subjects_added:
             print_colored(f"     ✓ {subjects_added} new subject"
                           f"{'s' if subjects_added != 1 else ''} created",
                           COLORS.GREEN)
+        if subjects_updated:
+            print_colored(f"     ↻ {subjects_updated} subject"
+                          f"{'s' if subjects_updated != 1 else ''} updated",
+                          COLORS.MAGENTA)
         if subjects_skipped:
             print_colored(f"     ⏭️  {subjects_skipped} existing subject"
-                          f"{'s' if subjects_skipped != 1 else ''} skipped",
+                          f"{'s' if subjects_skipped != 1 else ''} unchanged",
                           COLORS.BLUE)
 
         if chapters_added:
             print_colored(f"     ✓ {chapters_added} new chapter"
                           f"{'s' if chapters_added != 1 else ''} created",
                           COLORS.GREEN)
+        if chapters_updated:
+            print_colored(f"     ↻ {chapters_updated} chapter"
+                          f"{'s' if chapters_updated != 1 else ''} updated",
+                          COLORS.MAGENTA)
         if chapters_skipped:
             print_colored(f"     ⏭️  {chapters_skipped} existing chapter"
-                          f"{'s' if chapters_skipped != 1 else ''} skipped",
+                          f"{'s' if chapters_skipped != 1 else ''} unchanged",
                           COLORS.BLUE)
 
         total_new = syllabi_added + papers_added + subjects_added + chapters_added
-        if total_new == 0:
+        total_upd = papers_updated + subjects_updated + chapters_updated
+        if total_new == 0 and total_upd == 0:
             print_colored("     ✓ Nothing to do — file is already in sync.",
                           COLORS.YELLOW)
         else:
-            print_colored(f"     ✓ Import complete ({total_new} row"
-                          f"{'s' if total_new != 1 else ''} added total)",
+            parts = []
+            if total_new:
+                parts.append(f"{total_new} added")
+            if total_upd:
+                parts.append(f"{total_upd} updated")
+            print_colored(f"     ✓ Import complete ({', '.join(parts)})",
                           COLORS.GREEN, bold=True)
 
         print(f"     ⏱️  {elapsed:.2f}s")
