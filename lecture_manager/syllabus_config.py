@@ -663,7 +663,11 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
         }
         bundles = [(fake_syl, data.get("papers", []))]
 
-    if target_syllabus_id is not None:
+    # target_syllabus_id is only meaningful for v2 files (no syllabus key
+    # in the data). For v3 files each bundle already carries its own
+    # syllabus_key, so update-in-place matches by key and never forces
+    # a bundle onto a specific syllabus.
+    if target_syllabus_id is not None and version < 3:
         override = next((s for s in get_syllabi(active_only=False)
                          if s['id'] == target_syllabus_id), None)
         if override:
@@ -688,11 +692,13 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
         else:
             mode_label = "Merge (add new only)"
         print(f"  ⚙️  Mode   : {mode_label}")
-        if target_syllabus_id is not None:
+        # Only show a target when the file has no syllabus_key of its own
+        if target_syllabus_id is not None and version < 3:
             t = next((s for s in get_syllabi(active_only=False)
                       if s['id'] == target_syllabus_id), None)
             if t:
-                print(f"  🎯 Target : {t['display_name']}  (papers forced here)")
+                print(f"  🎯 Target : {t['display_name']}  "
+                      f"(v2 file — orphan papers attached here)")
         print()
 
     # ---------- wipe if requested ----------
@@ -768,10 +774,13 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
             syllabi_existing += 1
             if update_existing:
                 upd = {}
-                for k, v in (('display_name', syl_spec.get('display_name')),
-                             ('level',        syl_spec.get('level')),
-                             ('description',  syl_spec.get('description'))):
-                    if v is not None and existing_syl.get(k) != v:
+                for k, v in (('display_name',  syl_spec.get('display_name')),
+                             ('level',         syl_spec.get('level')),
+                             ('description',   syl_spec.get('description')),
+                             ('display_order', syl_spec.get('display_order'))):
+                    if v is None:
+                        continue
+                    if existing_syl.get(k) != v:
                         upd[k] = v
                 if upd:
                     update_syllabus(syllabus_id, **upd)

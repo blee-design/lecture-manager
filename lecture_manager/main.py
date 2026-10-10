@@ -446,9 +446,9 @@ def syllabus_menu():
             # Ask what to do with the file
             print()
             print("Import into:")
-            print("  1. Current syllabus — merge  (add new only, skip existing)")
-            print("  2. Current syllabus — update (add new + overwrite existing)")
-            print("  3. As a new syllabus        (create fresh from the file)")
+            print("  1. Merge   — add new, skip existing")
+            print("  2. Update  — add new, overwrite existing (matched by key)")
+            print("  3. New     — create fresh from the file")
             print("  0. Cancel")
             mode = input("Choose (1/2/3/0): ").strip()
             if mode == '0' or not mode:
