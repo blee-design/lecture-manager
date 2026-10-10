@@ -1107,19 +1107,22 @@ def _baseline_migration_v1(cursor):
         """)
         print_colored("[✓] Created subjects table.", COLORS.GREEN)
 
-    # ---- Add unique index on subjects.name to prevent duplicates ----
-    cursor.execute("SHOW INDEX FROM subjects WHERE Key_name = 'idx_name'")
+    # ---- Composite unique index on subjects: (paper, name) ----
+    # Two different papers can share a subject name (e.g. 'Management'
+    # in L6 and L4). The old single-column UNIQUE(name) index was
+    # replaced by this composite one.
+    cursor.execute("SHOW INDEX FROM subjects WHERE Key_name = 'idx_paper_name'")
     if not cursor.fetchone():
-        print_colored("[i] Adding unique index on subjects.name...", COLORS.YELLOW)
         try:
-            cursor.execute("ALTER TABLE subjects ADD UNIQUE INDEX idx_name (name)")
-            print_colored("[✓] Added unique index on subjects.name", COLORS.GREEN)
+            cursor.execute("""
+                ALTER TABLE subjects
+                ADD UNIQUE INDEX idx_paper_name (paper, name)
+            """)
+            print_colored("[✓] Added composite index (paper, name).",
+                          COLORS.GREEN)
         except mysql.connector.Error as e:
-            if e.errno == 1062:
-                print_colored("[!] Cannot add unique index: duplicate subject names exist.", COLORS.RED)
-                print("   Please remove duplicates manually and restart the system.")
-            else:
-                print_colored(f"[!] Failed to add unique index: {e}", COLORS.RED)
+            print_colored(f"[!] Could not add composite index: {e}",
+                          COLORS.RED)
 
     # 4. Add pause_count and pause_total_sec to pomodoro_log (optional, for quick stats)
     cursor.execute("SHOW COLUMNS FROM pomodoro_log LIKE 'pause_count'")
@@ -1434,65 +1437,70 @@ def migrate_table():
         conn.close()
 
 
-# Register the migrations AFTER both the function and the constant
-# exist. Order matters — this line must come after _baseline_migration_v1.
-def _v3_subject_unique_per_paper(cursor):
+def _v2_question_links(cursor):
     """
-    v3 — allow the same subject name to exist in two different papers.
-    Drops any legacy single-column UNIQUE index on subjects.name and
-    ensures a composite UNIQUE (paper, name) index exists.
-    Idempotent — safe to re-run.
+    v2 — introduce the question_links junction table for
+    cross-syllabus linking, and seed one primary row per existing
+    question. Idempotent: safe on any DB, whether or not the table
+    already exists.
     """
-    # 1. Drop a plain UNIQUE index named 'name' if present
+    import re as _re
+
+    cursor.execute("SHOW TABLES LIKE 'question_links'")
+    if not cursor.fetchone():
+        cursor.execute("""
+        CREATE TABLE question_links (
+            id             INT AUTO_INCREMENT PRIMARY KEY,
+            question_id    INT NOT NULL,
+            paper_key      VARCHAR(50) NOT NULL,
+            syllabus_code  VARCHAR(20) NOT NULL,
+            subject_code   CHAR(2)     NOT NULL,
+            chapter_code   CHAR(2)     NULL,
+            is_primary     BOOLEAN     DEFAULT FALSE,
+            note           VARCHAR(255) NULL,
+            created_at     DATETIME    DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_link (question_id, paper_key, syllabus_code),
+            INDEX idx_paper_code (paper_key, subject_code, chapter_code),
+            INDEX idx_question (question_id),
+            FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        """)
+        print_colored("[✓] Created 'question_links' table.", COLORS.GREEN)
+    else:
+        print_colored("[i] question_links already exists — skipping create.",
+                      COLORS.BLUE)
+
     cursor.execute("""
-        SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME   = 'subjects'
-          AND INDEX_NAME   = 'name'
-          AND NON_UNIQUE   = 0
+        SELECT id, paper, syllabus_code
+        FROM questions
+        WHERE paper IS NOT NULL AND syllabus_code IS NOT NULL
     """)
-    if cursor.fetchone()[0] > 0:
-        cursor.execute("ALTER TABLE subjects DROP INDEX `name`")
-        print_colored("[✓] Dropped legacy UNIQUE index on subjects.name.",
+    seeded = 0
+    for qid, paper_key, code in cursor.fetchall():
+        m = _re.match(r'^(\d{1,2})\.(\d{1,2})', (code or '').strip())
+        if not m:
+            continue
+        subj = f"{int(m.group(1)):02d}"
+        chap = f"{int(m.group(2)):02d}"
+        norm = f"{subj}.{chap}"
+        cursor.execute("""
+            INSERT IGNORE INTO question_links
+                (question_id, paper_key, syllabus_code,
+                 subject_code, chapter_code, is_primary)
+            VALUES (%s, %s, %s, %s, %s, 1)
+        """, (qid, paper_key, norm, subj, chap))
+        seeded += cursor.rowcount
+    if seeded:
+        print_colored(f"[✓] Seeded {seeded} question_links row(s).",
                       COLORS.GREEN)
-
-    # 2. Drop an old single-column index named 'idx_name' if present
-    cursor.execute("""
-        SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME   = 'subjects'
-          AND INDEX_NAME   = 'idx_name'
-          AND NON_UNIQUE   = 0
-    """)
-    if cursor.fetchone()[0] > 0:
-        cursor.execute("ALTER TABLE subjects DROP INDEX idx_name")
-        print_colored("[✓] Dropped old idx_name index.", COLORS.GREEN)
-
-    # 3. Ensure the composite index exists
-    cursor.execute("""
-        SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME   = 'subjects'
-          AND INDEX_NAME   = 'idx_paper_name'
-    """)
-    if cursor.fetchone()[0] == 0:
-        try:
-            cursor.execute("""
-                ALTER TABLE subjects
-                ADD UNIQUE INDEX idx_paper_name (paper, name)
-            """)
-            print_colored("[✓] Added composite UNIQUE index "
-                          "'idx_paper_name' (paper, name).", COLORS.GREEN)
-        except mysql.connector.Error as e:
-            print_colored(
-                f"[!] Could not add composite index: {e}\n"
-                f"    Check for duplicate (paper, name) rows.", COLORS.RED)
+    else:
+        print_colored("[i] No new question_links rows to seed.", COLORS.BLUE)
 
 
 # Register the migrations AFTER all functions are defined.
+# Order must be ascending by version number.
 MIGRATIONS.append((1, "baseline", _baseline_migration_v1))
 MIGRATIONS.append((2, "question_links", _v2_question_links))
-MIGRATIONS.append((3, "subject_unique_per_paper", _v3_subject_unique_per_paper))
 
 def ensure_subjects_populated():
     from .syllabus_config import is_configured
