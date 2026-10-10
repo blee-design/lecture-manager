@@ -305,94 +305,168 @@ def get_paper_breakdown(tally_data=None):
     return breakdown
 
 def show_paper_breakdown(tally_data=None):
-    """Display a formatted paper breakdown with fixed column alignment."""
+    """Display a formatted paper breakdown, grouped by syllabus."""
+    from . import syllabus_config as SC
+
     breakdown = get_paper_breakdown(tally_data=tally_data)
+    papers = _papers()   # {paper_key: cfg}
+    syllabi = {s['id']: s for s in SC.get_syllabi(active_only=False)}
 
-    # Build paper display names from the DB
-    paper_names = {p['paper_key']: p['display_name'] for p in _papers().values()}
-    paper_names['unknown'] = 'Unknown (no paper)'
-
-    # Build data rows
-    rows = []
-    for paper_key, data in breakdown.items():
-        name = paper_names.get(paper_key, paper_key)
-        rows.append({
-            'name': name,
-            'records': data['records'],
-            'files': data['files'],
-            'matched': data['correctly_placed'],
-            'missing': data['missing'],
-            'orphan': data['orphan']
+    # ---- Group papers by syllabus ----
+    grouped = {}   # syllabus_id (or None) → {syllabus, papers: [...]}
+    for paper_key, cfg in papers.items():
+        sid = cfg.get('syllabus_id')
+        if sid not in grouped:
+            grouped[sid] = {
+                'syllabus': syllabi.get(sid) if sid else None,
+                'papers': [],
+            }
+        d = breakdown.get(paper_key, {
+            'records': 0, 'files': 0, 'correctly_placed': 0,
+            'missing': 0, 'orphan': 0,
+        })
+        grouped[sid]['papers'].append({
+            'key':         paper_key,
+            'name':        cfg.get('display_name', paper_key),
+            'records':     d['records'],
+            'files':       d['files'],
+            'matched':     d['correctly_placed'],
+            'missing':     d['missing'],
+            'orphan':      d['orphan'],
+            'order':       cfg.get('display_order', 0),
         })
 
-    # Determine column widths (max of header and data)
-    # Cap display width so super-long names don't blow out the table
-    MAX_NAME_WIDTH = 40
-    width_name = min(max(max(len(row['name']) for row in rows), len('Paper')), MAX_NAME_WIDTH)
-    width_records = max(max(len(str(row['records'])) for row in rows), len('Records'))
-    width_files = max(max(len(str(row['files'])) for row in rows), len('Files'))
-    width_matched = max(max(len(str(row['matched'])) for row in rows), len('Matched'))
-    width_missing = max(max(len(str(row['missing'])) for row in rows), len('Missing'))
-    width_orphan = max(max(len(str(row['orphan'])) for row in rows), len('Orphan'))
+    # ---- Sort groups by syllabus display_order ----
+    def _syl_sort(item):
+        sid, g = item
+        s = g['syllabus']
+        if not s:
+            return (9999, '')
+        return (s.get('display_order', 0), s.get('display_name', ''))
+
+    sorted_groups = sorted(grouped.items(), key=_syl_sort)
+
+    unknown = breakdown.get('unknown', {
+        'records': 0, 'files': 0, 'correctly_placed': 0,
+        'missing': 0, 'orphan': 0,
+    })
+
+    # ---- Collect all rows for column-width calculation ----
+    all_paper_rows = [p for _, g in sorted_groups for p in g['papers']]
+    names = [p['name'] for p in all_paper_rows] + ['Unknown (no paper)']
+
+    MAX_NAME_WIDTH = 55
+    width_name    = min(max(max((len(n) for n in names), default=5),
+                           len('Paper')), MAX_NAME_WIDTH)
+    width_records = max(max((len(str(p['records'])) for p in all_paper_rows), default=1),
+                        len('Records'))
+    width_files   = max(max((len(str(p['files']))   for p in all_paper_rows), default=1),
+                        len('Files'))
+    width_matched = max(max((len(str(p['matched'])) for p in all_paper_rows), default=1),
+                        len('Matched'))
+    width_missing = max(max((len(str(p['missing'])) for p in all_paper_rows), default=1),
+                        len('Missing'))
+    width_orphan  = max(max((len(str(p['orphan']))  for p in all_paper_rows), default=1),
+                        len('Orphan'))
 
     SEP = 4
+    total_width = (width_name + SEP + width_records + SEP + width_files
+                   + SEP + width_matched + SEP + width_missing
+                   + SEP + width_orphan + 2)
 
-    total_width = (width_name + SEP) + (width_records + SEP) + (width_files + SEP) + (width_matched + SEP) + (width_missing + SEP) + width_orphan + 2
+    def _fmt_row(name, r, f, m, miss, o):
+        name_col = name[:width_name].ljust(width_name)
+        return (f"  {name_col}" + " " * SEP +
+                f"{r:>{width_records}}" + " " * SEP +
+                f"{f:>{width_files}}"   + " " * SEP +
+                f"{m:>{width_matched}}" + " " * SEP +
+                f"{miss:>{width_missing}}" + " " * SEP +
+                f"{o:>{width_orphan}}")
 
+    def _fmt_colored_row(name, r, f, m, miss, o, colour):
+        name_col = name[:width_name].ljust(width_name)
+        return (f"  {color_text(name_col, colour)}" + " " * SEP +
+                f"{r:>{width_records}}" + " " * SEP +
+                f"{f:>{width_files}}"   + " " * SEP +
+                f"{m:>{width_matched}}" + " " * SEP +
+                f"{miss:>{width_missing}}" + " " * SEP +
+                f"{o:>{width_orphan}}")
+
+    # ---- Header ----
     print("\n" + "═" * total_width)
     print_colored("  📊 PAPER BREAKDOWN", COLORS.CYAN, bold=True)
     print("═" * total_width)
 
     header = (f"  {'Paper':<{width_name}}" + " " * SEP +
               f"{'Records':>{width_records}}" + " " * SEP +
-              f"{'Files':>{width_files}}" + " " * SEP +
+              f"{'Files':>{width_files}}"   + " " * SEP +
               f"{'Matched':>{width_matched}}" + " " * SEP +
               f"{'Missing':>{width_missing}}" + " " * SEP +
               f"{'Orphan':>{width_orphan}}")
     print(header)
     print("─" * total_width)
 
-    for row in rows:
-        if row['missing'] == 0 and row['orphan'] == 0:
-            colour = COLORS.GREEN
-        elif row['missing'] == 0 and row['orphan'] > 0:
-            colour = COLORS.YELLOW
+    # ---- Rows, grouped by syllabus ----
+    for sid, g in sorted_groups:
+        s = g['syllabus']
+        if s:
+            lvl = f"  (Level {s['level']})" if s.get('level') else ""
+            label = f"📚 {s['display_name']}{lvl}"
         else:
-            colour = COLORS.RED
+            label = "📚 (no syllabus assigned)"
+        print()
+        print_colored(f"  {label}", COLORS.CYAN, bold=True)
 
-        # Pad the plain string first, THEN apply colour.
-        # Otherwise Python counts the ANSI escape codes as visible width.
-        name_col = row['name'][:width_name].ljust(width_name)
-        line = (f"  {color_text(name_col, colour)}" + " " * SEP +
-                f"{row['records']:>{width_records}}" + " " * SEP +
-                f"{row['files']:>{width_files}}" + " " * SEP +
-                f"{row['matched']:>{width_matched}}" + " " * SEP +
-                f"{row['missing']:>{width_missing}}" + " " * SEP +
-                f"{row['orphan']:>{width_orphan}}")
-        print(line)
+        for p in sorted(g['papers'], key=lambda x: x.get('order', 0)):
+            if p['missing'] == 0 and p['orphan'] == 0:
+                colour = COLORS.GREEN
+            elif p['missing'] == 0 and p['orphan'] > 0:
+                colour = COLORS.YELLOW
+            else:
+                colour = COLORS.RED
+            print(_fmt_colored_row(
+                p['name'], p['records'], p['files'], p['matched'],
+                p['missing'], p['orphan'], colour,
+            ))
 
+    # ---- Unknown (only if it has any numbers) ----
+    if any(unknown[k] for k in ('records', 'files', 'correctly_placed',
+                                 'missing', 'orphan')):
+        print()
+        print_colored("  📚 Unknown (no paper)", COLORS.YELLOW, bold=True)
+        print(_fmt_colored_row(
+            'Unknown (no paper)', unknown['records'], unknown['files'],
+            unknown['correctly_placed'], unknown['missing'],
+            unknown['orphan'], COLORS.YELLOW,
+        ))
+
+    # ---- Totals ----
+    print()
+    print("─" * total_width)
+
+    total_records = sum(p['records'] for p in all_paper_rows) + unknown['records']
+    total_files   = sum(p['files']   for p in all_paper_rows) + unknown['files']
+    total_matched = sum(p['matched'] for p in all_paper_rows) + unknown['correctly_placed']
+    total_missing = sum(p['missing'] for p in all_paper_rows) + unknown['missing']
+    total_orphan  = sum(p['orphan']  for p in all_paper_rows) + unknown['orphan']
+
+    print(_fmt_row('TOTAL', total_records, total_files, total_matched,
+                   total_missing, total_orphan))
     print("═" * total_width)
 
-    total_records = sum(row['records'] for row in rows)
-    total_files = sum(row['files'] for row in rows)
-    total_matched = sum(row['matched'] for row in rows)
-    total_missing = sum(row['missing'] for row in rows)
-    total_orphan = sum(row['orphan'] for row in rows)
-
-    total_line = (f"  {'TOTAL':<{width_name}}" + " " * SEP +
-                  f"{total_records:>{width_records}}" + " " * SEP +
-                  f"{total_files:>{width_files}}" + " " * SEP +
-                  f"{total_matched:>{width_matched}}" + " " * SEP +
-                  f"{total_missing:>{width_missing}}" + " " * SEP +
-                  f"{total_orphan:>{width_orphan}}")
-    print(total_line)
-    print("═" * total_width)
-
+    # ---- Footer ----
     if total_files != total_records:
         diff = abs(total_files - total_records)
-        print_colored(f"[i] There are {diff} more {'files' if total_files > total_records else 'records'} than {'records' if total_files > total_records else 'files'}. Run Option 19 (Tally) to investigate.", COLORS.YELLOW)
+        print_colored(
+            f"[i] There are {diff} more "
+            f"{'files' if total_files > total_records else 'records'} than "
+            f"{'records' if total_files > total_records else 'files'}. "
+            f"Run Option 19 (Tally) to investigate.",
+            COLORS.YELLOW,
+        )
     elif total_missing == 0 and total_orphan == 0:
-        print_colored("✅ All records have matching files in the right place.", COLORS.GREEN)
+        print_colored("✅ All records have matching files in the right place.",
+                      COLORS.GREEN)
     else:
         print_colored("[i] Check missing/orphan counts for details.", COLORS.BLUE)
     print()
@@ -592,13 +666,21 @@ def detect_paper(subject, syllabus_id=None, chapter=None, interactive=True):
         (by_literal,   "text mention"),
     ]
 
+    # Only signals that are genuinely specific may narrow the candidate
+    # set. Codes (01, 01.01) repeat across every syllabus. Keywords are
+    # fuzzy — one paper's list may contain "management" while another's
+    # has only "general management". Both would silently drop valid
+    # candidates if allowed to narrow.
+    NARROWING_ALLOWED = {"subject name", "chapter name"}
+
     for i, (base, base_reason) in enumerate(cascade):
         if not base:
             continue
 
         candidates = set(base)
-        # Narrow with weaker signals (intersection only, never grow)
         for j in range(i + 1, len(cascade)):
+            if cascade[j][1] not in NARROWING_ALLOWED:
+                continue
             if len(candidates) <= 1:
                 break
             narrowed = candidates & cascade[j][0]
