@@ -263,12 +263,13 @@ def create_table():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS subjects (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(255) NOT NULL UNIQUE,
+        name VARCHAR(255) NOT NULL,
         paper VARCHAR(50) NULL,
         chapter VARCHAR(50) NULL,
         active BOOLEAN DEFAULT TRUE,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY idx_paper_name (paper, name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     """)
 
     # ---------- Chapters (linked to subjects) ----------
@@ -1435,7 +1436,63 @@ def migrate_table():
 
 # Register the migrations AFTER both the function and the constant
 # exist. Order matters — this line must come after _baseline_migration_v1.
+def _v3_subject_unique_per_paper(cursor):
+    """
+    v3 — allow the same subject name to exist in two different papers.
+    Drops any legacy single-column UNIQUE index on subjects.name and
+    ensures a composite UNIQUE (paper, name) index exists.
+    Idempotent — safe to re-run.
+    """
+    # 1. Drop a plain UNIQUE index named 'name' if present
+    cursor.execute("""
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME   = 'subjects'
+          AND INDEX_NAME   = 'name'
+          AND NON_UNIQUE   = 0
+    """)
+    if cursor.fetchone()[0] > 0:
+        cursor.execute("ALTER TABLE subjects DROP INDEX `name`")
+        print_colored("[✓] Dropped legacy UNIQUE index on subjects.name.",
+                      COLORS.GREEN)
+
+    # 2. Drop an old single-column index named 'idx_name' if present
+    cursor.execute("""
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME   = 'subjects'
+          AND INDEX_NAME   = 'idx_name'
+          AND NON_UNIQUE   = 0
+    """)
+    if cursor.fetchone()[0] > 0:
+        cursor.execute("ALTER TABLE subjects DROP INDEX idx_name")
+        print_colored("[✓] Dropped old idx_name index.", COLORS.GREEN)
+
+    # 3. Ensure the composite index exists
+    cursor.execute("""
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME   = 'subjects'
+          AND INDEX_NAME   = 'idx_paper_name'
+    """)
+    if cursor.fetchone()[0] == 0:
+        try:
+            cursor.execute("""
+                ALTER TABLE subjects
+                ADD UNIQUE INDEX idx_paper_name (paper, name)
+            """)
+            print_colored("[✓] Added composite UNIQUE index "
+                          "'idx_paper_name' (paper, name).", COLORS.GREEN)
+        except mysql.connector.Error as e:
+            print_colored(
+                f"[!] Could not add composite index: {e}\n"
+                f"    Check for duplicate (paper, name) rows.", COLORS.RED)
+
+
+# Register the migrations AFTER all functions are defined.
 MIGRATIONS.append((1, "baseline", _baseline_migration_v1))
+MIGRATIONS.append((2, "question_links", _v2_question_links))
+MIGRATIONS.append((3, "subject_unique_per_paper", _v3_subject_unique_per_paper))
 
 def ensure_subjects_populated():
     from .syllabus_config import is_configured
