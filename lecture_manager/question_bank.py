@@ -1435,7 +1435,7 @@ def check_duplicate(date, institution, level, paper, group, question_number, exc
         conn.close()
 
 # ---------- Display helpers ----------
-def _display_single_question(q):
+def _display_single_question(q, context_paper=None):
     qid = q.get('id', '?')
     qno = normalize_question_number(q.get('question_number'))
     qtype = q.get('type', 'essay')
@@ -1470,7 +1470,15 @@ def _display_single_question(q):
         print(f"  {'Source':<14}: {color_text(source_val, COLORS.CYAN)}")
 
     # ---------- Syllabus context ----------
-    info = resolve_question_syllabus(q)
+    # When the caller passes context_paper (the paper the user is
+    # currently browsing), resolve against that instead of the primary
+    # link. Otherwise fall back to the primary — which is the normal
+    # behaviour when opening a question from search / direct ID lookup.
+    if context_paper:
+        info = _resolve_against_paper(q, context_paper)
+    else:
+        info = resolve_question_syllabus(q)
+
     if info['paper_display'] or info['subject_name'] or info['chapter_name'] or info['code_display']:
         print()
         print_colored("  📖  Syllabus Link", COLORS.CYAN, bold=True)
@@ -1499,7 +1507,10 @@ def _display_single_question(q):
             code = info['chapter_code'] or ''
             print(f"     {'Chapter':<10}: {code} — {info['chapter_name']}")
         if info['code_display']:
-            print(f"     {'Code':<10}: {info['code_display']}   {color_text('(' + info['reason'] + ')', COLORS.YELLOW)}")
+            _reason = info.get('reason')
+            _suffix = (f"   {color_text('(' + _reason + ')', COLORS.YELLOW)}"
+                       if _reason else "")
+            print(f"     {'Code':<10}: {info['code_display']}{_suffix}")
         if not (info['subject_name'] or info['chapter_name']):
             print_colored("     [i] No matching subject/chapter found in your syllabus.", COLORS.YELLOW)
 
@@ -2787,7 +2798,7 @@ def _browse_papers_in_syllabus(syllabus, ctx):
                     if cmd.isdigit():
                         q = get_question_by_id(int(cmd))
                         if q:
-                            _display_single_question(q)
+                            _display_single_question(q, context_paper=paper_key)
                             input("\nPress Enter to continue...")
                             continue
                         print_colored(f"[!] Question {cmd} not found.", COLORS.RED)
