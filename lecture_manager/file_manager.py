@@ -666,21 +666,16 @@ def detect_paper(subject, syllabus_id=None, chapter=None, interactive=True):
         (by_literal,   "text mention"),
     ]
 
-    # Only signals that are genuinely specific may narrow the candidate
-    # set. Codes (01, 01.01) repeat across every syllabus. Keywords are
-    # fuzzy — one paper's list may contain "management" while another's
-    # has only "general management". Both would silently drop valid
-    # candidates if allowed to narrow.
-    NARROWING_ALLOWED = {"subject name", "chapter name"}
-
     for i, (base, base_reason) in enumerate(cascade):
         if not base:
             continue
 
         candidates = set(base)
+        # Each weaker signal narrows the candidate set ONLY when it
+        # produces a non-empty intersection. If a signal would wipe out
+        # every candidate, it is skipped — so the fallback is "show all
+        # remaining candidates" rather than "show nothing".
         for j in range(i + 1, len(cascade)):
-            if cascade[j][1] not in NARROWING_ALLOWED:
-                continue
             if len(candidates) <= 1:
                 break
             narrowed = candidates & cascade[j][0]
