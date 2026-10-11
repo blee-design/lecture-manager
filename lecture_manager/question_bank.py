@@ -3861,7 +3861,8 @@ def view_whole_paper_interactive():
             if not results:
                 print_colored("[i] No questions found.", COLORS.YELLOW)
                 continue
-            _display_paper(results, show_answers=show_answers)
+            _display_paper(results, show_answers=show_answers,
+                           context_paper=kwargs.get('paper') or None)
             input(color_text("\nPress Enter to return to the filter...",
                              COLORS.MAGENTA))
             continue
