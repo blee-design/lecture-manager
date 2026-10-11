@@ -1012,6 +1012,23 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
             """, (qid, hint['text'], hint.get('clear_incorrect', False),
                   hint.get('show_num_correct', False), idx))
 
+    # ---- Create the PRIMARY question_links row ----
+    # Every new question needs at least one row in question_links so
+    # the browse/tree views can find it. Without this, questions only
+    # appear via their `Also in:` extras (or not at all).
+    if paper and syllabus_code:
+        m = re.match(r'^(\d{1,2})\.(\d{1,2})', str(syllabus_code).strip())
+        if m:
+            subj = f"{int(m.group(1)):02d}"
+            chap = f"{int(m.group(2)):02d}"
+            norm = f"{subj}.{chap}"
+            cursor.execute("""
+                INSERT IGNORE INTO question_links
+                    (question_id, paper_key, syllabus_code,
+                     subject_code, chapter_code, is_primary)
+                VALUES (%s, %s, %s, %s, %s, 1)
+            """, (qid, paper, norm, subj, chap))
+
     conn.commit()
     cursor.close()
     conn.close()
