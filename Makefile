@@ -255,6 +255,12 @@ migrate-reset:
 	@echo "$(YELLOW)Clearing version stamp — next 'make migrate' will re-run the baseline...$(NC)"
 	@$(PYTHON_VENV) -W ignore::RuntimeWarning -m lecture_manager.db --reset
 
+.PHONY: sample-import
+sample-import:
+	@echo "$(BLUE)Importing sample syllabus...$(NC)"
+	$(PYTHON_VENV) -W ignore::RuntimeWarning -c "from lecture_manager.syllabus_config import import_syllabus; import_syllabus('data/samples/sample_syllabus.json', merge=True)"
+	@echo "$(GREEN)Done. Use 'make run' to see it in the syllabus menu.$(NC)"
+
 migrate-history:
 	@echo "$(BLUE)Migration history:$(NC)"
 	@mysql -h $${DB_HOST:-localhost} -u $${DB_USER:-root} -p$${DB_PASSWORD:-} $${DB_NAME:-fox} \

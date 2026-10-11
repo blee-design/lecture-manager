@@ -1,0 +1,54 @@
+{
+  "version": 3,
+  "exported_at": "2026-10-11T00:00:00",
+  "syllabi": [
+    {
+      "syllabus_key": "sample",
+      "display_name": "Sample Syllabus (Edit or Delete)",
+      "level": "6",
+      "description": "Starter syllabus demonstrating the structure. Contains one paper with two subjects. Replace with your own programme.",
+      "display_order": 0,
+      "papers": [
+        {
+          "paper_key": "sample_paper_i",
+          "display_name": "First Paper: Sample Subject Group",
+          "folder_name": "Sample - First Paper",
+          "keywords": "sample,economics,management,general",
+          "display_order": 10,
+          "subjects": [
+            {
+              "name": "1. Introduction",
+              "chapter": "01",
+              "chapters": [
+                {
+                  "chapter_code": "01",
+                  "name": "Chapter One",
+                  "description": "First chapter — replace with real content.",
+                  "display_order": 10
+                },
+                {
+                  "chapter_code": "02",
+                  "name": "Chapter Two",
+                  "description": "",
+                  "display_order": 20
+                }
+              ]
+            },
+            {
+              "name": "2. Advanced Topics",
+              "chapter": "02",
+              "chapters": [
+                {
+                  "chapter_code": "01",
+                  "name": "Advanced Chapter One",
+                  "description": "",
+                  "display_order": 10
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

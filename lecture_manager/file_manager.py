@@ -26,84 +26,12 @@ _SUBJECT_KEY_TO_NAME = None      # {(paper_key, chapter_code): subject_name}
 _SUBJECT_NAME_TO_PAPER = None    # {subject_name: paper_key}
 _CHAPTER_KEY_TO_NAME = None      # {(paper_key, subject_code, chapter_code): chapter_name}
 
-# Pretest subjects (01-10)
-PRETEST_SUBJECTS = {
-    "01": "1. Geography, Population, and Environment (GK)",
-    "02": "2. History and Socio‑Cultural Aspects",
-    "03": "3. Economic, Banking and Public Finance",
-    "04": "4. Constitution, Law and Governance",
-    "05": "5. International Relations and Current Affairs",
-    "06": "6. Science, Technology and ICT",
-    "07": "7. Public Enterprises and Public Management",
-    "08": "8. Basic Mathematical Aptitude and Analytical Ability",
-    "09": "9. English Language Competence Test",
-    "10": "10. Nepali Language Competence Test"
-}
-
-# Second Paper subjects
-PAPER_I_SUBJECTS = {
-    "01": "1. Microeconomics",
-    "02": "2. Development Economics",
-    "03": "3. Public Economics",
-    "04": "4. Macroeconomics",
-    "05": "5. Monetary Economics",
-    "06": "6. International Economics"
-}
-
-PAPER_II_SUBJECTS = {
-    "01": "1. General Management",
-    "02": "2. Human Resource Development",
-    "03": "3. Financial Economics",
-    "04": "4. Managerial Economics"
-}
-
-PAPER_III_SUBJECTS = {
-    "01": "1. Research Methodology",
-    "02": "2. Information and Communication Technology",
-    "03": "3. Banking Laws and Regulations"
-}
-
-# Map paper type to folder name and subject mapping
-PAPER_CONFIG = {
-    "pretest": {
-        "folder": "Pretest Officer",
-        "subjects": PRETEST_SUBJECTS
-    },
-    "paper_i": {
-        "folder": "First Paper: Economics",
-        "subjects": PAPER_I_SUBJECTS
-    },
-    "paper_ii": {
-        "folder": "Second Paper: Management",
-        "subjects": PAPER_II_SUBJECTS
-    },
-    "paper_iii": {
-        "folder": "Third Paper: Research Methodologies, ICT and Banking Laws & Regulation",
-        "subjects": PAPER_III_SUBJECTS
-    }
-    }
-
-# Keywords for detection
-PAPER_KEYWORDS = {
-    "pretest": [
-        "gk", "pretest", "english", "nepali", "geography", "history",
-        "constitution", "international", "science", "public enterprises",
-        "mathematical", "orientation"
-    ],
-    "paper_i": [
-        "microeconomics", "development economics", "public economics",
-        "macroeconomics", "monetary economics", "international economics",
-        "economics"
-    ],
-    "paper_ii": [
-        "general management", "human resource", "financial economics",
-        "managerial economics"
-    ],
-    "paper_iii": [
-        "research methodology", "information technology", "ict",
-        "banking laws", "regulations"
-    ]
-    }
+# NOTE: Hardcoded syllabus tables were removed in v3.0.x.
+# All paper/subject/keyword data is now read from the DB via
+# `syllabus_config` (see SC.get_papers / SC.get_subjects / SC.get_chapters).
+# A sample syllabus for fresh installs lives at:
+#     data/samples/sample_syllabus.json
+# Import it via: Syllabus Setup → 8. Import syllabus from JSON
 
 def reload_paper_cache():
     """Call after any change to papers/subjects/chapters."""
