@@ -666,41 +666,51 @@ def _print_labeled(label, html_content, indent="     ", cont_indent=None):
 
 def _parse_id_list(text):
     """
-    Parse an ID filter string into a set of integers.
+    Parse an ID filter string into (include_set, exclude_set).
 
-    Supported forms:
-        5            → {5}
-        5,10,20      → {5,10,20}
-        5..10        → {5,6,7,8,9,10}
-        5,10..15,20  → {5,10,11,...,15,20}
+    A leading '!' marks exclusion. Both '..' and '...' work for ranges.
 
-    Malformed parts are silently ignored. Returns an empty set if nothing
-    valid was parsed. Used by:
-      - the export filter menu (Option 13 → 8)
-      - the advanced search (Option 5)
+    Examples:
+        5                → ({5}, {})
+        5,10,20          → ({5,10,20}, {})
+        !5               → ({}, {5})
+        5..10            → ({5,...,10}, {})
+        !5..10,!20       → ({}, {5,...,10,20})
+        5,10..15,!20     → ({5,10,...,15}, {20})
+
+    Malformed parts are silently ignored. Returns (set(), set()) if
+    nothing valid was parsed.
     """
-    out = set()
+    include = set()
+    exclude = set()
     if not text:
-        return out
+        return include, exclude
     for part in str(text).split(','):
         part = part.strip()
         if not part:
             continue
+        negate = part.startswith('!')
+        if negate:
+            part = part[1:].strip()
+            if not part:
+                continue
+        part = part.replace('...', '..')
+        target = exclude if negate else include
         if '..' in part:
             a_str, _, b_str = part.partition('..')
             try:
                 a, b = int(a_str.strip()), int(b_str.strip())
                 if a > b:
                     a, b = b, a
-                out.update(range(a, b + 1))
+                target.update(range(a, b + 1))
             except ValueError:
                 continue
         else:
             try:
-                out.add(int(part))
+                target.add(int(part))
             except ValueError:
                 continue
-    return out
+    return include, exclude
 
 def _get_filtered_questions_interactive():
     """
@@ -733,9 +743,11 @@ def _get_filtered_questions_interactive():
         """Translate the interactive filters dict to db_handler filter keys."""
         q = {}
         if f.get('id'):
-            ids = _parse_id_list(f['id'])
-            if ids:
-                q['id_list'] = ids
+            inc, exc = _parse_id_list(f['id'])
+            if inc:
+                q['id_list'] = inc
+            if exc:
+                q['id_exclude'] = exc
         for k in ('date', 'institution', 'level', 'alias',
                   'paper', 'source', 'group', 'subject', 'chapter', 'type'):
             if f.get(k):
@@ -784,6 +796,7 @@ def _get_filtered_questions_interactive():
 
         print("\n  " + color_text("OPTIONS:", COLORS.WHITE, bold=True))
         print("  1-10. Edit filter (by number)")
+        print("        Values: comma list · '..' for range · '!' to exclude")
         print("  90.  " + color_text("Execute with current filters", COLORS.GREEN, bold=True))
         print("   0.  " + color_text("Cancel", COLORS.RED))
         print("   c.  " + color_text("Clear all filters", COLORS.YELLOW))
@@ -821,7 +834,7 @@ def _get_filtered_questions_interactive():
                 hint = " (comma list"
                 if key in RANGE_OK:
                     hint += ", '..' for range"
-                hint += ")"
+                hint += ", '!' to exclude)"
             elif key in ('alias', 'chapter'):
                 hint = " (* = has value, - = empty)"
             else:

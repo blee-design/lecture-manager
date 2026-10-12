@@ -270,24 +270,26 @@ def run_conversion(args):
         if args.verbose:
             print(f"\n{C.CYAN}{C.BOLD}=== FILTER PREVIEW ==={C.RESET}")
             max_q = max([q.get("question_no", 0) for q in questions]) if questions else 0
-            selected, errors, warnings = validate_filter_pattern(args.questions, max_q, strict=True)
+            include, exclude, errors, warnings = validate_filter_pattern(
+                args.questions, max_q, strict=True)
             if errors:
                 print(f"\n{C.RED}[ERROR] Filter pattern has issues:{C.RESET}")
-                for error in errors:
-                    print(f"  • {error}")
+                for e in errors:
+                    print(f"  • {e}")
                 print(f"\n{C.YELLOW}Available questions: 1 to {max_q}{C.RESET}")
-                print(f"{C.YELLOW}Cannot continue with invalid filter pattern.{C.RESET}")
                 sys.exit(1)
             if warnings:
                 print(f"\n{C.YELLOW}[WARNING] Filter adjustments:{C.RESET}")
-                for warning in warnings:
-                    print(f"  • {warning}")
-            if selected:
+                for w in warnings:
+                    print(f"  • {w}")
+            if include:
                 print(f"\n{C.GREEN}Filter Preview:{C.RESET}")
-                print(f"  Will select: {sorted(selected)}")
-                print(f"  Total questions to extract: {len(selected)}")
-            else:
-                print(f"\n{C.YELLOW}Warning: No valid questions selected with pattern{C.RESET}")
+                print(f"  Include: {sorted(include)}")
+            if exclude:
+                print(f"\n{C.YELLOW}Filter Preview:{C.RESET}")
+                print(f"  Exclude: {sorted(exclude)}")
+            if include or exclude:
+                print(f"  Total questions after filter will be shown below.")
             print(f"{C.CYAN}{C.BOLD}======================{C.RESET}\n")
         questions = filter_questions(questions, args.questions, args.verbose)
         filtered_out = original_count - len(questions)

@@ -101,188 +101,180 @@ def needs_latex_processing(question_text):
     return False
 
 def validate_filter_pattern(filter_arg, max_question, strict=False):
-    """Validate filter pattern and return parsed numbers with error messages
-    If strict=True, out-of-range numbers are treated as errors (not warnings)"""
+    """
+    Validate a filter pattern and return (include, exclude, errors, warnings).
+
+    Supports:
+        1,5,10           → include only these
+        !5,!10           → include all except these
+        1..10            → include range
+        !1..10           → exclude range
+        1..10,!5,!20..25 → include range minus these
+        '..' or '...'    → both work as range operators
+
+    strict=True → out-of-range numbers are errors (not warnings).
+    """
     if not filter_arg or filter_arg.strip() == "":
-        return set(), [], []
-    
-    selected_numbers = set()
+        return set(), set(), [], []
+
+    include = set()
+    exclude = set()
     errors = []
     warnings = []
-    
-    # Clean the filter argument
+
     filter_arg = filter_arg.strip()
-    
-    # Basic validation - only allow digits, commas, dots, and spaces
-    if not re.match(r'^[\d\s,.]+$', filter_arg.replace('..', '')):
-        errors.append(f"Pattern contains invalid characters. Only numbers, commas, and '..' are allowed.")
-        return selected_numbers, errors, warnings
-    
+
+    # Allow digits, commas, dots, spaces, and '!'
+    _probe = filter_arg.replace('..', '').replace('...', '').replace('!', '')
+    if not re.match(r'^[\d\s,.]+$', _probe):
+        errors.append("Pattern contains invalid characters. "
+                      "Only numbers, commas, '..' or '...', and '!' are allowed.")
+        return include, exclude, errors, warnings
+
     parts = [p.strip() for p in filter_arg.split(',') if p.strip()]
-    
+
     for part in parts:
-        if '..' in part:
-            # Check for multiple '..' in one part
-            if part.count('..') > 1:
-                errors.append(f"Multiple '..' in '{part}' - use only one '..' per range")
+        negate = part.startswith('!')
+        if negate:
+            part = part[1:].strip()
+            if not part:
                 continue
-                
-            range_parts = part.split('..')
+        target = exclude if negate else include
+
+        # Normalise '...' → '..' for uniform parsing
+        part_norm = part.replace('...', '..')
+
+        if '..' in part_norm:
+            if part_norm.count('..') > 1:
+                errors.append(f"Multiple '..' in '{part}' — use one per range")
+                continue
+
+            range_parts = part_norm.split('..')
             if len(range_parts) != 2:
-                errors.append(f"Invalid range format in '{part}' - must be 'start..end'")
+                errors.append(f"Invalid range format in '{part}'")
                 continue
-            
+
             start_str, end_str = range_parts[0].strip(), range_parts[1].strip()
-            
-            # Validate start and end are numbers
             if not start_str.isdigit() or not end_str.isdigit():
                 errors.append(f"Non-numeric values in range '{part}'")
                 continue
-            
+
             start, end = int(start_str), int(end_str)
-            
-            # Validate range bounds
-            if start <= 0:
-                errors.append(f"Range start in '{part}' must be positive (got {start})")
+            if start <= 0 or end <= 0:
+                errors.append(f"Range bounds in '{part}' must be positive")
                 continue
-            if end <= 0:
-                errors.append(f"Range end in '{part}' must be positive (got {end})")
-                continue
-            
-            # Check if range is reversed
             if start > end:
-                # Auto-correct but warn
                 start, end = end, start
-                warnings.append(f"Range '{part}' was reversed, auto-corrected to {start}..{end}")
-            
-            # Check if range is within available questions - TREAT AS ERROR IN STRICT MODE
+                warnings.append(f"Range '{part}' was reversed → {start}..{end}")
+
             if start > max_question:
                 if strict:
-                    errors.append(f"Range start {start} exceeds maximum available question {max_question}")
+                    errors.append(f"Range start {start} exceeds max {max_question}")
                 else:
-                    warnings.append(f"Range start {start} exceeds maximum available question {max_question}")
-                    start = max_question + 1  # Make range empty
-            elif end > max_question:
+                    warnings.append(f"Range start {start} exceeds max {max_question}")
+                continue
+            if end > max_question:
                 if strict:
-                    errors.append(f"Range end {end} exceeds maximum available question {max_question}")
+                    errors.append(f"Range end {end} exceeds max {max_question}")
                 else:
-                    warnings.append(f"Range end {end} exceeds maximum available question {max_question}")
-                    end = max_question
-            
-            # Only add valid numbers if no errors in strict mode
-            if not (strict and (start > max_question or end > max_question)):
-                if start <= end:
-                    for num in range(start, end + 1):
-                        if 1 <= num <= max_question:
-                            selected_numbers.add(num)
+                    warnings.append(f"Range end {end} exceeds max {max_question}")
+                end = max_question
+
+            for num in range(start, end + 1):
+                if 1 <= num <= max_question:
+                    target.add(num)
+
         else:
-            # Handle individual number
             if not part.isdigit():
-                errors.append(f"Invalid number '{part}' - must be a positive integer")
+                errors.append(f"Invalid number '{part}' — must be positive integer")
                 continue
-            
             num = int(part)
-            
             if num <= 0:
-                errors.append(f"Invalid question number '{num}' - must be positive")
+                errors.append(f"Invalid question number '{num}'")
                 continue
-            
-            # Check if number exists - TREAT AS ERROR IN STRICT MODE
             if num > max_question:
                 if strict:
-                    errors.append(f"Question {num} not found (maximum available: {max_question})")
+                    errors.append(f"Question {num} not found (max: {max_question})")
                 else:
-                    warnings.append(f"Question {num} not found (maximum available: {max_question})")
-            else:
-                selected_numbers.add(num)
-    
-    return selected_numbers, errors, warnings
+                    warnings.append(f"Question {num} not found (max: {max_question})")
+                continue
+            target.add(num)
+
+    return include, exclude, errors, warnings
 
 def normalize_text(t):
     return re.sub(r"\s+", " ", t.strip().lower())
 
 def filter_questions(questions, filter_arg, verbose=False):
-    """Filter questions based on selection criteria - with comprehensive error handling"""
+    """
+    Filter questions by include/exclude pattern.
+
+    A leading '!' excludes. Empty include set with non-empty exclude
+    set means "all questions except these".
+    """
     if not filter_arg or filter_arg.strip() == "":
-        log(f"No filter specified, using all {len(questions)} questions", "INFO", verbose)
+        log(f"No filter specified, using all {len(questions)} questions",
+            "INFO", verbose)
         return questions
 
-    # Get the maximum question number
     if not questions:
         print(f"{C.YELLOW}[WARNING] No questions to filter{C.RESET}")
         return questions
-    
+
     max_question = max([q.get("question_no", 0) for q in questions])
     log(f"Parsing filter pattern: '{filter_arg}'", "INFO", verbose)
     log(f"Available questions: 1 to {max_question}", "INFO", verbose)
 
-    # Use the new validation function with strict mode
-    selected_numbers, errors, warnings = validate_filter_pattern(filter_arg, max_question, strict=True)
+    include, exclude, errors, warnings = validate_filter_pattern(
+        filter_arg, max_question, strict=True)
 
-    # Display errors if any
     if errors:
         print(f"\n{C.RED}Invalid filter pattern:{C.RESET}")
-        for error in errors:
-            print(f"  • {error}")
+        for e in errors:
+            print(f"  • {e}")
         print(f"\n{C.YELLOW}Available questions: 1 to {max_question}{C.RESET}")
         print(f"{C.YELLOW}Examples of valid patterns:{C.RESET}")
-        print(f"  {C.GREEN}-q 1,5,10{C.RESET}           # Individual questions")
-        print(f"  {C.GREEN}-q 5..10{C.RESET}            # Range (inclusive)")
-        print(f"  {C.GREEN}-q 1,5..10,15,20..25{C.RESET} # Mixed pattern")
-        print(f"\n{C.YELLOW}Fix: Remove out-of-range numbers from your filter pattern.{C.RESET}")
+        print(f"  {C.GREEN}-q 1,5,10{C.RESET}             # include only these")
+        print(f"  {C.GREEN}-q !5,!10{C.RESET}            # exclude these")
+        print(f"  {C.GREEN}-q 1..10{C.RESET}             # include range")
+        print(f"  {C.GREEN}-q 1..10,!5,!20..25{C.RESET}  # range minus exclusions")
         raise InvalidFilterError("\n".join(errors))
 
-    # If no valid numbers selected
-    if not selected_numbers:
-        print(f"{C.YELLOW}[WARNING] No valid question numbers selected, using all questions{C.RESET}")
-        return questions
-
-    # Display warnings if any
     if warnings and verbose:
         print(f"\n{C.YELLOW}[WARNING] Filter issues:{C.RESET}")
-        for warning in warnings:
-            print(f"  • {warning}")
+        for w in warnings:
+            print(f"  • {w}")
 
-    # Filter questions
+    # Nothing to include or exclude → return as-is
+    if not include and not exclude:
+        print(f"{C.YELLOW}[WARNING] No valid selections — using all questions{C.RESET}")
+        return questions
+
+    # Apply inclusion then exclusion
     filtered = []
     for q in questions:
         q_no = q.get("question_no", 0)
-        if q_no in selected_numbers:
-            filtered.append(q)
-
-    # Sort selected numbers for consistent display
-    sorted_numbers = sorted(selected_numbers)
-    
-    # Show which numbers were actually found vs requested
-    found_nums = [q.get("question_no", 0) for q in filtered]
-    not_found = [n for n in selected_numbers if n not in found_nums]
-    
-    if not_found:
-        print(f"{C.YELLOW}[WARNING] Some questions not found in input:{C.RESET}")
-        print(f"  Missing: {sorted(not_found)}")
-        print(f"  Available: 1 to {max_question}")
+        if include and q_no not in include:
+            continue
+        if q_no in exclude:
+            continue
+        filtered.append(q)
 
     # Summary
+    mode = []
+    if include: mode.append(f"include {len(include)}")
+    if exclude: mode.append(f"exclude {len(exclude)}")
     log(f"\n{C.CYAN}Filter Summary:{C.RESET}", "SUMMARY", True)
-    log(f"  Requested pattern: {filter_arg}", "INFO", True)
-    log(f"  Parsed numbers: {sorted_numbers}", "INFO", verbose)
-    log(f"  Found: {len(filtered)} of {len(selected_numbers)} requested questions", "INFO", True)
-    
-    if verbose and filtered:
-        # Show which questions were selected
-        print(f"\n{C.CYAN}Selected Questions:{C.RESET}")
-        for q in filtered[:10]:  # Show first 10 only
-            q_preview = q.get('text', '')[:50] + "..." if len(q.get('text', '')) > 50 else q.get('text', '')
-            print(f"  Question {q.get('question_no', '?'):3d}: {q_preview}")
-        if len(filtered) > 10:
-            print(f"  ... and {len(filtered) - 10} more questions")
+    log(f"  Pattern: {filter_arg}", "INFO", True)
+    log(f"  Mode   : {', '.join(mode) or 'none'}", "INFO", verbose)
+    log(f"  Kept   : {len(filtered)} of {len(questions)}", "INFO", True)
 
-    # Re-number filtered questions sequentially
+    # Re-number
     for i, q in enumerate(filtered, 1):
         old_no = q.get("question_no", 0)
         q["question_no"] = i
         if verbose and old_no != i:
-            log(f"  Renumbered: Question {old_no} → {i}", "INFO", verbose)
+            log(f"  Renumbered: {old_no} → {i}", "INFO", verbose)
 
     return filtered
 

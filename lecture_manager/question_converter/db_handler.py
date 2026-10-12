@@ -477,46 +477,96 @@ def delete_question(qid):
 # -------------------- Get Questions --------------------
 def _parse_multi(raw):
     """
-    Split 'a,b,c' or 'a..c' into a list of ('eq', val) / ('between', lo, hi).
-    Handles whitespace. Empty input → [].
+    Parse 'a,b,!c,d..e,!f..g' into a list of items with negation flags.
+
+    Returns tuples:
+      ('eq',       val)
+      ('between',  lo, hi)
+      ('neq',      val)
+      ('nbetween', lo, hi)
+
+    A leading '!' marks exclusion. Both '..' and '...' work for ranges.
     """
     items = []
     for part in str(raw).split(','):
         part = part.strip()
         if not part:
             continue
+        negate = part.startswith('!')
+        if negate:
+            part = part[1:].strip()
+            if not part:
+                continue
+        # Normalise '...' → '..' so range parsing is uniform
+        part = part.replace('...', '..')
         if '..' in part:
             lo, _, hi = part.partition('..')
-            items.append(('between', lo.strip(), hi.strip()))
+            items.append(('nbetween' if negate else 'between',
+                          lo.strip(), hi.strip()))
         else:
-            items.append(('eq', part))
+            items.append(('neq' if negate else 'eq', part))
     return items
 
 
 def _multi_eq_clause(col, raw, params):
-    """OR-of-equals / BETWEEN for a comma/range string."""
-    parts = []
+    """
+    Build a clause from a comma/range string with optional '!' negation.
+
+    Mixed example: 'a,b,!c..d'
+      → (col = a OR col = b) AND NOT (col BETWEEN c AND d)
+    Pure exclusions: '!a'
+      → NOT (col = a)
+    """
+    include_parts = []
+    exclude_parts = []
     for it in _parse_multi(raw):
-        if it[0] == 'eq':
-            parts.append(f"{col} = %s")
+        kind = it[0]
+        if kind == 'eq':
+            include_parts.append(f"{col} = %s")
             params.append(it[1])
-        else:
-            parts.append(f"{col} BETWEEN %s AND %s")
+        elif kind == 'neq':
+            exclude_parts.append(f"{col} = %s")
+            params.append(it[1])
+        elif kind == 'between':
+            include_parts.append(f"{col} BETWEEN %s AND %s")
             params.extend([it[1], it[2]])
-    return "(" + " OR ".join(parts) + ")" if parts else "1=0"
+        elif kind == 'nbetween':
+            exclude_parts.append(f"{col} BETWEEN %s AND %s")
+            params.extend([it[1], it[2]])
+
+    parts = []
+    if include_parts:
+        parts.append("(" + " OR ".join(include_parts) + ")")
+    if exclude_parts:
+        parts.append("NOT (" + " OR ".join(exclude_parts) + ")")
+    return " AND ".join(parts) if parts else "1=1"
 
 
 def _multi_like_clause(col, raw, params, prefix=True):
-    """Same but LIKE-based (prefix or substring)."""
-    parts = []
+    """Same as _multi_eq_clause but LIKE-based (prefix or substring)."""
+    include_parts = []
+    exclude_parts = []
     for it in _parse_multi(raw):
-        if it[0] == 'eq':
-            parts.append(f"{col} LIKE %s")
+        kind = it[0]
+        if kind == 'eq':
+            include_parts.append(f"{col} LIKE %s")
             params.append(f"{it[1]}%" if prefix else f"%{it[1]}%")
-        else:
-            parts.append(f"{col} BETWEEN %s AND %s")
+        elif kind == 'neq':
+            exclude_parts.append(f"{col} LIKE %s")
+            params.append(f"{it[1]}%" if prefix else f"%{it[1]}%")
+        elif kind == 'between':
+            include_parts.append(f"{col} BETWEEN %s AND %s")
             params.extend([it[1], it[2]])
-    return "(" + " OR ".join(parts) + ")" if parts else "1=0"
+        elif kind == 'nbetween':
+            exclude_parts.append(f"{col} BETWEEN %s AND %s")
+            params.extend([it[1], it[2]])
+
+    parts = []
+    if include_parts:
+        parts.append("(" + " OR ".join(include_parts) + ")")
+    if exclude_parts:
+        parts.append("NOT (" + " OR ".join(exclude_parts) + ")")
+    return " AND ".join(parts) if parts else "1=1"
 
 
 def _build_question_where(filters):
@@ -531,11 +581,16 @@ def _build_question_where(filters):
     clauses = []
     params = []
 
-    # --- ID list (set of ints) ---
+    # --- ID include/exclude ---
     if filters.get('id_list'):
         ids = list(filters['id_list'])
         placeholders = ','.join(['%s'] * len(ids))
         clauses.append(f"q.id IN ({placeholders})")
+        params.extend(ids)
+    if filters.get('id_exclude'):
+        ids = list(filters['id_exclude'])
+        placeholders = ','.join(['%s'] * len(ids))
+        clauses.append(f"q.id NOT IN ({placeholders})")
         params.extend(ids)
 
     # --- Date: exact / list / range ---
@@ -543,19 +598,28 @@ def _build_question_where(filters):
         clauses.append(_multi_eq_clause('q.question_date',
                                         filters['date'], params))
 
-    # --- Paper: list, link-aware (matches primary OR question_links) ---
+    # --- Paper: list, link-aware, negation-aware ---
     if filters.get('paper'):
-        parts = []
+        include_parts = []
+        exclude_parts = []
         for it in _parse_multi(filters['paper']):
-            if it[0] == 'eq':
-                parts.append(
-                    "(q.paper = %s OR q.id IN "
+            if it[0] not in ('eq', 'neq'):
+                continue
+            frag = ("(q.paper = %s OR q.id IN "
                     "(SELECT question_id FROM question_links "
-                    "WHERE paper_key = %s))"
-                )
-                params.extend([it[1], it[1]])
+                    "WHERE paper_key = %s))")
+            params.extend([it[1], it[1]])
+            if it[0] == 'eq':
+                include_parts.append(frag)
+            else:
+                exclude_parts.append(frag)
+        parts = []
+        if include_parts:
+            parts.append("(" + " OR ".join(include_parts) + ")")
+        if exclude_parts:
+            parts.append("NOT (" + " OR ".join(exclude_parts) + ")")
         if parts:
-            clauses.append("(" + " OR ".join(parts) + ")")
+            clauses.append(" AND ".join(parts))
 
     # --- Type: list ---
     if filters.get('type'):
