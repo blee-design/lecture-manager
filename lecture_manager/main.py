@@ -15,8 +15,8 @@ from .file_manager import (
     move_video_interactive,
     delete_video_to_trash, restore_from_trash, empty_trash,
     tally_db_with_files, scan_duplicates, resolve_duplicates,
-    backfill_hashes, play_video,
-    backfill_hash_naming, show_paper_breakdown
+    play_video,
+    show_paper_breakdown
 )
 from .web import run_web_server
 from .utils import print_colored, color_text, COLORS
@@ -1159,8 +1159,6 @@ def main():
             ("📊 Tally database with video files", tally_db_with_files),
             ("🔎 Scan for duplicate video files", scan_duplicates),
             ("✅ Auto-resolve duplicate video files", resolve_duplicates),
-            ("🔄 Backfill file hashes (one‑time)", backfill_hashes),
-            ("🏷️ Backfill hash naming (rename files to MD5)", backfill_hash_naming),
         ],
         '4': [
             ("⚙️ Edit database configuration", edit_config),

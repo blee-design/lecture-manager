@@ -4070,8 +4070,11 @@ def _advanced_search_preview(criteria, max_preview=3):
         results = [r for r in results
                    if (r.get('exam_type') or 'open').lower() == criteria['exam_type'].lower()]
     if has_id:
-        id_set = _parse_id_list(criteria['id'])
-        results = [r for r in results if r.get('id') in id_set]
+        include_ids, exclude_ids = _parse_id_list(criteria['id'])
+        if include_ids:
+            results = [r for r in results if r.get('id') in include_ids]
+        if exclude_ids:
+            results = [r for r in results if r.get('id') not in exclude_ids]
 
     total = len(results)
     print_colored(f"[i] {total} question(s) match current criteria.", COLORS.BLUE)
@@ -4151,12 +4154,15 @@ def advanced_search_interactive():
             # ---- Direct ID lookup takes precedence ----
             # Accepts single IDs, comma lists, and ranges:
             #     5,  5,10,20,  5..10,  5,10..15,20
+            # ---- ID lookup takes precedence ----
+            # Accepts single IDs, comma lists, ranges, and '!' negation.
             if 'id' in kwargs:
-                id_set = _parse_id_list(kwargs.pop('id'))
-                if id_set:
-                    # Single ID → show detail directly (existing shortcut)
-                    if len(id_set) == 1:
-                        only_id = next(iter(id_set))
+                include_ids, exclude_ids = _parse_id_list(kwargs.pop('id'))
+                if include_ids or exclude_ids:
+
+                    # ---- Single include, no exclusions → detail view ----
+                    if len(include_ids) == 1 and not exclude_ids:
+                        only_id = next(iter(include_ids))
                         q = get_question_by_id(only_id)
                         if q:
                             _display_single_question(q)
@@ -4168,6 +4174,90 @@ def advanced_search_interactive():
                                 COLORS.RED,
                             )
                         continue
+
+                    # ---- Includes present → fetch exactly those (minus exclusions) ----
+                    if include_ids:
+                        ids_to_fetch = sorted(include_ids - exclude_ids)
+                        found = []
+                        missing = []
+                        for qid in ids_to_fetch:
+                            q = get_question_by_id(qid)
+                            if q:
+                                found.append(q)
+                            else:
+                                missing.append(qid)
+
+                        if not found:
+                            print_colored(
+                                f"[!] None of the {len(ids_to_fetch)} ID(s) were found.",
+                                COLORS.RED,
+                            )
+                            continue
+
+                        # Apply remaining criteria on top of the ID selection
+                        for key, value in kwargs.items():
+                            if not value:
+                                continue
+                            if key == 'type':
+                                found = [q for q in found
+                                         if (q.get('type') or '').lower() == value.lower()]
+                            elif key == 'date':
+                                found = [q for q in found
+                                         if (q.get('question_date') or '') == value]
+                            elif key == 'paper':
+                                found = [q for q in found
+                                         if (q.get('paper') or '').lower() == value.lower()]
+                            else:
+                                found = [q for q in found
+                                         if value.lower() in (q.get(key) or '').lower()]
+
+                        def _print_search_list():
+                            print(f"\n--- {len(found)} QUESTION(S) SELECTED ---")
+                            for r in found:
+                                preview = _short_preview(
+                                    r.get('nepali_transcription')
+                                    or r.get('english_transcription') or '', 55
+                                )
+                                print(f"  {r['id']:>5} | "
+                                      f"{(r.get('question_date') or ''):<10} | "
+                                      f"{(r.get('institution') or '')[:20]:<20} | "
+                                      f"{(r.get('subject') or '')[:25]:<25} | "
+                                      f"Q{r.get('question_number') or ''}")
+                                print(f"        {preview}")
+
+                            if missing:
+                                print_colored(
+                                    f"[!] Not found: {missing[:20]}"
+                                    + (" ..." if len(missing) > 20 else ""),
+                                    COLORS.YELLOW,
+                                )
+
+                        _print_search_list()
+
+                        while True:
+                            cid = input(color_text(
+                                "\nEnter ID to view (Enter/b = back, q = quit): ",
+                                COLORS.MAGENTA)).strip().lower()
+                            if cid in ('', 'b', 'back'):
+                                break
+                            if cid in ('q', 'quit', 'exit'):
+                                return
+                            if not cid.isdigit():
+                                print_colored("[!] Enter a numeric ID.", COLORS.RED)
+                                continue
+                            q = get_question_by_id(int(cid))
+                            if q:
+                                _display_single_question(q)
+                                input(color_text("\nPress Enter to continue...",
+                                                 COLORS.MAGENTA))
+                            else:
+                                print_colored(f"[!] ID {cid} not found.", COLORS.RED)
+                        continue
+
+                    # ---- Pure exclusions (only '!' entries) ----
+                    # Fall through to the normal search, then drop the excluded IDs.
+                    # We stash the exclusion set so we can apply it after fetching.
+                    id_exclude_after = exclude_ids
 
                     # Multiple IDs → collect rows, report missing ones
                     found = []
@@ -4286,6 +4376,12 @@ def advanced_search_interactive():
                 wanted = kwargs['exam_type'].strip().lower()
                 results = [q for q in results
                            if (q.get('exam_type') or 'open').lower() == wanted]
+
+            # Apply any pending ID exclusion from the pure-'!' filter case
+            if id_exclude_after:
+                results = [r for r in results
+                           if r.get('id') not in id_exclude_after]
+                id_exclude_after = set()
 
             if not results:
                 print_colored("[i] No matches found.", COLORS.YELLOW)
