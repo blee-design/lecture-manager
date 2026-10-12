@@ -564,9 +564,9 @@ class PomodoroApp:
             earned.append('five_day_streak')
         if streak >= 10:
             earned.append('ten_day_streak')
-        if early_bird:
+        if early_bird and total_sessions >= 5:
             earned.append('early_bird')
-        if night_owl:
+        if night_owl and total_sessions >= 5:
             earned.append('night_owl')
         if specialist:
             earned.append('subject_specialist')
@@ -590,18 +590,35 @@ class PomodoroApp:
         cursor.close()
         conn.close()
 
-        # Show notification for new badges
+        # Show notification for newly-earned badges
         if newly_earned:
-            # Fetch icons and descriptions
             conn = get_connection()
             cursor = conn.cursor(dictionary=True)
             placeholders = ','.join(['%s'] * len(newly_earned))
-            cursor.execute(f"SELECT badge_name, description, icon FROM pomodoro_badges WHERE badge_name IN ({placeholders})", newly_earned)
+            cursor.execute(
+                f"SELECT badge_name, description, icon "
+                f"FROM pomodoro_badges WHERE badge_name IN ({placeholders})",
+                newly_earned,
+            )
             badge_info = cursor.fetchall()
             cursor.close()
             conn.close()
-            msg = "\n".join([f"{b['icon']} {b['badge_name'].replace('_',' ').title()} – {b['description']}" for b in badge_info])
-            messagebox.showinfo("🏆 New Badge(s) Unlocked!", f"You earned:\n\n{msg}")
+
+            n = len(badge_info)
+            title = ("🏆  New Badge Unlocked!"
+                     if n == 1 else
+                     f"🏆  {n} New Badges Unlocked!")
+
+            lines = []
+            for b in badge_info:
+                name = b['badge_name'].replace('_', ' ').title()
+                lines.append(f"{b['icon']}  {name}")
+                if b.get('description'):
+                    lines.append(f"     {b['description']}")
+                lines.append("")
+            msg = "\n".join(lines).rstrip()
+
+            messagebox.showinfo(title, msg)
 
     def _create_scrollable_container(self):
         container = ttk.Frame(self.root)
@@ -2879,19 +2896,22 @@ class PomodoroApp:
         if total_sessions >= 100:   earned.append('hundred_sessions')
         if streak >= 5:             earned.append('five_day_streak')
         if streak >= 10:            earned.append('ten_day_streak')
-        if early_bird:              earned.append('early_bird')
-        if night_owl:               earned.append('night_owl')
+        if early_bird and total_sessions >= 5:   earned.append('early_bird')
+        if night_owl  and total_sessions >= 5:   earned.append('night_owl')
         if specialist:              earned.append('subject_specialist')
         if balanced:                earned.append('balanced_learner')
 
-        # Clear all user_badges and re-insert those that qualify
-        cursor.execute("DELETE FROM user_badges")
+        # Add-only: never DELETE. Insert any qualifying badge not yet
+        # recorded. This preserves earned_at and prevents re-firing a
+        # badge that was already unlocked.
         for b in earned:
-            cursor.execute("INSERT INTO user_badges (badge_name) VALUES (%s)", (b,))
+            cursor.execute(
+                "INSERT IGNORE INTO user_badges (badge_name) VALUES (%s)",
+                (b,),
+            )
         conn.commit()
         cursor.close()
         conn.close()
-        # messagebox.showinfo("Badges Refreshed", f"{len(earned)} badges currently active.")
 
     # ---------- OVERALL STATS ----------
     def show_overall_stats(self):
