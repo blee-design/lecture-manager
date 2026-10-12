@@ -4826,12 +4826,16 @@ def export_questions_csv(question_ids=None):
         cursor.execute("SELECT * FROM question_hints WHERE question_id = %s ORDER BY hint_number", (qid,))
         hints = cursor.fetchall()
 
+        _home_paper = (row.get('paper') or '').strip()
+        _home_code  = (row.get('syllabus_code') or '').strip()
         cursor.execute("""
             SELECT paper_key, syllabus_code, note
             FROM question_links
-            WHERE question_id = %s AND is_primary = 0
+            WHERE question_id = %s
+              AND is_primary = 0
+              AND NOT (paper_key = %s AND syllabus_code = %s)
             ORDER BY id
-        """, (qid,))
+        """, (qid, _home_paper, _home_code))
         extra_links = cursor.fetchall()
         cursor.close()
 
@@ -5188,8 +5192,16 @@ def export_questions_txt(question_ids=None):
                     f.write(f"Syllabus Code: {q['syllabus_code']}\n")
 
                 # ---- Cross-syllabus links ----
+                # Skip any extra that duplicates the question's own
+                # primary (paper + code) — it's a stale artefact and
+                # would be rejected on re-import anyway.
+                _home_paper = (q.get('paper') or '').strip()
+                _home_code  = (q.get('syllabus_code') or '').strip()
                 for _l in get_question_links(q['id']):
                     if _l['is_primary']:
+                        continue
+                    if (_l['paper_key'] == _home_paper
+                            and _l['syllabus_code'] == _home_code):
                         continue
                     line = f"Also in: {_l['paper_key']} | {_l['syllabus_code']}"
                     if _l.get('note'):
@@ -5542,13 +5554,19 @@ def export_questions_json(question_ids=None):
         clean_row.pop('created_at', None)
         clean_row.pop('updated_at', None)
 
-        # Attach non-primary links
+        # Attach non-primary links, skipping any that duplicate the
+        # question's own primary (paper + code).
+        _home_paper = (row.get('paper') or '').strip()
+        _home_code  = (row.get('syllabus_code') or '').strip()
         links = get_question_links(row['id'])
         clean_row['also_in'] = [
             {'paper_key':   l['paper_key'],
              'code':        l['syllabus_code'],
              'note':        l.get('note')}
-            for l in links if not l['is_primary']
+            for l in links
+            if not l['is_primary']
+            and not (l['paper_key'] == _home_paper
+                     and l['syllabus_code'] == _home_code)
         ]
         if 'question_date' in clean_row and clean_row['question_date']:
             if hasattr(clean_row['question_date'], 'isoformat'):
