@@ -6137,6 +6137,20 @@ def _bulk_update_filtered():
                         continue
                     subj = f"{int(m.group(1)):02d}"
                     chap = f"{int(m.group(2)):02d}"
+                    norm = f"{subj}.{chap}"
+
+                    # Remove any EXTRA link that now collides with the
+                    # new primary values — otherwise the UPDATE below
+                    # would fail the UNIQUE (question_id, paper_key,
+                    # syllabus_code) constraint.
+                    cursor.execute("""
+                        DELETE FROM question_links
+                        WHERE question_id = %s
+                          AND paper_key = %s
+                          AND syllabus_code = %s
+                          AND is_primary = 0
+                    """, (qid, pk, norm))
+
                     cursor.execute("""
                         UPDATE question_links
                         SET paper_key     = %s,
@@ -6144,7 +6158,7 @@ def _bulk_update_filtered():
                             subject_code  = %s,
                             chapter_code  = %s
                         WHERE question_id = %s AND is_primary = 1
-                    """, (pk, f"{subj}.{chap}", subj, chap, qid))
+                    """, (pk, norm, subj, chap, qid))
             conn.commit()
             cursor.execute(
                 f"SELECT COUNT(*) FROM questions WHERE id IN ({placeholders})",
@@ -6410,6 +6424,20 @@ def bulk_rename_interactive():
                     continue
                 subj = f"{int(m.group(1)):02d}"
                 chap = f"{int(m.group(2)):02d}"
+                norm = f"{subj}.{chap}"
+
+                # Same collision guard as _bulk_update_filtered: drop any
+                # secondary link whose (paper, code) now matches the new
+                # primary — otherwise the primary UPDATE would fail the
+                # UNIQUE constraint.
+                cursor.execute("""
+                    DELETE FROM question_links
+                    WHERE question_id = %s
+                      AND paper_key = %s
+                      AND syllabus_code = %s
+                      AND is_primary = 0
+                """, (qid, pk, norm))
+
                 cursor.execute("""
                     UPDATE question_links
                     SET paper_key     = %s,
@@ -6417,7 +6445,7 @@ def bulk_rename_interactive():
                         subject_code  = %s,
                         chapter_code  = %s
                     WHERE question_id = %s AND is_primary = 1
-                """, (pk, f"{subj}.{chap}", subj, chap, qid))
+                """, (pk, norm, subj, chap, qid))
 
         conn.commit()
         updated = cursor.rowcount
