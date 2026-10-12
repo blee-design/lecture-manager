@@ -759,6 +759,12 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
     syllabi_added = 0
     syllabi_existing = 0
 
+    # Change logs — populated during the update pass, printed in the
+    # summary so the user can see exactly what changed on a re-import.
+    _paper_change_log   = []
+    _subject_change_log = []
+    _chapter_change_log = []
+
     for syl_spec, papers in bundles:
         syllabus_key = syl_spec.get("syllabus_key")
         if not syllabus_key:
@@ -809,6 +815,7 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
                 pid = existing_p['id']
                 if update_existing:
                     upd = {}
+                    changed = []
                     for k, v in (
                         ('display_name',  p.get("display_name", pkey)),
                         ('folder_name',   p.get("folder_name", pkey)),
@@ -820,14 +827,19 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
                         if k == 'keywords':
                             if (existing_p.get('keywords') or '') != (v or ''):
                                 upd[k] = v
+                                changed.append(k)
                         else:
                             if existing_p.get(k) != v:
                                 upd[k] = v
+                                changed.append(k)
                     if not existing_p.get('syllabus_id'):
                         upd['syllabus_id'] = syllabus_id
+                        changed.append('syllabus_id')
                     if upd:
                         update_paper(pid, **upd)
                         papers_updated += 1
+                        _paper_change_log.append(
+                            (p.get("display_name", pkey), changed))
                     else:
                         papers_skipped += 1
                 else:
@@ -861,6 +873,8 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
                         if existing_s["name"] != new_name:
                             update_subject(sid, name=new_name)
                             subjects_updated += 1
+                            _subject_change_log.append(
+                                (f"{pkey} · {s_code}", ["name"]))
                         else:
                             subjects_skipped += 1
                     else:
@@ -892,15 +906,21 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
                     if existing_c:
                         if update_existing:
                             upd = {}
+                            changed = []
                             if existing_c.get('name') != cname:
                                 upd['name'] = cname
+                                changed.append('name')
                             if (existing_c.get('description') or '') != (cdesc or ''):
                                 upd['description'] = cdesc
+                                changed.append('description')
                             if corder is not None and existing_c.get('display_order') != corder:
                                 upd['display_order'] = corder
+                                changed.append('display_order')
                             if upd:
                                 update_chapter(existing_c['id'], **upd)
                                 chapters_updated += 1
+                                _chapter_change_log.append(
+                                    (f"{pkey} · {s_code}.{code}", changed))
                             else:
                                 chapters_skipped += 1
                         else:
@@ -933,6 +953,8 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
             print_colored(f"     ↻ {papers_updated} paper"
                           f"{'s' if papers_updated != 1 else ''} updated",
                           COLORS.MAGENTA)
+            for pname, fields in _paper_change_log:
+                print(f"         • {pname[:50]}: {', '.join(fields)}")
         if papers_skipped:
             print_colored(f"     ⏭️  {papers_skipped} existing paper"
                           f"{'s' if papers_skipped != 1 else ''} unchanged",
@@ -946,6 +968,8 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
             print_colored(f"     ↻ {subjects_updated} subject"
                           f"{'s' if subjects_updated != 1 else ''} updated",
                           COLORS.MAGENTA)
+            for loc, fields in _subject_change_log:
+                print(f"         • {loc}: {', '.join(fields)}")
         if subjects_skipped:
             print_colored(f"     ⏭️  {subjects_skipped} existing subject"
                           f"{'s' if subjects_skipped != 1 else ''} unchanged",
@@ -959,6 +983,16 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
             print_colored(f"     ↻ {chapters_updated} chapter"
                           f"{'s' if chapters_updated != 1 else ''} updated",
                           COLORS.MAGENTA)
+            # Group by field to keep the output compact when there are many
+            by_field = {}
+            for loc, fields in _chapter_change_log:
+                for f in fields:
+                    by_field.setdefault(f, []).append(loc)
+            for field, locs in by_field.items():
+                preview = ', '.join(locs[:3])
+                if len(locs) > 3:
+                    preview += f" … +{len(locs) - 3} more"
+                print(f"         • {field}: {preview}")
         if chapters_skipped:
             print_colored(f"     ⏭️  {chapters_skipped} existing chapter"
                           f"{'s' if chapters_skipped != 1 else ''} unchanged",
