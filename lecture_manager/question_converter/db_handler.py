@@ -4,7 +4,7 @@ import time
 from collections import Counter
 from types import SimpleNamespace
 
-from .constants import C          # <-- add this
+from .constants import C
 from .utils import log, filter_questions
 from ..utils import print_colored, COLORS, color_text
 from ..db import get_connection
@@ -17,7 +17,9 @@ import re as _re
 def _apply_also_in(qid, also_in):
     """
     Persist each 'Also in:' entry as a non-primary row in question_links.
-    INSERT IGNORE — re-importing the same file won't create duplicates.
+
+    Skips links that duplicate the question's PRIMARY link — those
+    would be redundant (same paper + same code as the home slot).
     """
     if not also_in:
         return 0
@@ -25,9 +27,18 @@ def _apply_also_in(qid, also_in):
         also_in = [also_in]
 
     conn = get_connection()
-    cur = conn.cursor()
+    cur = conn.cursor(dictionary=True)
     added = 0
     try:
+        # Fetch the question's primary identity once
+        cur.execute(
+            "SELECT paper, syllabus_code FROM questions WHERE id = %s",
+            (qid,),
+        )
+        home = cur.fetchone() or {}
+        home_paper = (home.get('paper') or '').strip()
+        home_code = (home.get('syllabus_code') or '').strip()
+
         for raw in also_in:
             raw = (raw or '').strip()
             if not raw:
@@ -47,6 +58,15 @@ def _apply_also_in(qid, also_in):
             subj = f"{int(m2.group(1)):02d}"
             chap = f"{int(m2.group(2)):02d}"
             norm = f"{subj}.{chap}"
+
+            # Skip if it duplicates the primary (paper + code match)
+            if paper_key == home_paper and norm == home_code:
+                print_colored(
+                    f"[i] Skipped redundant link "
+                    f"(same as primary): {paper_key} · {norm}",
+                    COLORS.YELLOW,
+                )
+                continue
 
             cur.execute("""
                 INSERT IGNORE INTO question_links

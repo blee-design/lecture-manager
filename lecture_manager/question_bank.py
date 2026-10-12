@@ -1328,6 +1328,19 @@ def update_question(qid, **kwargs):
                     if pk and m:
                         subj = f"{int(m.group(1)):02d}"
                         chap = f"{int(m.group(2)):02d}"
+                        norm = f"{subj}.{chap}"
+
+                        # If an EXTRA link already exists with the new
+                        # primary values, remove it — it's now redundant
+                        # and would collide with the primary UPDATE.
+                        cursor.execute("""
+                            DELETE FROM question_links
+                            WHERE question_id = %s
+                              AND paper_key = %s
+                              AND syllabus_code = %s
+                              AND is_primary = 0
+                        """, (qid, pk, norm))
+
                         cursor.execute("""
                             UPDATE question_links
                             SET paper_key     = %s,
@@ -1335,7 +1348,7 @@ def update_question(qid, **kwargs):
                                 subject_code  = %s,
                                 chapter_code  = %s
                             WHERE question_id = %s AND is_primary = 1
-                        """, (pk, f"{subj}.{chap}", subj, chap, qid))
+                        """, (pk, norm, subj, chap, qid))
 
         if has_related:
             if options is not None:
@@ -2058,15 +2071,44 @@ def _add_question_link_interactive(q):
         return
     paper_key, syllabus_code, subj_code, chap_code = picked
 
+    # Reject a link that is identical to the question's PRIMARY link.
+    # Adding it as a secondary link would just duplicate the home slot.
+    home_paper = (q.get('paper') or '').strip()
+    home_code = (q.get('syllabus_code') or '').strip()
+    if paper_key == home_paper and syllabus_code == home_code:
+        print_colored(
+            "[!] This slot is already the PRIMARY link of the question.",
+            COLORS.YELLOW,
+        )
+        print_colored(
+            f"    Primary: {home_paper} · {home_code}",
+            COLORS.BLUE,
+        )
+        print_colored(
+            "    Add a different paper/code, or swap the primary instead.",
+            COLORS.YELLOW,
+        )
+        return
+
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
     try:
         cursor.execute("""
-            SELECT id FROM question_links
+            SELECT id, is_primary FROM question_links
             WHERE question_id = %s AND paper_key = %s AND syllabus_code = %s
         """, (q['id'], paper_key, syllabus_code))
-        if cursor.fetchone():
-            print_colored("[!] That exact link already exists.", COLORS.YELLOW)
+        existing = cursor.fetchone()
+        if existing:
+            if existing['is_primary']:
+                print_colored(
+                    "[!] That slot is already linked as the PRIMARY link.",
+                    COLORS.YELLOW,
+                )
+            else:
+                print_colored(
+                    "[!] That exact secondary link already exists.",
+                    COLORS.YELLOW,
+                )
             return
 
         note = input(color_text(
