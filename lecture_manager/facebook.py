@@ -18,7 +18,7 @@ from .facebook_manager import (
     delete_facebook_entry_with_file
 )
 
-DOWNLOAD_DIR = './downloads'
+DOWNLOAD_DIR = os.path.join(ROOT_DIR, '.downloads')
 PHOTO_BASE_DIR = os.path.join(DOWNLOAD_DIR, 'facebook_photos')
 
 # Organised directories
@@ -753,6 +753,18 @@ def _download_photos(url, output_dir=None):
 
     try:
         subprocess.run(cmd, check=True)
+
+        # Collect what gallery-dl produced and route it through the normal pipeline
+        image_exts = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
+        downloaded = []
+        for root, _, files in os.walk(output_dir):
+            for f in files:
+                if f.lower().endswith(image_exts):
+                    downloaded.append(os.path.join(root, f))
+
+        if downloaded:
+            _process_album_files(downloaded, url, uploader=None, probe=None)
+
         print_colored(f"[✓] Photos downloaded to {output_dir}", COLORS.GREEN)
     except subprocess.CalledProcessError as e:
         print_colored(f"[!] Download failed: {e}", COLORS.RED)
