@@ -2346,6 +2346,28 @@ def resolve_duplicates():
         print_colored(f"  You can restore them using option 14.", COLORS.BLUE)
     print("═" * 50)
 
+def remove_empty_directories(path, stop_root=ROOT_DIR):
+    """
+    Remove empty directories upwards from 'path' until reaching stop_root.
+    Ignores common hidden/system files when checking emptiness.
+    """
+    path = os.path.abspath(path)
+    stop_root = os.path.abspath(stop_root)
+    IGNORE_FILES = {'.DS_Store', 'Thumbs.db', 'desktop.ini'}
+
+    while path != stop_root and os.path.exists(path):
+        try:
+            contents = os.listdir(path)
+            real_contents = [f for f in contents if f not in IGNORE_FILES]
+            if not real_contents:
+                os.rmdir(path)
+                print_colored(f"[✓] Removed empty directory: {path}", COLORS.BLUE)
+                path = os.path.dirname(path)
+            else:
+                break
+        except OSError:
+            break
+
 def clean_all_empty_directories():
     """
     Walk through ROOT_DIR and remove all empty directories (ignoring .DS_Store etc.)
