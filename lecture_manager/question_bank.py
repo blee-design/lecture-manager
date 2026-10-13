@@ -1281,42 +1281,134 @@ def search_questions_all_fields(search_term):
     conn.close()
     return _attach_children_to_questions(rows)
 
+# ---------- Change-detection helpers for update_question ----------
+
+def _scalar_fields_differ(cursor, qid, updates):
+    """
+    Return True if any of the scalar fields in `updates` differs from the
+    current DB values. `updates` is a dict {column: new_value}. Columns
+    that can't be read (e.g. not in the table) are skipped.
+    """
+    if not updates:
+        return False
+    cols = list(updates.keys())
+    # Backtick reserved words
+    select_cols = ", ".join(f"`{c}`" if c in ("group", "type") else c
+                            for c in cols)
+    cursor.execute(f"SELECT {select_cols} FROM questions WHERE id = %s", (qid,))
+    row = cursor.fetchone()
+    if row is None:
+        return True
+    for i, col in enumerate(cols):
+        cur = row[i]
+        new = updates[col]
+        # Normalise: empty string and NULL are considered equivalent here,
+        # so an export→import round-trip doesn't falsely report a change.
+        cur_norm = '' if cur is None else cur
+        new_norm = '' if new is None else new
+        if cur_norm != new_norm:
+            return True
+    return False
+
+
+def _options_differ(cursor, qid, new_options, frac_correct, frac_wrong):
+    """True if the stored options differ from new_options."""
+    cursor.execute("""
+        SELECT text, fraction, feedback FROM question_options
+        WHERE question_id = %s ORDER BY display_order
+    """, (qid,))
+    current = cursor.fetchall()
+    if len(current) != len(new_options):
+        return True
+    for (c_text, c_frac, c_fb), opt in zip(current, new_options):
+        if 'fraction' in opt and opt['fraction'] is not None:
+            n_frac = float(opt['fraction'])
+        else:
+            n_frac = float(frac_correct if opt.get('correct', False) else frac_wrong)
+        if (c_text or '') != (opt.get('text') or ''):
+            return True
+        try:
+            if abs(float(c_frac or 0) - n_frac) > 1e-6:
+                return True
+        except (TypeError, ValueError):
+            return True
+        if (c_fb or '') != (opt.get('feedback') or ''):
+            return True
+    return False
+
+
+def _pairs_differ(cursor, qid, new_pairs):
+    cursor.execute("""
+        SELECT subquestion, answer FROM question_matching_pairs
+        WHERE question_id = %s ORDER BY display_order
+    """, (qid,))
+    current = cursor.fetchall()
+    if len(current) != len(new_pairs):
+        return True
+    for (c_sub, c_ans), p in zip(current, new_pairs):
+        if (c_sub or '') != (p.get('subquestion') or ''):
+            return True
+        if (c_ans or '') != (p.get('answer') or ''):
+            return True
+    return False
+
+
+def _hints_differ(cursor, qid, new_hints):
+    cursor.execute("""
+        SELECT hint_text, clear_incorrect, show_num_correct FROM question_hints
+        WHERE question_id = %s ORDER BY hint_number
+    """, (qid,))
+    current = cursor.fetchall()
+    if len(current) != len(new_hints):
+        return True
+    for (c_text, c_clr, c_shw), h in zip(current, new_hints):
+        if (c_text or '') != (h.get('text') or ''):
+            return True
+        if bool(c_clr) != bool(h.get('clear_incorrect', False)):
+            return True
+        if bool(c_shw) != bool(h.get('show_num_correct', False)):
+            return True
+    return False
+
 def update_question(qid, **kwargs):
     options = kwargs.pop('options', None)
     pairs = kwargs.pop('pairs', None)
     hints = kwargs.pop('hints', None)
 
-    fields = []
-    values = []
-    for key, val in kwargs.items():
-        if val is not None:
-            if key == 'group':
-                fields.append("`group` = %s")
-            else:
-                fields.append(f"{key} = %s")
-            values.append(val)
+    # Build the {column: new_value} dict for scalar fields only.
+    # 'group' is a reserved word, but stored under that key.
+    _SENTINEL_NONE_OK = {'passage_id'}
+    scalar_updates = {
+        k: v for k, v in kwargs.items()
+        if v is not None or k in _SENTINEL_NONE_OK
+    }
 
     has_related = (options is not None or pairs is not None or hints is not None)
 
-    # Bail only if there is genuinely nothing to do — no scalar fields AND
-    # no relationship tables. Previously this returned 'no_fields' when
-    # only options/pairs/hints were staged, silently dropping the change.
-    if not fields and not has_related:
+    if not scalar_updates and not has_related:
         return 'no_fields'
 
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        affected = 0
-        if fields:
+        # ---- 1. Compare scalar fields against the DB first ----
+        scalars_changed = _scalar_fields_differ(cursor, qid, scalar_updates) \
+                          if scalar_updates else False
+
+        if scalars_changed:
+            cols = list(scalar_updates.keys())
+            set_clause = ", ".join(
+                (f"`{c}` = %s" if c == 'group' else f"{c} = %s")
+                for c in cols
+            )
+            values = [scalar_updates[c] for c in cols]
             values.append(qid)
-            sql = f"UPDATE questions SET {', '.join(fields)} WHERE id = %s"
-            cursor.execute(sql, values)
-            affected = cursor.rowcount
+            cursor.execute(
+                f"UPDATE questions SET {set_clause} WHERE id = %s", values)
 
             # Keep the PRIMARY question_links row in sync when paper or
-            # syllabus_code changes on the questions row.
-            if 'paper' in kwargs or 'syllabus_code' in kwargs:
+            # syllabus_code changed.
+            if 'paper' in scalar_updates or 'syllabus_code' in scalar_updates:
                 cursor.execute(
                     "SELECT paper, syllabus_code FROM questions WHERE id = %s",
                     (qid,))
@@ -1329,10 +1421,6 @@ def update_question(qid, **kwargs):
                         subj = f"{int(m.group(1)):02d}"
                         chap = f"{int(m.group(2)):02d}"
                         norm = f"{subj}.{chap}"
-
-                        # If an EXTRA link already exists with the new
-                        # primary values, remove it — it's now redundant
-                        # and would collide with the primary UPDATE.
                         cursor.execute("""
                             DELETE FROM question_links
                             WHERE question_id = %s
@@ -1340,7 +1428,6 @@ def update_question(qid, **kwargs):
                               AND syllabus_code = %s
                               AND is_primary = 0
                         """, (qid, pk, norm))
-
                         cursor.execute("""
                             UPDATE question_links
                             SET paper_key     = %s,
@@ -1350,60 +1437,75 @@ def update_question(qid, **kwargs):
                             WHERE question_id = %s AND is_primary = 1
                         """, (pk, norm, subj, chap, qid))
 
-        if has_related:
-            if options is not None:
-                cursor.execute("DELETE FROM question_options WHERE question_id = %s", (qid,))
-                # Pull the question-level fractions (may not be in kwargs)
-                q_frac_correct = kwargs.get('fraction_correct', 100)
-                q_frac_wrong   = kwargs.get('fraction_wrong', -20)
+        # ---- 2. Compare & rewrite children only when they actually differ ----
+        children_changed = False
+
+        if options is not None:
+            q_frac_correct = kwargs.get('fraction_correct', 100)
+            q_frac_wrong   = kwargs.get('fraction_wrong', -20)
+            if _options_differ(cursor, qid, options,
+                               q_frac_correct, q_frac_wrong):
+                cursor.execute(
+                    "DELETE FROM question_options WHERE question_id = %s",
+                    (qid,))
                 for idx, opt in enumerate(options):
                     if 'fraction' in opt and opt['fraction'] is not None:
                         fraction = opt['fraction']
                     else:
-                        fraction = q_frac_correct if opt.get('correct', False) else q_frac_wrong
+                        fraction = (q_frac_correct if opt.get('correct', False)
+                                    else q_frac_wrong)
                     cursor.execute("""
                         INSERT INTO question_options
                             (question_id, text, fraction, feedback, display_order)
                         VALUES (%s, %s, %s, %s, %s)
-                    """, (qid, opt['text'], fraction, opt.get('feedback', ''), idx))
+                    """, (qid, opt['text'], fraction,
+                          opt.get('feedback', ''), idx))
+                children_changed = True
 
-            if pairs is not None:
-                cursor.execute("DELETE FROM question_matching_pairs WHERE question_id = %s", (qid,))
-                for idx, pair in enumerate(pairs):
-                    cursor.execute("""
-                        INSERT INTO question_matching_pairs
-                            (question_id, subquestion, answer, display_order)
-                        VALUES (%s, %s, %s, %s)
-                    """, (qid, pair['subquestion'], pair['answer'], idx))
+        if pairs is not None and _pairs_differ(cursor, qid, pairs):
+            cursor.execute(
+                "DELETE FROM question_matching_pairs WHERE question_id = %s",
+                (qid,))
+            for idx, pair in enumerate(pairs):
+                cursor.execute("""
+                    INSERT INTO question_matching_pairs
+                        (question_id, subquestion, answer, display_order)
+                    VALUES (%s, %s, %s, %s)
+                """, (qid, pair['subquestion'], pair['answer'], idx))
+            children_changed = True
 
-            if hints is not None:
-                cursor.execute("DELETE FROM question_hints WHERE question_id = %s", (qid,))
-                for idx, hint in enumerate(hints, 1):
-                    cursor.execute("""
-                        INSERT INTO question_hints
-                            (question_id, hint_text, clear_incorrect, show_num_correct, hint_number)
-                        VALUES (%s, %s, %s, %s, %s)
-                    """, (qid, hint['text'],
-                          hint.get('clear_incorrect', False),
-                          hint.get('show_num_correct', False), idx))
+        if hints is not None and _hints_differ(cursor, qid, hints):
+            cursor.execute(
+                "DELETE FROM question_hints WHERE question_id = %s", (qid,))
+            for idx, hint in enumerate(hints, 1):
+                cursor.execute("""
+                    INSERT INTO question_hints
+                        (question_id, hint_text, clear_incorrect,
+                         show_num_correct, hint_number)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (qid, hint['text'],
+                      hint.get('clear_incorrect', False),
+                      hint.get('show_num_correct', False), idx))
+            children_changed = True
 
         conn.commit()
         cursor.close()
         conn.close()
 
-        # If we only touched related tables, the parent row didn't change —
-        # but we did rewrite its children, so report success either way.
-        if has_related:
+        if scalars_changed or children_changed:
             return 'updated'
-        return 'updated' if affected > 0 else 'no_change'
+        return 'no_change'
 
     except Exception as e:
         try:
             conn.rollback()
         except Exception:
             pass
-        cursor.close()
-        conn.close()
+        try:
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
         return f'error: {e}'
 
 def delete_question(qid):
@@ -5196,13 +5298,14 @@ def export_questions_txt(question_ids=None):
     filename = resolve_export_path(filename, 'questions')
 
     field_order = [
-        'question_date', 'institution', 'level', 'paper', 'group',
+        'question_date', 'institution', 'level', 'alias', 'paper', 'group',
         'subject', 'chapter', 'marks', 'notes', 'source'
     ]
     labels = {
         'question_date': 'Date',
         'institution':   'Institution',
         'level':         'Level',
+        'alias':         'Alias',
         'paper':         'Paper',
         'group':         'Group',
         'subject':       'Subject',
@@ -5348,10 +5451,13 @@ def export_questions_txt(question_ids=None):
                         f.write(f"Grade: {q.get('grade', 1)}\n")
                     if q.get('penalty', 0) != 0:
                         f.write(f"Penalty: {q.get('penalty', 0)}\n")
-                    if (q.get('fraction_correct', 100) != 100
-                            or q.get('fraction_wrong', -20) != -20):
-                        f.write(f"Fraction: {q.get('fraction_correct', 100)} "
-                                f"{q.get('fraction_wrong', -20)}\n")
+                    for _lbl, _key in (
+                        ('Correct Feedback',           'correct_feedback'),
+                        ('Partially Correct Feedback', 'partially_correct_feedback'),
+                        ('Incorrect Feedback',         'incorrect_feedback'),
+                    ):
+                        if q.get(_key):
+                            f.write(f"{_lbl}: {q[_key]}\n")
 
                 elif q_type == "truefalse":
                     for opt in q.get('options', []):
@@ -5364,8 +5470,13 @@ def export_questions_txt(question_ids=None):
                         f.write(f"Penalty: {q.get('penalty', 0)}\n")
                     if q.get('feedback_true'):
                         f.write(f"Feedback True: {q['feedback_true']}\n")
-                    if q.get('feedback_false'):
-                        f.write(f"Feedback False: {q['feedback_false']}\n")
+                    for _lbl, _key in (
+                        ('Correct Feedback',           'correct_feedback'),
+                        ('Partially Correct Feedback', 'partially_correct_feedback'),
+                        ('Incorrect Feedback',         'incorrect_feedback'),
+                    ):
+                        if q.get(_key):
+                            f.write(f"{_lbl}: {q[_key]}\n")
 
                 elif q_type == "matching":
                     for pair in q.get('pairs', []):
@@ -5388,12 +5499,12 @@ def export_questions_txt(question_ids=None):
                     if q.get('incorrect_feedback') and \
                        q['incorrect_feedback'] != "Your answer is incorrect.":
                         f.write(f"Incorrect Feedback: {q['incorrect_feedback']}\n")
-                    for h in q.get('hints', []):
-                        f.write(f"Hint: {h.get('text', '')}\n")
+                    for h_idx, h in enumerate(q.get('hints', []), 1):
+                        f.write(f"Hint {h_idx}: {h.get('text', '')}\n")
                         if h.get('clear_incorrect', False):
-                            f.write("Hint Clear Incorrect: true\n")
+                            f.write(f"Hint {h_idx} Clear Incorrect: true\n")
                         if h.get('show_num_correct', False):
-                            f.write("Hint Show Number Correct: true\n")
+                            f.write(f"Hint {h_idx} Show Number Correct: true\n")
 
                 else:  # essay
                     if q.get('grade', 1) != 1:

@@ -16,12 +16,24 @@ import re as _re
 
 def _apply_also_in(qid, also_in):
     """
-    Persist each 'Also in:' entry as a non-primary row in question_links.
+    Sync the non-primary links for this question to match `also_in`.
 
-    Skips links that duplicate the question's PRIMARY link — those
-    would be redundant (same paper + same code as the home slot).
+    - Rows whose (paper_key, syllabus_code) is in `also_in` but not in
+      the DB are inserted.
+    - Rows whose (paper_key, syllabus_code) is in the DB but not in
+      `also_in` are deleted.
+    - The question's primary link (is_primary=1) is never touched.
+    - Any incoming link whose (paper_key, syllabus_code) duplicates the
+      question's own primary is skipped.
+
+    `also_in` may be:
+      - None       → leave the DB links untouched (backward compat)
+      - []         → wipe all non-primary links
+      - [str, ...] → sync to exactly these
+
+    Returns the number of rows added (int).
     """
-    if not also_in:
+    if also_in is None:
         return 0
     if isinstance(also_in, str):
         also_in = [also_in]
@@ -30,15 +42,17 @@ def _apply_also_in(qid, also_in):
     cur = conn.cursor(dictionary=True)
     added = 0
     try:
-        # Fetch the question's primary identity once
+        # Fetch the question's primary identity
         cur.execute(
             "SELECT paper, syllabus_code FROM questions WHERE id = %s",
             (qid,),
         )
         home = cur.fetchone() or {}
         home_paper = (home.get('paper') or '').strip()
-        home_code = (home.get('syllabus_code') or '').strip()
+        home_code  = (home.get('syllabus_code') or '').strip()
 
+        # Parse the incoming list into a dict: {(paper, code): note}
+        wanted = {}
         for raw in also_in:
             raw = (raw or '').strip()
             if not raw:
@@ -47,8 +61,8 @@ def _apply_also_in(qid, also_in):
             if len(parts) < 2:
                 continue
             paper_key = parts[0]
-            spec = parts[1]
-            note = parts[2] if len(parts) >= 3 else None
+            spec      = parts[1]
+            note      = parts[2] if len(parts) >= 3 else None
 
             m = _re.search(r'\(([\d.]+(?:-\d+)?)\)', spec)
             code = m.group(1) if m else spec.strip()
@@ -59,7 +73,6 @@ def _apply_also_in(qid, also_in):
             chap = f"{int(m2.group(2)):02d}"
             norm = f"{subj}.{chap}"
 
-            # Skip if it duplicates the primary (paper + code match)
             if paper_key == home_paper and norm == home_code:
                 print_colored(
                     f"[i] Skipped redundant link "
@@ -68,13 +81,39 @@ def _apply_also_in(qid, also_in):
                 )
                 continue
 
+            wanted[(paper_key, norm)] = note
+
+        # Fetch existing non-primary links
+        cur.execute("""
+            SELECT paper_key, syllabus_code FROM question_links
+            WHERE question_id = %s AND is_primary = 0
+        """, (qid,))
+        existing = {(r['paper_key'], r['syllabus_code'])
+                    for r in cur.fetchall()}
+
+        # Delete links that are no longer wanted
+        for pk, code in (existing - set(wanted.keys())):
+            cur.execute("""
+                DELETE FROM question_links
+                WHERE question_id = %s
+                  AND paper_key = %s
+                  AND syllabus_code = %s
+                  AND is_primary = 0
+            """, (qid, pk, code))
+
+        # Insert the new links
+        for (pk, norm), note in wanted.items():
+            if (pk, norm) in existing:
+                continue
+            subj, chap = norm.split('.')
             cur.execute("""
                 INSERT IGNORE INTO question_links
                     (question_id, paper_key, syllabus_code,
                      subject_code, chapter_code, is_primary, note)
                 VALUES (%s, %s, %s, %s, %s, 0, %s)
-            """, (qid, paper_key, norm, subj, chap, note))
+            """, (qid, pk, norm, subj, chap, note))
             added += cur.rowcount
+
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -373,20 +412,32 @@ def insert_question(q_dict, source=None, force=False):
                 'source': (q_dict.get('source') or source),
                 'passage_id': passage_id,
             }
-            # Remove None values so defaults are used
-            update_kwargs = {k: v for k, v in update_kwargs.items() if v is not None}
-            # Also drop empty options/pairs/hints lists. An empty list means
-            # "the source had none" (typical for essays), but passing it
-            # through forces update_question() into the delete+reinsert
-            # branch, which always reports "updated" even when nothing changed.
+            # Remove None values so defaults are used — EXCEPT for
+            # passage_id, where None is a meaningful "clear it" signal.
+            _SENTINEL_NONE_OK = {'passage_id'}
+            update_kwargs = {
+                k: v for k, v in update_kwargs.items()
+                if v is not None or k in _SENTINEL_NONE_OK
+            }
+
+            # Strip child lists only when they're literally None.
+            # An empty list means "the source has none of these" — that
+            # is meaningful (e.g. MCQ → essay transition) and must be
+            # passed through so the old rows get wiped.
             for _k in ('options', 'pairs', 'hints'):
-                if _k in update_kwargs and not update_kwargs[_k]:
+                if _k in update_kwargs and update_kwargs[_k] is None:
                     del update_kwargs[_k]
+
             result = update_question(dup_id, **update_kwargs)
-            _apply_also_in(dup_id, q_dict.get('also_in'))
+            links_added = _apply_also_in(dup_id, q_dict.get('also_in'))
+
             if result == 'updated':
                 return 'updated', dup_id
             elif result == 'no_change':
+                # If we only added cross-syllabus links, that still
+                # counts as a change worth reporting.
+                if links_added > 0:
+                    return 'updated', dup_id
                 return 'unchanged', dup_id
             else:
                 raise Exception(f"Update failed: {result}")
