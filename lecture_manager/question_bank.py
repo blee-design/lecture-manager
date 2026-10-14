@@ -4947,7 +4947,7 @@ def _json_safe_default(o):
     raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
 
 # ---------- Export / Import (CSV) ----------
-def export_questions_csv(question_ids=None):
+def export_questions_csv(question_ids=None, verbose=True):
     print("\n" + "═" * 50)
     print_colored("  EXPORT QUESTIONS TO CSV (FULL)", COLORS.CYAN, bold=True)
     print("═" * 50)
@@ -5009,12 +5009,31 @@ def export_questions_csv(question_ids=None):
     data = []
     conn = get_connection()
     total = len(rows)
-    print_colored(f"[i] Exporting {total} questions to {filename}…", COLORS.BLUE)
+    if verbose:
+        print_colored(f"[i] Exporting {total} questions to {filename}…", COLORS.BLUE)
+    else:
+        print_colored(f"[i] Exporting {total} questions…", COLORS.BLUE)
     import time
     _start = time.time()
 
     for idx, row in enumerate(rows, 1):
         qid = row['id']
+
+        if verbose:
+            q_type   = row.get('type') or 'essay'
+            qno      = row.get('question_number') or '?'
+            qdate    = row.get('question_date') or '          '
+            preview  = _short_preview(
+                row.get('nepali_transcription')
+                or row.get('english_transcription')
+                or row.get('text') or '',
+                42,
+            )
+            marker = ' 📖' if row.get('passage_id') else ''
+            print(f"  [{idx:>3}/{total}]  ID {qid:>5}  "
+                  f"{qdate:<10}  Q{qno:<4}  "
+                  f"{q_type:<11}  {preview}{marker}")
+
         cursor = conn.cursor(dictionary=True)
 
         cursor.execute("SELECT * FROM question_options WHERE question_id = %s ORDER BY display_order", (qid,))
@@ -5256,7 +5275,7 @@ def import_questions_csv():
     print(f"  ⏱️  Time    : {elapsed:.2f}s")
     print("═" * 50)
 
-def export_questions_txt(question_ids=None):
+def export_questions_txt(question_ids=None, verbose=True):
     print("\n" + "═" * 50)
     print_colored("  📤 EXPORT TO TXT", COLORS.CYAN, bold=True)
     print("═" * 50)
@@ -5332,8 +5351,11 @@ def export_questions_txt(question_ids=None):
     import time
     start_time = time.time()
 
-    print_colored(f"\n📤 Exporting {total} questions to {filename}...",
-                  COLORS.CYAN)
+    if verbose:
+        print_colored(f"\n📤 Exporting {total} questions to {filename}...",
+                      COLORS.CYAN)
+    else:
+        print_colored(f"\n📤 Exporting {total} questions...", COLORS.CYAN)
 
     type_counts = {}
     exported = 0
@@ -5358,10 +5380,29 @@ def export_questions_txt(question_ids=None):
             for idx, q in enumerate(rows, 1):
                 if not q:
                     skipped += 1
+                    if verbose:
+                        print(f"  [{idx:>3}/{total}]  (empty row — skipped)")
                     continue
 
                 q_type = q.get('type', 'essay')
                 type_counts[q_type] = type_counts.get(q_type, 0) + 1
+
+                if verbose:
+                    qid   = q.get('id', '?')
+                    qno   = q.get('question_number') or '?'
+                    qdate = q.get('question_date') or '          '
+                    preview = _short_preview(
+                        q.get('nepali_transcription')
+                        or q.get('english_transcription')
+                        or q.get('text') or '',
+                        42,
+                    )
+                    marker = ''
+                    if q.get('passage_id'):
+                        marker += ' 📖'
+                    print(f"  [{idx:>3}/{total}]  ID {qid:>5}  "
+                          f"{qdate:<10}  Q{qno:<4}  "
+                          f"{q_type:<11}  {preview}{marker}")
 
                 f.write("---\n")
 
