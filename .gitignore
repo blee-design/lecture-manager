@@ -104,7 +104,7 @@ data/samples/questions_sample.txt
 data/samples/Prompt_for_ChatGPT.txt
 docs/termux_installation_sample.txt
 docs/upload_guide.html
-docs/questions_formatting_prompt.txt
+docs/*prompt.txt
 
 # Generic scratch
 *_import_*
