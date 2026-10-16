@@ -2465,6 +2465,20 @@ def quick_lookup_interactive():
     print("═" * 50)
 
     current_results = None
+
+    def _print_quick_results():
+        print(f"\n--- SEARCH RESULTS ({len(current_results)} matches) ---")
+        for i, r in enumerate(current_results, 1):
+            preview = _short_preview(
+                r.get('nepali_transcription') or r.get('english_transcription') or '', 45
+            )
+            print(f"  {i:2}. [{r['id']:3}] | {r['question_date']} | {r['institution'][:20]:20} | {r['subject'][:25]:25} | {r['level'][:12]:12} | Q{r['question_number']} | {r.get('type', 'essay'):10} | {preview}")
+        print("\n  Options:")
+        print("  • Enter ID number (e.g., 29) to view details")
+        print("  • Type 'b' or 'back' to clear this search")
+        print("  • Type '0' or 'exit' to return to menu")
+        print("  • Type a new search to start fresh")
+
     current_query = None
 
     while True:
@@ -2493,6 +2507,7 @@ def quick_lookup_interactive():
                 full_q = get_question_by_id(qid)
                 _display_single_question(full_q)
                 print()
+                _print_quick_results()
                 continue
             else:
                 print_colored("[!] ID not found in current results.", COLORS.YELLOW)
@@ -2545,21 +2560,7 @@ def quick_lookup_interactive():
 
         current_results = results
         current_query = raw
-
-        # Display results with numbering
-        print(f"\n--- SEARCH RESULTS ({len(results)} matches) ---")
-        for i, r in enumerate(results, 1):
-            # Preview: use Nepali or English
-            preview = _short_preview(
-                r.get('nepali_transcription') or r.get('english_transcription') or '', 45
-            )
-            print(f"  {i:2}. [{r['id']:3}] | {r['question_date']} | {r['institution'][:20]:20} | {r['subject'][:25]:25} | {r['level'][:12]:12} | Q{r['question_number']} | {r.get('type', 'essay'):10} | {preview}")
-
-        print("\n  Options:")
-        print("  • Enter ID number (e.g., 29) to view details")
-        print("  • Type 'b' or 'back' to clear this search")
-        print("  • Type '0' or 'exit' to return to menu")
-        print("  • Type a new search to start fresh")
+        _print_quick_results()
 
 def find_lectures_for_chapter(paper_key, subj_code, chap_code):
     """
@@ -4408,6 +4409,7 @@ def advanced_search_interactive():
                                 _display_single_question(q)
                                 input(color_text("\nPress Enter to continue...",
                                                  COLORS.MAGENTA))
+                                _print_search_list()
                             else:
                                 print_colored(f"[!] ID {cid} not found.", COLORS.RED)
                         continue
