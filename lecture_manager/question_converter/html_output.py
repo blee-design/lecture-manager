@@ -28,6 +28,7 @@ def create_html_output(questions, output_file, verbose=False, shuffle_applied=Fa
     """Convert questions list to modern, attractive HTML format with search, filter,
        collapsible groups, per‑question correct answer toggles, global toggle,
        LaTeX support and pagination."""
+    from ..question_bank import _format_marks_display
     log(f"Creating HTML output with {len(questions)} questions", "INFO", verbose)
 
     if not BLEACH_AVAILABLE and verbose:
@@ -191,6 +192,17 @@ def create_html_output(questions, output_file, verbose=False, shuffle_applied=Fa
             else:
                 _raw = _nep or _eng
         q_text = sanitize(_raw)
+        # ---- Append marks as bold HTML at the end of the question ----
+        #   Total only        → "<b>(10)</b>"
+        #   Breakdown + total → "<b>(2+4+4=10)</b>"
+        #   Neither           → nothing appended
+        _marks_display = _format_marks_display(q)
+        if _marks_display:
+            _stale = f"<b>({_marks_display})</b>"
+            if q_text.rstrip().endswith(_stale):
+                # Already present (round-tripped file) — strip before re-adding
+                q_text = q_text[: -len(_stale)].rstrip()
+            q_text = f"{q_text} <b>({_marks_display})</b>"
         q_type = q.get("type", "multichoice")
         q_no = q.get("question_no", i)
         group = q.get("group", "")

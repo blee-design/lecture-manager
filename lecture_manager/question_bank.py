@@ -5409,8 +5409,8 @@ def export_questions_txt(question_ids=None, verbose=True):
                 for key in field_order:
                     val = q.get(key)
                     if val is not None and val != '':
-                        if key == 'marks' and val:
-                            val = str(val)
+                        if key == 'marks':
+                            val = _fmt_marks(val)      # ← use the helper
                         elif isinstance(val, (date, datetime)):
                             val = str(val)
                         f.write(f"{labels.get(key, key)}: {val}\n")

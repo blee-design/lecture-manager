@@ -845,6 +845,7 @@ def get_questions(filters=None):
             'date': row.get('question_date') or '',
             'chapter': row.get('chapter') or '',
             'marks': row.get('marks'),
+            'marks_breakdown': row.get('marks_breakdown') or '',
             'notes': row.get('notes') or '',
             'source': row.get('source') or '',
             'exam_type': row.get('exam_type') or 'open',

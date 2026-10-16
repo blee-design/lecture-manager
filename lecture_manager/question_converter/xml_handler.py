@@ -72,6 +72,22 @@ from .exceptions import ConverterError, ParseError, ValidationError, IOError
 # List VALID_QUESTION_TYPES
 VALID_QUESTION_TYPES = ["multichoice", "essay", "truefalse", "matching"]
 
+import re as _re
+
+# Matches a trailing "<b>(<marks>)</b>" block — e.g. "<b>(2+4+4=10)</b>"
+# Used to strip a previous append before re-adding, so a round-tripped
+# export doesn't double up.
+_MARKS_BOLD_RE = _re.compile(
+    r'\s*<b>\(\d+(?:\.\d+)?(?:\s*\+\s*\d+(?:\.\d+)?)*(?:=\d+(?:\.\d+)?)?\)</b>\s*$'
+)
+
+
+def _strip_marks_bold(text):
+    """Remove a trailing '<b>(...marks...)</b>' block, if present."""
+    if not text:
+        return text
+    return _MARKS_BOLD_RE.sub('', text)
+
 # -------------------- HELPER FUNCTIONS (defined first) --------------------
 def create_name_element(doc, index, q=None):
     el = doc.createElement("name")
@@ -846,6 +862,7 @@ def xml_to_questions(input_file, verbose=False):
 
 # -------------------- XML OUTPUT --------------------
 def create_moodle_xml(questions, output_file, verbose=False):
+    from ..question_bank import _format_marks_display
     doc = Document()
     quiz = doc.createElement("quiz")
     doc.appendChild(quiz)
@@ -853,6 +870,16 @@ def create_moodle_xml(questions, output_file, verbose=False):
     log(f"Creating XML with {len(questions)} questions", "INFO", verbose)
 
     from ..question_bank import get_passage
+
+    for i, q in enumerate(questions, 1):
+        # ---- Defensive: strip any trailing marks-bold from a previous
+        #      export, so re-exporting a round-tripped file doesn't
+        #      double the display.
+        if q.get('text') and _MARKS_BOLD_RE.search(q['text']):
+            q = dict(q)
+            q['text'] = _strip_marks_bold(q['text'])
+
+    # ---- Ensure q['text'] is populated from transcriptions ----
 
     for i, q in enumerate(questions, 1):
         # ---- Ensure q['text'] is populated from transcriptions ----
@@ -879,6 +906,18 @@ def create_moodle_xml(questions, output_file, verbose=False):
                     f"Reading Passage:<br>{passage_html}"
                     f"<p>{q['text']}</p>"
                 )
+
+        # ---- Append marks display as bold HTML at the end of the text ----
+        #   Total only       → "<b>(10)</b>"
+        #   Breakdown + total → "<b>(2+4+4=10)</b>"
+        #   Neither          → nothing appended
+        # Moodle renders <questiontext format="html">, so the <b> tag
+        # is picked up as bold by the student's viewer.
+        from ..question_bank import _format_marks_display
+        _marks_display = _format_marks_display(q)
+        if _marks_display:
+            q = dict(q)
+            q['text'] = f"{q['text']} <b>({_marks_display})</b>"
 
         # Log question being processed
         text_preview = q.get('text', '')[:50] + "..." if len(q.get('text', '')) > 50 else q.get('text', '')

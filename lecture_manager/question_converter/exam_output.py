@@ -41,30 +41,11 @@ def safe_html(text):
     return allowed_tags.sub(r'<\1>', escaped)
 
 def create_exam_html(questions, output_file, verbose=False, time_minutes=90, pass_marks=45):
+    from ..question_bank import get_passage, _format_marks_display
     log(f"Creating exam HTML with {len(questions)} questions, time limit {time_minutes} min, pass mark {pass_marks}%", "INFO", verbose)
 
     # Preload any linked passages so we can inline them above the question.
     # Inlining (not a separate panel) keeps the passage glued to its question.
-    from ..question_bank import get_passage
-    _passage_cache = {}
-
-    def _passage_html(pid):
-        if not pid:
-            return ""
-        if pid not in _passage_cache:
-            _passage_cache[pid] = get_passage(pid)
-        p = _passage_cache[pid]
-        if not p or not p.get('content'):
-            return ""
-        body = p['content'].replace('\n', '<br>')
-        return (
-            '<div class="reading-passage">'
-            '<div class="passage-label">📖 Reading Passage</div>'
-            f'<div class="passage-body">{body}</div>'
-            '</div>'
-        )
-
-        # Preload any linked passages so we can inline them above the question.
     from ..question_bank import get_passage
     _passage_cache = {}
 
@@ -105,6 +86,20 @@ def create_exam_html(questions, output_file, verbose=False, time_minutes=90, pas
         _p_html = _passage_html(q.get('passage_id'))
         if _p_html:
             _raw = _p_html + _raw
+        # ---- Append marks as bold HTML at the end of the question ----
+        #   Total only        → "<b>(10)</b>"
+        #   Breakdown + total → "<b>(2+4+4=10)</b>"
+        #   Neither           → nothing appended
+        #
+        # The exam page renders each question via innerHTML, so the
+        # <b> tag is picked up as bold. q.text travels through JS as
+        # a raw string, so no escaping concerns here.
+        _marks_display = _format_marks_display(q)
+        if _marks_display:
+            _stale = f"<b>({_marks_display})</b>"
+            if _raw.rstrip().endswith(_stale):
+                _raw = _raw[: -len(_stale)].rstrip()
+            _raw = f"{_raw} <b>({_marks_display})</b>"
 
         q_data = {
             "id": i,
