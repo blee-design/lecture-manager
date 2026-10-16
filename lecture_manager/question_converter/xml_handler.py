@@ -953,7 +953,7 @@ def create_moodle_xml(questions, output_file, verbose=False):
         # Add ONE-LINE GAP after each question for readability
         quiz.appendChild(doc.createTextNode("\n"))
         log(f"Question {i}: Added to XML document", "OK", verbose)
-        
+
     with open(output_file, "wb") as f:
         f.write(doc.toprettyxml(indent="  ", encoding="utf-8"))
 

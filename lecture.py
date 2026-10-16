@@ -1,5 +1,3 @@
-# File lecture-manager.py (entry point)
-
 #!/usr/bin/env python3
 
 import readline

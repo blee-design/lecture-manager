@@ -89,9 +89,10 @@
                         <div class="flex-grow-1">
                           <!-- Marks and Chapter badges -->
                           <div class="mb-2">
-                            {% if q.marks %}
+                            {% set md = q|marks_display %}
+                            {% if md %}
                               <span class="badge bg-warning text-dark fs-6 me-2">
-                                <i class="bi bi-star"></i> {{ q.marks }} marks
+                                <i class="bi bi-star"></i> {{ md }} marks
                               </span>
                             {% endif %}
                             {% if q.chapter %}

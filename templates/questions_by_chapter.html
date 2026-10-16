@@ -41,8 +41,9 @@
                     <span class="fw-bold fs-5 me-3 text-primary">{{ q.question_number }}.</span>
                     <div class="flex-grow-1">
                       <div class="mb-1">
-                        {% if q.marks %}
-                          <span class="badge bg-warning text-dark me-2">{{ q.marks }} marks</span>
+                        {% set md = q|marks_display %}
+                        {% if md %}
+                          <span class="badge bg-warning text-dark me-2">{{ md }} marks</span>
                         {% endif %}
                         {% if q.paper %}
                           <span class="badge bg-info text-dark">{{ q.paper }}</span>

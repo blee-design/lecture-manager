@@ -9,6 +9,8 @@ import html2text
 from .db import get_connection
 from .utils import print_colored, COLORS, color_text
 from requests_oauthlib import OAuth1Session
+import requests
+from requests.auth import HTTPBasicAuth
 
 # ----- Tables -----
 CRED_TABLE = "instapaper_credentials"

@@ -468,13 +468,14 @@ def _extract_facebook_uploader_from_url(url):
     return "Unknown"
 
 def _download_album_with_db(url, uploader=None):
-    """Explicit album download – just download and process."""
+    """Explicit album download – download all photos and register them in the DB."""
     import subprocess, tempfile
-    
-    _download_single_photo(url)
 
     _ensure_cookie_file()
     cookie_file = 'cookies.txt' if os.path.exists('cookies.txt') else None
+
+    # Quick probe to grab the album title / uploader for the DB entry
+    probe = _fast_probe(url, timeout=8)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         print_colored("[⏳] Downloading album...", COLORS.BLUE)
@@ -487,7 +488,20 @@ def _download_album_with_db(url, uploader=None):
         if proc.returncode != 0:
             print_colored(f"[!] Download failed with code {proc.returncode}", COLORS.RED)
             return
-        _process_album_files(tmpdir, url, uploader, probe=probe)
+
+        # Collect everything gallery-dl produced
+        image_exts = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
+        downloaded = []
+        for root, _, files in os.walk(tmpdir):
+            for f in files:
+                if f.lower().endswith(image_exts):
+                    downloaded.append(os.path.join(root, f))
+
+        if not downloaded:
+            print_colored("[!] No photos were downloaded.", COLORS.RED)
+            return
+
+        _process_album_files(downloaded, url, uploader, probe=probe)
 
 def _extract_facebook_title(info):
     if not info or not isinstance(info, dict):

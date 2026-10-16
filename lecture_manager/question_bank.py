@@ -259,7 +259,8 @@ def create_question_table():
             subject VARCHAR(255),
             paper VARCHAR(100),
             `group` VARCHAR(100),
-            marks INT,
+            marks DECIMAL(10,2) NULL,
+            marks_breakdown VARCHAR(100) NULL,
             chapter VARCHAR(255),
             question_number VARCHAR(50),
             nepali_transcription TEXT,
@@ -478,6 +479,36 @@ def format_level_alias(level, alias):
     if level:
         return f"Level {level}" if level_is_numeric else level
     return alias
+
+def _fmt_marks(val):
+    """Format a marks value for display: 10 → '10', 7.5 → '7.5'."""
+    if val is None or val == '':
+        return ''
+    try:
+        f = float(val)
+        if f.is_integer():
+            return str(int(f))
+        return f"{f:g}"
+    except (ValueError, TypeError):
+        return str(val)
+
+
+def _format_marks_display(q):
+    """
+    Return the marks string for a question:
+      - total only        → '10'
+      - breakdown + total → '2+4+4=10'
+      - breakdown only    → '2+4+4'
+      - neither           → ''
+    """
+    marks     = q.get('marks')
+    breakdown = (q.get('marks_breakdown') or '').strip()
+
+    if breakdown and marks not in (None, ''):
+        return f"{breakdown}={_fmt_marks(marks)}"
+    if marks not in (None, ''):
+        return _fmt_marks(marks)
+    return breakdown
 
 def _short_preview(text, max_len=50):
     """Truncate text at a word boundary with '…' if longer than max_len."""
@@ -903,7 +934,7 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
                  syllabus_code=None, q_type='essay',
                  feedback_true=None, feedback_false=None,
                  penalty=0, exam_type='open', alias=None, source=None,
-                 passage_id=None):
+                 passage_id=None, marks_breakdown=None):
     # Convert empty strings to None for nullable fields
     if paper == '':
         paper = None
@@ -973,22 +1004,28 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
     cursor = conn.cursor()
     cursor.execute(f"""
         INSERT INTO questions
-        (question_date, institution, subject, paper, `group`, marks, chapter,
+        (question_date, institution, subject, paper, `group`, marks,
+         marks_breakdown, chapter,
          question_number, nepali_transcription, english_transcription, level, notes,
          general_feedback, fraction_correct, fraction_wrong, shuffle_answers,
          show_num_correct, correct_feedback, partially_correct_feedback,
          incorrect_feedback, response_lines, attachments, filetypes, maxbytes,
          grader_info, type, syllabus_code,
          penalty, feedback_true, feedback_false, exam_type, alias, source, passage_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+        VALUES (%s, %s, %s, %s, %s, %s,
+                %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s)
-    """, (date, institution, subject, paper, group, marks, chapter,
+    """, (date, institution, subject, paper, group, marks,
+          marks_breakdown, chapter,
           question_number, nepali, english, level, notes,
           general_feedback, fraction_correct, fraction_wrong,
           shuffle_answers, show_num_correct,
           correct_feedback, partially_correct_feedback, incorrect_feedback,
-          response_lines, attachments, filetypes, maxbytes, grader_info, q_type, syllabus_code,
+          response_lines, attachments, filetypes, maxbytes, grader_info,
+          q_type, syllabus_code,
           penalty, feedback_true, feedback_false, exam_type or 'open', alias,
           source if source and source.strip() else None,
           passage_id))
@@ -1046,6 +1083,7 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
     cursor.close()
     conn.close()
     print_colored(f"[✓] Question added with ID: {qid}", COLORS.GREEN)
+    marks_breakdown=marks_breakdown,
     return qid
 
 def _attach_children_to_questions(rows):
@@ -1683,8 +1721,9 @@ def _display_single_question(q, context_paper=None):
     print("  " + "─" * (_QB_WIDTH - 4))
 
     line = f"     {color_text(f'Q.No. {qno}.', COLORS.CYAN, bold=True)}"
-    if marks and str(marks).isdigit():
-        line += f"  {color_text(f'[{marks} marks]', COLORS.YELLOW)}"
+    marks_display = _format_marks_display(q)
+    if marks_display:
+        line += f"  {color_text(f'[{marks_display} marks]', COLORS.YELLOW)}"
     line += f"  {color_text(f'Type: {qtype}', COLORS.BLUE)}"
     print(line)
 
@@ -1849,10 +1888,18 @@ def _display_paper(questions, show_answers=False, context_paper=None):
             pass
 
     # ---- Quick summary line ----
-    _total_marks = sum(
-        int(q['marks']) for q in questions
-        if q.get('marks') and str(q.get('marks')).isdigit()
-    )
+    _total_marks = 0
+    for q in questions:
+        m = q.get('marks')
+        if m is None or m == '':
+            continue
+        try:
+            _total_marks += float(m)
+        except (ValueError, TypeError):
+            continue
+    # render as int if whole
+    if _total_marks == int(_total_marks):
+        _total_marks = int(_total_marks)
     _qword = "question" if len(questions) == 1 else "questions"
     print()
     print(f"     {color_text(f'{len(questions)} {_qword} · {_total_marks} marks', COLORS.WHITE)}")
@@ -1896,11 +1943,11 @@ def _display_paper(questions, show_answers=False, context_paper=None):
                   f"{color_text(f'({len(qs)} question' + ('s' if len(qs) != 1 else '') + ')', COLORS.WHITE)}")
             for q in qs:
                 q_no = normalize_question_number(q.get('question_number'))
-                marks = q.get('marks')
+                marks_display = _format_marks_display(q)
                 qtype = q.get('type', 'essay')
                 line = f"        {color_text(f'Q.No. {q_no}.', COLORS.CYAN, bold=True)}"
-                if marks and str(marks).isdigit():
-                    line += f"  {color_text(f'[{marks} marks]', COLORS.YELLOW)}"
+                if marks_display:
+                    line += f"  {color_text(f'[{marks_display} marks]', COLORS.YELLOW)}"
                 line += f"  {color_text(f'[{qtype}]', COLORS.BLUE)}"
                 _code = (q.get('syllabus_code') or '').strip()
                 if _code:
@@ -3697,6 +3744,16 @@ def add_question_interactive():
     group   = _prompt_field("Group: ")
 
     marks = _prompt_number("Marks (numeric, Enter to skip): ", default=None)
+    marks_breakdown = _prompt_field(
+        "Marks breakdown (e.g. 2+4+4, Enter to skip): ") or None
+    # Shorthand: if breakdown contains a total, warn — the total column
+    # is set independently.
+    if marks_breakdown and '=' in marks_breakdown:
+        print_colored(
+            "[i] Tip: for breakdown, use parts only (e.g. '2+4+4'). "
+            "The total is entered in the Marks field above.",
+            COLORS.YELLOW,
+        )
 
     chapter = _prompt_field("Chapter: ")
     q_num   = _prompt_field("Question Number: ")
@@ -4361,83 +4418,6 @@ def advanced_search_interactive():
                     # We stash the exclusion set so we can apply it after fetching.
                     id_exclude_after = exclude_ids
 
-                    # Multiple IDs → collect rows, report missing ones
-                    found = []
-                    missing = []
-                    for qid in sorted(id_set):
-                        q = get_question_by_id(qid)
-                        if q:
-                            found.append(q)
-                        else:
-                            missing.append(qid)
-
-                    if not found:
-                        print_colored(
-                            f"[!] None of the {len(id_set)} ID(s) were found.",
-                            COLORS.RED,
-                        )
-                        continue
-
-                    # Apply any remaining criteria on top of the ID selection
-                    for key, value in kwargs.items():
-                        if not value:
-                            continue
-                        if key == 'type':
-                            found = [q for q in found
-                                     if (q.get('type') or '').lower() == value.lower()]
-                        elif key == 'date':
-                            found = [q for q in found
-                                     if (q.get('question_date') or '') == value]
-                        elif key == 'paper':
-                            found = [q for q in found
-                                     if (q.get('paper') or '').lower() == value.lower()]
-                        else:
-                            found = [q for q in found
-                                     if value.lower() in (q.get(key) or '').lower()]
-
-                    def _print_search_list():
-                        print(f"\n--- {len(found)} QUESTION(S) SELECTED ---")
-                        for r in found:
-                            preview = _short_preview(
-                                r.get('nepali_transcription')
-                                or r.get('english_transcription') or '', 55
-                            )
-                            print(f"  {r['id']:>5} | "
-                                  f"{(r.get('question_date') or ''):<10} | "
-                                  f"{(r.get('institution') or '')[:20]:<20} | "
-                                  f"{(r.get('subject') or '')[:25]:<25} | "
-                                  f"Q{r.get('question_number') or ''}")
-                            print(f"        {preview}")
-
-                        if missing:
-                            print_colored(
-                                f"[!] Not found: {missing[:20]}"
-                                + (" ..." if len(missing) > 20 else ""),
-                                COLORS.YELLOW,
-                            )
-
-                    _print_search_list()
-
-                    while True:
-                        cid = input(color_text(
-                            "\nEnter ID to view (Enter/b = back, q = quit): ",
-                            COLORS.MAGENTA)).strip().lower()
-                        if cid in ('', 'b', 'back'):
-                            break
-                        if cid in ('q', 'quit', 'exit'):
-                            return
-                        if not cid.isdigit():
-                            print_colored("[!] Enter a numeric ID.", COLORS.RED)
-                            continue
-                        q = get_question_by_id(int(cid))
-                        if q:
-                            _display_single_question(q)
-                            input(color_text("\nPress Enter to continue...",
-                                             COLORS.MAGENTA))
-                        else:
-                            print_colored(f"[!] ID {cid} not found.", COLORS.RED)
-                    continue
-
 
             # Family mode is always on — '1' matches 1, 01, 1a, 1b, 1(a), 1.5
             family_mode = True
@@ -4534,7 +4514,8 @@ def update_question_interactive():
     def _build_field_groups(kind):
         common = [
             'question_date', 'institution', 'subject', 'paper', 'group',
-            'marks', 'chapter', 'question_number', 'syllabus_code', 'source',
+            'marks', 'marks_breakdown', 'chapter', 'question_number',
+            'syllabus_code', 'source',
             'type', 'level', 'alias',
             'nepali_transcription', 'english_transcription', 'notes', 'exam_type',
             'links',
@@ -4992,7 +4973,7 @@ def export_questions_csv(question_ids=None, verbose=True):
     export_fields = [
         'id',
         'question_date', 'institution', 'level', 'alias', 'paper', 'group',
-        'subject', 'chapter', 'question_number', 'marks',
+        'subject', 'chapter', 'question_number', 'marks', 'marks_breakdown',
         'nepali_transcription', 'english_transcription', 'notes',
         'source', 'type', 'exam_type',
         'general_feedback', 'fraction_correct', 'fraction_wrong',
@@ -5128,9 +5109,12 @@ def import_questions_csv():
 
         if row.get('marks'):
             try:
-                row['marks'] = int(row['marks'])
-            except ValueError:
+                fval = float(row['marks'])
+                row['marks'] = int(fval) if fval.is_integer() else fval
+            except (ValueError, TypeError):
                 row['marks'] = None
+        if row.get('marks_breakdown') == '':
+            row['marks_breakdown'] = None
         if row.get('grade'):
             try:
                 row['grade'] = float(row['grade'])
@@ -5203,6 +5187,7 @@ def import_questions_csv():
             'chapter': row.get('chapter'),
             'question_no': row.get('question_no'),
             'marks': row.get('marks'),
+            'marks_breakdown': row.get('marks_breakdown'),
             'nepali_transcription': row.get('nepali_transcription'),
             'english_transcription': row.get('english_transcription'),
             'notes': row.get('notes'),
@@ -5318,7 +5303,7 @@ def export_questions_txt(question_ids=None, verbose=True):
 
     field_order = [
         'question_date', 'institution', 'level', 'alias', 'paper', 'group',
-        'subject', 'chapter', 'marks', 'notes', 'source'
+        'subject', 'chapter', 'marks', 'marks_breakdown', 'notes', 'source'
     ]
     labels = {
         'question_date': 'Date',
@@ -5330,6 +5315,7 @@ def export_questions_txt(question_ids=None, verbose=True):
         'subject':       'Subject',
         'chapter':       'Chapter',
         'marks':         'Marks',
+        'marks_breakdown': 'Marks Breakdown',
         'notes':         'Notes',
         'source':        'Source',
     }
@@ -5636,8 +5622,14 @@ def import_questions_txt():
             key, val = line.split(':', 1)
             key = key.strip().lower().replace(' ', '_')
             val = val.strip()
-            if key == 'marks' and val.isdigit():
-                val = int(val)
+            if key == 'marks':
+                try:
+                    fval = float(val)
+                    val = int(fval) if fval.is_integer() else fval
+                except (ValueError, TypeError):
+                    pass  # leave as raw string
+            if key == 'marks_breakdown':
+                pass  # keep as string
             if key == 'question_number':
                 val = normalize_question_number(val)
             block_data[key] = val
@@ -5663,6 +5655,7 @@ def import_questions_txt():
             'paper': merged.get('paper'),
             'group': merged.get('group'),
             'marks': merged.get('marks'),
+            'marks_breakdown': merged.get('marks_breakdown'),
             'chapter': merged.get('chapter'),
             'question_number': merged.get('question_number'),
             'nepali_transcription': merged.get('nepali'),
@@ -5892,8 +5885,8 @@ def import_questions_json():
     skipped = 0
 
     fields = ['question_date', 'institution', 'subject', 'paper', 'group',
-            'marks', 'chapter', 'question_number', 'nepali_transcription',
-            'english_transcription', 'level', 'notes',
+            'marks', 'marks_breakdown', 'chapter', 'question_number',
+            'nepali_transcription', 'english_transcription', 'level', 'notes',
             'feedback_true', 'feedback_false', 'exam_type']
     escaped_fields = [f"`{f}`" if f == 'group' else f for f in fields]
 
@@ -6217,6 +6210,7 @@ def _bulk_update_filtered():
         ('exam_type',       'menu_exam'),
         ('type',            'menu_qtype'),
         ('marks',           'number'),
+        ('marks_breakdown', 'text'),
         ('penalty',         'float'),
         ('fraction_correct','float'),
         ('fraction_wrong',  'float'),

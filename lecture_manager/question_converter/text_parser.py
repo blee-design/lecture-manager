@@ -29,7 +29,7 @@ VALID_FIELD_NAMES = {
     'correct feedback', 'partially correct feedback', 'incorrect feedback',
     'hint', 'hint clear incorrect', 'hint show number correct',
     # Bank TXT fields
-    'nepali', 'english', 'marks', 'chapter', 'source',
+    'nepali', 'english', 'marks', 'marks breakdown', 'chapter', 'source',
     'alias',
     'id', 'exam type',
     # Metadata fields (for inline context)
@@ -473,12 +473,34 @@ def save_field_to_question(question, field_name, field_content, line_no=None):
         question['english_transcription'] = field_content
         log(f"  Question {question.get('question_no', '?')}: Added English transcription", "INFO", True)
     elif field_name == 'marks':
-        try:
-            question['marks'] = int(field_content)
-            log(f"  Question {question.get('question_no', '?')}: Set marks to {field_content}", "INFO", True)
-        except ValueError:
-            question['marks'] = None
-            log(f"  Question {question.get('question_no', '?')}: Invalid marks value, set to NULL", "WARN", True)
+        raw = (field_content or '').strip()
+
+        # ---- Shortcut: "5+5=10" → split into total + breakdown ----
+        _m = re.match(
+            r'^\s*(\d+(?:\.\d+)?(?:\s*\+\s*\d+(?:\.\d+)?)+)\s*=\s*'
+            r'(\d+(?:\.\d+)?)\s*$',
+            raw,
+        )
+        if _m:
+            question['marks_breakdown'] = _m.group(1)
+            try:
+                total = float(_m.group(2))
+                question['marks'] = int(total) if total.is_integer() else total
+            except ValueError:
+                question['marks'] = None
+        else:
+            try:
+                val = float(raw)
+                question['marks'] = int(val) if val.is_integer() else val
+            except (ValueError, TypeError):
+                question['marks'] = None
+                log(f"  Question {question.get('question_no', '?')}: "
+                    f"Invalid marks value '{raw}', set to NULL", "WARN", True)
+
+    elif field_name == 'marks breakdown':
+        raw = (field_content or '').strip()
+        question['marks_breakdown'] = raw or None
+
     elif field_name == 'chapter':
         # Always preserve the full text as the human description
         question['chapter'] = field_content

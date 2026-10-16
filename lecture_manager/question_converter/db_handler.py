@@ -202,35 +202,55 @@ def map_paper_value(paper_str, level=None):
 
 def _compute_marks(q_dict):
     """
-    Determine the marks value for a question from various sources.
+    Determine the marks value for a question.
 
     Priority:
-      1. Explicit 'marks' value (from TXT 'Marks:' line, or CSV column)
-      2. 'grade' value (Moodle <defaultgrade>, or JSON 'grade')
-      3. Detect "5+5" style pattern in notes and sum the parts
-      4. None
+      1. Explicit 'marks' (accepts int or float)
+      2. Sum of 'marks_breakdown' parts, if provided
+      3. 'grade' (Moodle <defaultgrade>)
+      4. "5+5" pattern found in notes
+      5. None
     """
+    # 1. Explicit marks
     marks = q_dict.get('marks')
     if marks is not None:
         try:
-            return int(marks)
+            val = float(marks)
+            return int(val) if val.is_integer() else val
         except (ValueError, TypeError):
             pass
 
+    # 2. Sum the breakdown, when the caller gave us one
+    breakdown = q_dict.get('marks_breakdown')
+    if breakdown:
+        try:
+            parts = re.split(r'\s*\+\s*', str(breakdown).strip())
+            nums = [float(p) for p in parts if p.strip()]
+            if len(nums) >= 2:
+                total = sum(nums)
+                return int(total) if total.is_integer() else total
+        except (ValueError, TypeError):
+            pass
+
+    # 3. Grade
     grade = q_dict.get('grade')
     if grade is not None:
         try:
-            return int(float(grade))
+            val = float(grade)
+            return int(val) if val.is_integer() else val
         except (ValueError, TypeError):
             pass
 
+    # 4. "5+5" in notes
     notes = (q_dict.get('notes') or '')
     if isinstance(notes, str):
-        match = re.search(r'(\d+(?:\s*\+\s*\d+)+)', notes)
+        match = re.search(
+            r'(\d+(?:\.\d+)?(?:\s*\+\s*\d+(?:\.\d+)?)+)', notes)
         if match:
             parts = re.split(r'\s*\+\s*', match.group(1))
             try:
-                return sum(int(p) for p in parts)
+                total = sum(float(p) for p in parts)
+                return int(total) if total.is_integer() else total
             except ValueError:
                 pass
 
@@ -380,6 +400,7 @@ def insert_question(q_dict, source=None, force=False):
                 'paper': paper,
                 'group': group,
                 'marks': _compute_marks(q_dict),
+                'marks_breakdown': q_dict.get('marks_breakdown'),
                 'penalty': q_dict.get('penalty', 0),
                 'chapter': q_dict.get('chapter', ''),
                 'question_number': question_number,
@@ -457,6 +478,7 @@ def insert_question(q_dict, source=None, force=False):
         paper=paper,
         group=group,
         marks=_compute_marks(q_dict),
+        marks_breakdown=q_dict.get('marks_breakdown'),
         penalty=q_dict.get('penalty', 0),
         chapter=q_dict.get('chapter', ''),
         question_number=question_number,
@@ -501,6 +523,7 @@ def _convert_to_db_fields(q_dict):
         'group': q_dict.get('group'),
         'subject': q_dict.get('subject'),
         'marks': q_dict.get('marks'),
+        'marks_breakdown': q_dict.get('marks_breakdown'),
         'chapter': q_dict.get('chapter'),
         'question_number': str(q_dict.get('question_no', '')).zfill(2),
         'nepali_transcription': q_dict.get('nepali_transcription') or q_dict.get('text'),

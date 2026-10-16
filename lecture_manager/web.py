@@ -44,6 +44,14 @@ template_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__fi
 app = Flask(__name__, template_folder=template_dir)
 app.secret_key = os.urandom(24)
 
+@app.template_filter('marks_display')
+def _marks_display_filter(q):
+    from .question_bank import _format_marks_display
+    try:
+        return _format_marks_display(q)
+    except Exception:
+        return ''
+
 def get_tally_data():
     """Return tally data using hash‑based matching (same as CLI)."""
     from .file_manager import collect_tally_data

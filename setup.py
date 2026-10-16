@@ -116,7 +116,11 @@ setup(
         "twine",
 
         # Optional: for domain extraction in tags (if you implement auto-tagging)
-       "tldextract>=3.0.0",
+        "tldextract>=3.0.0",
+
+        # Checking indention of whole project
+        "ruff",
+        "pycodestyle",
     ],
     extras_require={
         "dev": ["pytest", "black", "flake8"],

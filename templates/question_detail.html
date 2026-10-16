@@ -54,10 +54,11 @@
           <dd class="col-sm-8">{{ question.syllabus_code }}</dd>
           {% endif %}
 
-          {% if question.marks %}
-          <dt class="col-sm-4">Marks</dt>
-          <dd class="col-sm-8"><span class="badge bg-warning text-dark">{{ question.marks }}</span></dd>
-          {% endif %}
+        {% set md = question|marks_display %}
+        {% if md %}
+        <dt class="col-sm-4">Marks</dt>
+        <dd class="col-sm-8"><span class="badge bg-warning text-dark">{{ md }}</span></dd>
+        {% endif %}
 
           <dt class="col-sm-4">Question No.</dt>
           <dd class="col-sm-8">{{ question.question_number }}</dd>

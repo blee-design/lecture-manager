@@ -836,7 +836,6 @@ def _baseline_migration_v1(cursor):
                     (num, alias, qid)
                 )
                 updated += 1
-        conn.commit()
         if updated:
             print_colored(f"[✓] Split {updated} level values into number + alias.", COLORS.GREEN)
 
@@ -862,6 +861,26 @@ def _baseline_migration_v1(cursor):
         if not cursor.fetchone():
             cursor.execute(f"ALTER TABLE questions ADD COLUMN {col} {definition}")
             print_colored(f"[✓] Added '{col}' column to questions.", COLORS.GREEN)
+
+    # ---- Widen 'marks' from INT to DECIMAL so floats survive ----
+    cursor.execute("""
+        SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'questions'
+          AND COLUMN_NAME = 'marks'
+    """)
+    _mr = cursor.fetchone()
+    if _mr and (_mr[0] or '').lower() == 'int':
+        cursor.execute("ALTER TABLE questions MODIFY marks DECIMAL(10,2) NULL")
+        print_colored("[✓] Upgraded 'marks' column to DECIMAL(10,2).",
+                      COLORS.GREEN)
+
+    # ---- Add marks_breakdown column ----
+    cursor.execute("SHOW COLUMNS FROM questions LIKE 'marks_breakdown'")
+    if not cursor.fetchone():
+        cursor.execute(
+            "ALTER TABLE questions ADD COLUMN marks_breakdown VARCHAR(100) NULL")
+        print_colored("[✓] Added 'marks_breakdown' column to questions.",
+                      COLORS.GREEN)
 
     # ---- New columns added after v3.0.0 ----
     newer_columns = {
@@ -1196,7 +1215,6 @@ def _baseline_migration_v1(cursor):
                 """)
                 english_updated = cursor.rowcount
 
-                conn.commit()
                 print_colored(f"[✓] Fixed {devanagari_updated + english_updated} duplicate transcriptions "
                             f"({devanagari_updated} kept Nepali, {english_updated} kept English).", COLORS.GREEN)
             else:
