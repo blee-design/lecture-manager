@@ -1514,11 +1514,32 @@ def _v2_question_links(cursor):
     else:
         print_colored("[i] No new question_links rows to seed.", COLORS.BLUE)
 
+def _v3_marks_breakdown(cursor):
+    """
+    v3 — add marks_breakdown column and widen marks to DECIMAL(10,2)
+    so decimal totals (7.5) round-trip. Idempotent.
+    """
+    cursor.execute("""
+        SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'questions'
+          AND COLUMN_NAME = 'marks'
+    """)
+    _mr = cursor.fetchone()
+    if _mr and (_mr[0] or '').lower() == 'int':
+        cursor.execute("ALTER TABLE questions MODIFY marks DECIMAL(10,2) NULL")
+        print_colored("[✓] Upgraded 'marks' to DECIMAL(10,2).", COLORS.GREEN)
+
+    cursor.execute("SHOW COLUMNS FROM questions LIKE 'marks_breakdown'")
+    if not cursor.fetchone():
+        cursor.execute(
+            "ALTER TABLE questions ADD COLUMN marks_breakdown VARCHAR(100) NULL")
+        print_colored("[✓] Added 'marks_breakdown' column.", COLORS.GREEN)
 
 # Register the migrations AFTER all functions are defined.
 # Order must be ascending by version number.
 MIGRATIONS.append((1, "baseline", _baseline_migration_v1))
 MIGRATIONS.append((2, "question_links", _v2_question_links))
+MIGRATIONS.append((3, "marks_breakdown", _v3_marks_breakdown))
 
 def ensure_subjects_populated():
     from .syllabus_config import is_configured
