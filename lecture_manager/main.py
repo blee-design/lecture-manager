@@ -584,7 +584,8 @@ def _manage_syllabi_submenu(SC, current_id):
                 print_colored("No syllabi to edit.", COLORS.YELLOW)
                 continue
             for i, s in enumerate(syllabi, 1):
-                print(f"  {i}. {s['display_name']}")
+                lvl = f"  (L{s['level']})" if s.get('level') else ""
+                print(f"  {i}. {s['display_name']}{lvl}")
             si = input("Edit which? number (blank to cancel): ").strip()
             if not si.isdigit() or not (1 <= int(si) <= len(syllabi)):
                 continue
@@ -613,7 +614,8 @@ def _manage_syllabi_submenu(SC, current_id):
                 continue
             for i, s in enumerate(syllabi, 1):
                 n_papers = len(SC.get_papers(active_only=False, syllabus_id=s['id']))
-                print(f"  {i}. {s['display_name']}  ({n_papers} papers)")
+                lvl = f"  (L{s['level']})" if s.get('level') else ""
+                print(f"  {i}. {s['display_name']}{lvl}  ({n_papers} papers)")
             si = input("Delete which? number (blank to cancel): ").strip()
             if not si.isdigit() or not (1 <= int(si) <= len(syllabi)):
                 continue
@@ -659,7 +661,8 @@ def _manage_syllabi_submenu(SC, current_id):
             print()
             print("  Assign all of them to which syllabus?")
             for i, s in enumerate(syllabi, 1):
-                print(f"  {i}. {s['display_name']}")
+                lvl = f"  (L{s['level']})" if s.get('level') else ""
+                print(f"  {i}. {s['display_name']}{lvl}")
             print("  0. Cancel")
             ti = input("Choose: ").strip()
             if not ti.isdigit() or int(ti) == 0 or int(ti) > len(syllabi):
@@ -693,7 +696,7 @@ def _manage_syllabi_submenu(SC, current_id):
             print_colored("  📄  Papers by syllabus:", COLORS.CYAN, bold=True)
             flat = []   # (paper_key, paper_display, syllabus_id)
             for s in syllabi:
-                lvl = f"  L{s['level']}" if s.get('level') else ""
+                lvl = f"  (L{s['level']})" if s.get('level') else ""
                 print(f"\n    📚 {s['display_name']}{lvl}")
                 papers_here = [p for p in all_papers
                                if p.get('syllabus_id') == s['id']]
