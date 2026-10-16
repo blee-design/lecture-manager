@@ -740,6 +740,7 @@ def parse_text_file(file_path, args):
             "incorrect_feedback": "Your answer is incorrect.",
             "hints": [],
             "pairs": [],
+            "also_in": [],
         }
 
         # Attach passage text as a transient field (consumed by insert_question)
@@ -765,6 +766,7 @@ def parse_text_file(file_path, args):
             'notes': 'notes',
             'source': 'source',
             'marks': 'marks',
+            'marks breakdown': 'marks_breakdown',
             'chapter': 'chapter',
             'exam type': 'exam_type',
             'exam_type': 'exam_type',

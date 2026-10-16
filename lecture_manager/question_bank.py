@@ -1083,7 +1083,6 @@ def add_question(date, institution, subject, paper, group, marks, chapter,
     cursor.close()
     conn.close()
     print_colored(f"[✓] Question added with ID: {qid}", COLORS.GREEN)
-    marks_breakdown=marks_breakdown,
     return qid
 
 def _attach_children_to_questions(rows):

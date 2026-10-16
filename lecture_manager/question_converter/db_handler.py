@@ -40,7 +40,7 @@ def _apply_also_in(qid, also_in):
 
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
-    added = 0
+    changed = 0
     try:
         # Fetch the question's primary identity
         cur.execute(
@@ -100,19 +100,27 @@ def _apply_also_in(qid, also_in):
                   AND syllabus_code = %s
                   AND is_primary = 0
             """, (qid, pk, code))
+            changed += cur.rowcount
 
-        # Insert the new links
+        # Insert new links; update the note on existing ones if it changed
         for (pk, norm), note in wanted.items():
-            if (pk, norm) in existing:
-                continue
             subj, chap = norm.split('.')
+            if (pk, norm) in existing:
+                cur.execute("""
+                    UPDATE question_links
+                    SET note = %s
+                    WHERE question_id = %s AND paper_key = %s
+                      AND syllabus_code = %s AND is_primary = 0
+                """, (note, qid, pk, norm))
+                changed += cur.rowcount
+                continue
             cur.execute("""
-                INSERT IGNORE INTO question_links
+                INSERT INTO question_links
                     (question_id, paper_key, syllabus_code,
                      subject_code, chapter_code, is_primary, note)
                 VALUES (%s, %s, %s, %s, %s, 0, %s)
             """, (qid, pk, norm, subj, chap, note))
-            added += cur.rowcount
+            changed += cur.rowcount
 
         conn.commit()
     except Exception as e:
@@ -121,7 +129,7 @@ def _apply_also_in(qid, also_in):
     finally:
         cur.close()
         conn.close()
-    return added
+    return changed
 
 def map_paper_value(paper_str, level=None):
     """
@@ -450,14 +458,14 @@ def insert_question(q_dict, source=None, force=False):
                     del update_kwargs[_k]
 
             result = update_question(dup_id, **update_kwargs)
-            links_added = _apply_also_in(dup_id, q_dict.get('also_in'))
+            links_changed = _apply_also_in(dup_id, q_dict.get('also_in'))
 
             if result == 'updated':
                 return 'updated', dup_id
             elif result == 'no_change':
-                # If we only added cross-syllabus links, that still
-                # counts as a change worth reporting.
-                if links_added > 0:
+                # If links changed (added, removed, or note-updated),
+                # that still counts as a change worth reporting.
+                if links_changed > 0:
                     return 'updated', dup_id
                 return 'unchanged', dup_id
             else:

@@ -18,7 +18,7 @@ TABLE_NAME = 'youtube_lectures'
 #  Users never touch this. It runs on startup and skips itself
 #  when the DB is already current.
 # =============================================================
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 # Populated below, after the migration functions are defined.
 MIGRATIONS = []
@@ -457,7 +457,7 @@ class SchemaManager:
         return "fresh", 0
 
     # ---------- Migration runner ----------
-    def run(self):
+    def run(self, force=False):
         self._ensure_bookkeeping()
         install_type, stored = self.detect_install_type()
 
@@ -492,7 +492,7 @@ class SchemaManager:
             return
 
         # ----- MANAGED INSTALL -----
-        if stored >= SCHEMA_VERSION:
+        if not force and stored >= SCHEMA_VERSION:
             return    # silent fast path
         self._run_pending(stored)
 
@@ -1429,7 +1429,7 @@ def _baseline_migration_v1(cursor):
     # NO cursor.close() / conn.close() here — the SchemaManager owns
     # the connection and will close it after all migrations run.
 
-def migrate_table():
+def migrate_table(force=False):
     """
     Public entry point — called by main() and web.py at startup.
     Delegates to SchemaManager, which is idempotent and fast when
@@ -1438,7 +1438,7 @@ def migrate_table():
     conn = get_connection()
     mgr = SchemaManager(conn)
     try:
-        mgr.run()
+        mgr.run(force=force)
     except Exception as e:
         print_colored(
             f"[!] Schema migration failed: {e}",
@@ -1645,7 +1645,10 @@ if __name__ == "__main__":
         _cli_status()
     elif "--reset" in sys.argv:
         _cli_reset()
+    elif "--force" in sys.argv:
+        migrate_table(force=True)
     else:
         print("Usage:")
         print("  python -m lecture_manager.db --status   # show schema report")
         print("  python -m lecture_manager.db --reset    # force re-migration")
+        print("  python -m lecture_manager.db --force    # force re-migration")
