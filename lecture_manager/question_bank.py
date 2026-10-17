@@ -4310,6 +4310,12 @@ def advanced_search_interactive():
                 if val:
                     kwargs[field] = val
 
+            # Default empty exclusion set — overwritten below if the user
+            # supplied a pure-'!' ID filter. Without this default, the
+            # later `if id_exclude_after:` raises UnboundLocalError when
+            # no ID filter was set at all.
+            id_exclude_after = set()
+
             # ---- Direct ID lookup takes precedence ----
             # Accepts single IDs, comma lists, and ranges:
             #     5,  5,10,20,  5..10,  5,10..15,20
