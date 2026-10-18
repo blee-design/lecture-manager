@@ -3893,6 +3893,7 @@ def add_question_interactive():
         q_type=q_type,
         exam_type=exam_type,
         alias=level_alias,
+        marks_breakdown=marks_breakdown,
     )
     if qid:
         print_colored(f"[✓] Question processed with ID: {qid}", COLORS.GREEN)
