@@ -699,6 +699,7 @@ def _build_question_where(filters):
     # Compare only the date part (first 10 chars, whitespace stripped).
     # This matches rows stored as bare 'YYYY-MM-DD' AND rows that carry
     # a time component ('YYYY-MM-DD HH:MM:SS') or stray whitespace.
+    # --- Date: exact / list / range ---
     if filters.get('date'):
         clauses.append(_multi_eq_clause(
             'LEFT(TRIM(q.question_date), 10)', filters['date'], params))
