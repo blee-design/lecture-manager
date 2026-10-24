@@ -193,7 +193,7 @@ export-html:
 	@echo "$(BLUE)Exporting all questions to questions_export.html...$(NC)"
 	$(PYTHON_VENV) -c "from lecture_manager.question_converter.db_handler import get_questions, export_to_file; qs = get_questions(); export_to_file(qs, 'questions_export.html', 'html')"
 	@echo "$(GREEN)Exported to questions_export.html$(NC)"
-# --- Testing ---
+# --- Testing & Linting ---
 .PHONY: test test-cov lint
 
 test:
@@ -204,7 +204,6 @@ test-cov:
 	@echo "$(BLUE)Running tests with coverage...$(NC)"
 	$(PYTHON_VENV) -m pytest --cov=lecture_manager tests/
 
-# --- Linting (Optional check) ---
 lint:
 	@echo "$(BLUE)Checking code quality with ruff...$(NC)"
 	$(PYTHON_VENV) -m ruff check lecture_manager/ || (echo "$(YELLOW)Linting failed. Fix errors above.$(NC)"; exit 1)
