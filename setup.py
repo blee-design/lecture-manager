@@ -121,6 +121,10 @@ setup(
         # Checking indention of whole project
         "ruff",
         "pycodestyle",
+
+        # Test
+        "pytest-mock",
+        "pytest-cov",
     ],
     extras_require={
         "dev": ["pytest", "black", "flake8"],
