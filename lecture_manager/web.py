@@ -174,6 +174,7 @@ def _build_syllabus_tree():
                 subjects_list.append({
                     'code': subj_code,
                     'name': subj['name'],
+                    'group': subj.get('group') or '',
                     'chapters': chapters_list,
                     'lecture_count': subject_totals.get(
                         (paper_key, subj_code), 0),

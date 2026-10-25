@@ -283,7 +283,7 @@ def syllabus_menu():
                 continue
             code = input("Subject code (e.g. 01, 02 — blank to auto-assign): ").strip()
             grp = input("Group (e.g. A, B, C, D — optional): ").strip() or None
-            if SC.add_subject(name, paper['paper_key'], chapter=code or None):
+            if SC.add_subject(name, paper['paper_key'], chapter=code or None, group=grp):
                 print_colored(f"[✓] Subject '{name}' added under {paper['display_name']}.",
                               COLORS.GREEN)
                 reload_paper_cache()
@@ -340,13 +340,15 @@ def syllabus_menu():
             s = subs[int(si) - 1]
             print(f"\n  Current name : {s['name']}")
             print(f"  Current code : {s['chapter']}")
+            print(f"  Current group: {s.get('group') or '(none)'}")
             new_name = input("New name (blank to keep): ").strip()
             new_code = input("New code (blank to keep): ").strip()
-            new_grp  = input("New group (blank to keep): ").strip()
+            new_grp  = input("New group (blank to keep, 'clear' to blank): ").strip()
             updates = {}
             if new_name: updates['name'] = new_name
             if new_code: updates['chapter'] = new_code
-            if new_grp:  updates['group'] = new_grp
+            if new_grp:
+                updates['group'] = None if new_grp.lower() == 'clear' else new_grp
             if not updates:
                 print_colored("No changes made.", COLORS.YELLOW)
                 continue
