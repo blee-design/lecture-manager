@@ -361,7 +361,7 @@ def delete_chapter(chapter_id):
     cursor.close(); conn.close()
     return ok
 
-def add_subject(name, paper_key, chapter=None):
+def add_subject(name, paper_key, chapter=None, group=None):
     conn = get_connection()
     cursor = conn.cursor()
     try:
@@ -376,10 +376,12 @@ def add_subject(name, paper_key, chapter=None):
             chapter = f"{next_num:02d}"
         else:
             chapter = str(chapter).zfill(2)
+
         cursor.execute("""
-            INSERT INTO subjects (name, paper, chapter, active)
-            VALUES (%s, %s, %s, 1)
-        """, (name, paper_key, chapter))
+            INSERT INTO subjects (name, paper, chapter, `group`, active)
+            VALUES (%s, %s, %s, %s, 1)
+        """, (name, paper_key, chapter, group))
+
         conn.commit()
         return cursor.lastrowid
     except Exception as e:
@@ -390,18 +392,22 @@ def add_subject(name, paper_key, chapter=None):
         conn.close()
 
 def update_subject(subject_id, **fields):
-    allowed = {'name', 'paper', 'chapter', 'active'}
+    allowed = {'name', 'paper', 'chapter', 'group', 'active'}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return False
-    sets = ", ".join(f"{k} = %s" for k in updates)
+
+    # Add backticks to 'group' if it's in the updates
+    sets = ", ".join(f"`{k}` = %s" if k == 'group' else f"{k} = %s" for k in updates)
+
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(f"UPDATE subjects SET {sets} WHERE id = %s",
                    (*updates.values(), subject_id))
     conn.commit()
     ok = cursor.rowcount > 0
-    cursor.close(); conn.close()
+    cursor.close()
+    conn.close()
     return ok
 
 
@@ -516,6 +522,7 @@ def export_syllabus(filepath, syllabus_id=None, verbose=True):
                 subj_out.append({
                     "name": s["name"],
                     "chapter": s.get("chapter") or "",
+                    "group": s.get("group") or "",
                     "chapters": [
                         {
                             "chapter_code": c.get("chapter_code") or "",
@@ -880,7 +887,7 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
                     else:
                         subjects_skipped += 1
                 else:
-                    sid = add_subject(s["name"], pkey, chapter=s_code)
+                    sid = add_subject(s["name"], pkey, chapter=s_code, group=s.get("group"))
                     if sid:
                         subjects_added += 1
 

@@ -401,6 +401,18 @@ def insert_question(q_dict, source=None, force=False):
         )
     group = clean_value(q_dict.get('group'))
 
+    # If no group is provided in the import file, auto-lookup from the syllabus!
+    if not group and paper and q_dict.get('syllabus_code'):
+        subj_code = str(q_dict.get('syllabus_code')).split('.')[0].zfill(2)
+        conn_g = get_connection()
+        cur_g = conn_g.cursor()
+        cur_g.execute("SELECT `group` FROM subjects WHERE paper = %s AND chapter = %s", (paper, subj_code))
+        row_g = cur_g.fetchone()
+        if row_g and row_g[0]:
+            group = row_g[0]
+        cur_g.close()
+        conn_g.close()
+
     qno = q_dict.get('question_no')
     if qno is not None and str(qno).strip():
         question_number = str(qno).strip().zfill(2)
