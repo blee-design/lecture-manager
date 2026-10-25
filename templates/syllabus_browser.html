@@ -66,6 +66,9 @@
               <div class="d-flex justify-content-between align-items-center mb-2">
                 <div>
                   <span class="badge bg-primary me-2">{{ subject.code }}</span>
+                  <span class="badge bg-secondary me-2">Group {{ subject.group }}</span>
+                  <a href="..." class="text-decoration-none text-dark">
+                      <strong>{{ subject.name }}</strong>
                   <a href="{{ url_for('lectures', paper=paper.paper_key, syllabus=subject.code) }}"
                      class="text-decoration-none text-dark">
                     <strong>{{ subject.name }}</strong>

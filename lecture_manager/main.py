@@ -282,6 +282,7 @@ def syllabus_menu():
                 print_colored("[!] Subject name required.", COLORS.RED)
                 continue
             code = input("Subject code (e.g. 01, 02 — blank to auto-assign): ").strip()
+            grp = input("Group (e.g. A, B, C, D — optional): ").strip() or None
             if SC.add_subject(name, paper['paper_key'], chapter=code or None):
                 print_colored(f"[✓] Subject '{name}' added under {paper['display_name']}.",
                               COLORS.GREEN)
@@ -341,9 +342,11 @@ def syllabus_menu():
             print(f"  Current code : {s['chapter']}")
             new_name = input("New name (blank to keep): ").strip()
             new_code = input("New code (blank to keep): ").strip()
+            new_grp  = input("New group (blank to keep): ").strip()
             updates = {}
             if new_name: updates['name'] = new_name
             if new_code: updates['chapter'] = new_code
+            if new_grp:  updates['group'] = new_grp
             if not updates:
                 print_colored("No changes made.", COLORS.YELLOW)
                 continue

@@ -876,12 +876,24 @@ def import_syllabus(filepath, merge=True, target_syllabus_id=None,
                 if existing_s:
                     sid = existing_s["id"]
                     if update_existing:
-                        new_name = s.get("name") or existing_s["name"]
-                        if existing_s["name"] != new_name:
-                            update_subject(sid, name=new_name)
+                        upd = {}
+                        changed = []
+
+                        # Check if Name changed
+                        if s.get("name") and existing_s["name"] != s["name"]:
+                            upd["name"] = s["name"]
+                            changed.append("name")
+
+                        # Check if Group changed (or was newly added)
+                        if s.get("group") is not None and (existing_s.get("group") or "") != s["group"]:
+                            upd["group"] = s["group"]
+                            changed.append("group")
+
+                        if upd:
+                            update_subject(sid, **upd)
                             subjects_updated += 1
                             _subject_change_log.append(
-                                (f"{pkey} · {s_code}", ["name"]))
+                                (f"{pkey} · {s_code}", changed))
                         else:
                             subjects_skipped += 1
                     else:
