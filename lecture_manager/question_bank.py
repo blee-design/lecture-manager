@@ -1948,6 +1948,9 @@ def _display_paper(questions, show_answers=False, context_paper=None):
                 if marks_display:
                     line += f"  {color_text(f'[{marks_display} marks]', COLORS.YELLOW)}"
                 line += f"  {color_text(f'[{qtype}]', COLORS.BLUE)}"
+                _grp = (q.get('group') or '').strip()
+                if _grp:
+                    line += f"  {color_text(f'[Group {_grp}]', COLORS.MAGENTA)}"
                 _code = (q.get('syllabus_code') or '').strip()
                 if _code:
                     line += f"  {color_text(f'[{_code}]', COLORS.MAGENTA)}"
