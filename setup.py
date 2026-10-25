@@ -123,6 +123,7 @@ setup(
         "pycodestyle",
 
         # Test
+        'pytest',
         "pytest-mock",
         "pytest-cov",
     ],
