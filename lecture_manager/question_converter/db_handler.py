@@ -54,15 +54,25 @@ def _apply_also_in(qid, also_in):
         # Parse the incoming list into a dict: {(paper, code): note}
         wanted = {}
         for raw in also_in:
-            raw = (raw or '').strip()
-            if not raw:
+            if isinstance(raw, dict):
+                # Handle JSON/exported dictionaries
+                paper_key = (raw.get('paper_key') or '').strip()
+                spec = (raw.get('code') or raw.get('syllabus_code') or '').strip()
+                note = raw.get('note')
+            else:
+                # Handle standard string format (paper_key|code|note)
+                raw = (raw or '').strip()
+                if not raw:
+                    continue
+                parts = [p.strip() for p in raw.split('|')]
+                if len(parts) < 2:
+                    continue
+                paper_key = parts[0]
+                spec      = parts[1]
+                note      = parts[2] if len(parts) >= 3 else None
+
+            if not paper_key or not spec:
                 continue
-            parts = [p.strip() for p in raw.split('|')]
-            if len(parts) < 2:
-                continue
-            paper_key = parts[0]
-            spec      = parts[1]
-            note      = parts[2] if len(parts) >= 3 else None
 
             m = _re.search(r'\(([\d.]+(?:-\d+)?)\)', spec)
             code = m.group(1) if m else spec.strip()
