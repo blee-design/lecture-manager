@@ -74,6 +74,56 @@ def readonly_guard(f):
         return f(*args, **kwargs)
     return wrapper
 
+# ============================================================
+#  XSS PROTECTION — sanitize user-supplied HTML before |safe render
+# ============================================================
+#  Replaces |safe in question templates with |safe_html.
+#  Keeps formatting (<b>, <table>, <br>, <p>, <a>, …) intact.
+#  Strips <script>, event handlers, javascript: URLs, <iframe>, <style>, etc.
+# ============================================================
+import bleach as _bleach
+from bleach.css_sanitizer import CSSSanitizer as _CSSSanitizer
+
+_SAFE_HTML_TAGS = [
+    'b', 'i', 'em', 'strong', 'u', 's', 'sub', 'sup',
+    'p', 'br', 'div', 'span',
+    'ul', 'ol', 'li',
+    'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'hr', 'blockquote', 'pre', 'code',
+    'a', 'img',
+]
+
+_SAFE_HTML_ATTRS = {
+    'a':   ['href', 'title'],
+    'img': ['src', 'alt', 'width', 'height'],
+    '*':   ['class'],
+}
+
+_SAFE_HTML_CSS = _CSSSanitizer(
+    allowed_css_properties=[
+        'color', 'background-color',
+        'font-weight', 'font-style', 'font-size', 'text-decoration',
+        'text-align', 'width', 'height', 'border',
+        'border-collapse', 'padding', 'margin',
+    ]
+)
+
+def _safe_html_filter(value):
+    if value is None:
+        return ''
+    return _bleach.clean(
+        str(value),
+        tags=_SAFE_HTML_TAGS,
+        attributes=_SAFE_HTML_ATTRS,
+        protocols=['http', 'https', 'mailto'],
+        strip=True,
+        css_sanitizer=_SAFE_HTML_CSS,
+    )
+
+app.add_template_filter(_safe_html_filter, 'safe_html')
+
+
 @app.template_filter('marks_display')
 def _marks_display_filter(q):
     from .question_bank import _format_marks_display

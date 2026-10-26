@@ -71,7 +71,7 @@
                       {% if _p and _p.content %}
                         <li class="passage-block mb-3 p-3 bg-white border rounded" style="list-style: none;">
                           <div class="fw-semibold small text-primary mb-1">📖 Reading Passage</div>
-                          <div class="small" style="white-space: pre-wrap;">{{ _p.content }}</div>
+                          <div class="small" style="white-space: pre-wrap;">{{ _p.content|safe_html }}</div>
                         </li>
                         {% set ns.last_pid = q.passage_id %}
                       {% endif %}
@@ -124,12 +124,12 @@
                           <!-- Question stem -->
                           <div class="question-text">
                             {% if q.nepali_transcription and q.english_transcription %}
-                              <span>{{ q.nepali_transcription|safe }}</span>
-                              <span class="text-muted"> ({{ q.english_transcription|safe }})</span>
+                              <span>{{ q.nepali_transcription|safe_html }}</span>
+                              <span class="text-muted"> ({{ q.english_transcription|safe_html }})</span>
                             {% elif q.nepali_transcription %}
-                              <span>{{ q.nepali_transcription|safe }}</span>
+                              <span>{{ q.nepali_transcription|safe_html }}</span>
                             {% elif q.english_transcription %}
-                              <span>{{ q.english_transcription|safe }}</span>
+                              <span>{{ q.english_transcription|safe_html }}</span>
                             {% endif %}
                           </div>
 
@@ -139,7 +139,7 @@
                               {% for opt in q.options %}
                                 <li class="option-item {% if opt.correct %}correct-option{% endif %}">
                                   <span class="option-letter">{{ 'ABCDEFGH'[loop.index0] }}.</span>
-                                  <span class="option-text">{{ opt.text|safe }}</span>
+                                  <span class="option-text">{{ opt.text|safe_html }}</span>
                                   {% if opt.correct %}<span class="correct-tick">✓</span>{% endif %}
                                 </li>
                               {% endfor %}
@@ -158,12 +158,12 @@
                             </ul>
                             {% if q.feedback_true %}
                               <div class="answer-only small text-success mt-1">
-                                <strong>If answered True:</strong> {{ q.feedback_true|safe }}
+                                <strong>If answered True:</strong> {{ q.feedback_true|safe_html }}
                               </div>
                             {% endif %}
                             {% if q.feedback_false %}
                               <div class="answer-only small text-success mt-1">
-                                <strong>If answered False:</strong> {{ q.feedback_false|safe }}
+                                <strong>If answered False:</strong> {{ q.feedback_false|safe_html }}
                               </div>
                             {% endif %}
 
@@ -227,14 +227,14 @@
                           {# ---------- ESSAY grader info (answer mode only) ---------- #}
                           {% if q.type == 'essay' and q.grader_info %}
                             <div class="answer-only small text-secondary mt-2">
-                              <strong>📝 Grader notes:</strong> {{ q.grader_info|safe }}
+                              <strong>📝 Grader notes:</strong> {{ q.grader_info|safe_html }}
                             </div>
                           {% endif %}
 
                           {# ---------- General feedback (answer mode only) ---------- #}
                           {% if q.general_feedback %}
                             <div class="answer-only alert alert-info py-2 mt-2 mb-0 small">
-                              <strong>💡 Explanation:</strong> {{ q.general_feedback|safe }}
+                              <strong>💡 Explanation:</strong> {{ q.general_feedback|safe_html }}
                             </div>
                           {% endif %}
                         </div>
