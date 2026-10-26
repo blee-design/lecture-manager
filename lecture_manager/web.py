@@ -1186,6 +1186,7 @@ def chapter_suggestions():
     return jsonify(suggestions)
 
 @app.route('/converter', methods=['GET'])
+@readonly_guard
 def converter_home():
     return render_template('converter.html')
 
