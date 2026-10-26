@@ -66,6 +66,9 @@
           <dt class="col-sm-4">Type</dt>
           <dd class="col-sm-8"><span class="badge bg-info">{{ question.type or 'essay' }}</span></dd>
 
+          <dt class="col-sm-4">DB ID</dt>
+          <dd class="col-sm-8"><code>{{ question.id }}</code></dd>
+
           <dt class="col-sm-4">Exam type</dt>
           <dd class="col-sm-8">
             {% set et = (question.exam_type or 'open') %}
@@ -321,12 +324,18 @@
         {% endif %}
 
       </div>
-      <div class="card-footer text-end">
+      <div class="card-footer d-flex justify-content-between align-items-center">
+        <small class="text-muted">
+          <i class="bi bi-terminal-fill"></i>
+          To modify: <code>lecture-manager</code> → <em>Question Bank → Update a question</em> with ID <code>{{ question.id }}</code>
+        </small>
+        <div>
         {% if back_url %}
           <a href="{{ back_url }}" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Back</a>
         {% else %}
           <a href="{{ url_for('question_list') }}" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Back to list</a>
         {% endif %}
+        </div>
       </div>
     </div>
   </div>

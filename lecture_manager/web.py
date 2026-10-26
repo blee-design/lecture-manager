@@ -4,7 +4,7 @@ import tempfile
 import os
 from werkzeug.utils import secure_filename
 import os
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, abort
 from .db import get_connection, TABLE_NAME, get_record_by_video_id
 from .file_manager import (
     get_target_path,
@@ -35,6 +35,7 @@ from .question_converter import import_from_file, get_questions, export_to_file,
 from .question_converter.exceptions import ConverterError
 from .utils import print_colored, COLORS
 from . import syllabus_config as SC
+from functools import wraps
 
 # ===== PLAYBACK CONFIGURATION =====
 PLAYBACK_SOURCE = 'mirror_only'   # Change this to your preference
@@ -43,6 +44,35 @@ PLAYBACK_SOURCE = 'mirror_only'   # Change this to your preference
 template_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'templates'))
 app = Flask(__name__, template_folder=template_dir)
 app.secret_key = os.urandom(24)
+
+# ============================================================
+#  WEB READ-ONLY MODE
+# ============================================================
+#  When True, every route that writes to the database is blocked.
+#  The web UI can still be used to *view* records. To modify data,
+#  use the CLI: `lecture-manager` (or `python lecture.py`).
+#
+#  To re-enable web writes, set WEB_READ_ONLY = False and restart.
+# ============================================================
+WEB_READ_ONLY = True
+
+_READONLY_MSG = (
+    "This web interface is read-only. "
+    "To modify data, open a terminal and run `lecture-manager` "
+    "(or `python lecture.py`) to use the CLI."
+)
+
+def readonly_guard(f):
+    """Block a write endpoint when WEB_READ_ONLY is enabled."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if WEB_READ_ONLY:
+            if request.method == 'GET':
+                flash(_READONLY_MSG, 'warning')
+                return redirect(request.referrer or url_for('index'))
+            abort(405, description=_READONLY_MSG)
+        return f(*args, **kwargs)
+    return wrapper
 
 @app.template_filter('marks_display')
 def _marks_display_filter(q):
@@ -208,6 +238,10 @@ def get_all_youtube_records():
     return rows
 
 @app.context_processor
+def _inject_readonly_flag():
+    return {'config_web_read_only': WEB_READ_ONLY}
+
+@app.context_processor
 def _inject_syllabus_helpers():
     from . import syllabus_config as SC
     from .question_bank import get_passage
@@ -263,6 +297,7 @@ def instapaper_read(id):
     return render_template('instapaper_read.html', article=article)
 
 @app.route('/lecture/upload/<int:id>', methods=['POST'])
+@readonly_guard
 def upload_to_youtube_web(id):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -471,6 +506,7 @@ def lecture_detail(id):
                            questions=questions)
 
 @app.route('/lecture/add-guided', methods=['GET', 'POST'])
+@readonly_guard
 def add_lecture_guided():
     from . import syllabus_config as SC
 
@@ -573,6 +609,7 @@ def add_lecture_guided():
     return render_template('add_lecture_guided.html', tree_json=tree_json)
 
 @app.route('/lecture/add', methods=['GET', 'POST'])
+@readonly_guard
 def add_lecture_web():
     if request.method == 'POST':
         video_id = request.form.get('video_id')
@@ -608,6 +645,7 @@ def add_lecture_web():
     return render_template('add_edit.html', record=None, title='Add Lecture')
 
 @app.route('/lecture/edit/<int:id>', methods=['GET', 'POST'])
+@readonly_guard
 def edit_lecture_web(id):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -662,6 +700,7 @@ def edit_lecture_web(id):
     return render_template('add_edit.html', record=record, title='Edit Lecture')
 
 @app.route('/lecture/delete/<int:id>', methods=['POST'])
+@readonly_guard
 def delete_lecture_web(id):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -685,6 +724,7 @@ def delete_lecture_web(id):
     return redirect(url_for('lectures'))
 
 @app.route('/organize/<int:id>', methods=['POST'])
+@readonly_guard
 def organize_lecture(id):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -703,6 +743,7 @@ def organize_lecture(id):
     return redirect(url_for('lecture_detail', id=id))
 
 @app.route('/trash/<int:id>', methods=['POST'])
+@readonly_guard
 def trash_lecture(id):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -858,6 +899,7 @@ def facebook_detail(id):
                            embed_height=embed_height)
 
 @app.route('/facebook/delete/<int:id>', methods=['POST'])
+@readonly_guard
 def facebook_delete(id):
     record = get_facebook_entry_by_id(id)
     if not record:
@@ -1148,6 +1190,7 @@ def converter_home():
     return render_template('converter.html')
 
 @app.route('/converter/import', methods=['POST'])
+@readonly_guard
 def converter_import():
     if 'file' not in request.files:
         flash('No file uploaded', 'danger')
@@ -1193,6 +1236,7 @@ def converter_import():
     return redirect(url_for('converter_home'))
 
 @app.route('/converter/export', methods=['POST'])
+@readonly_guard
 def converter_export():
     fmt = request.form.get('format', 'xml')
     source = request.form.get('source_filter', '').strip()

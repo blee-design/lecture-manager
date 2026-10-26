@@ -89,9 +89,15 @@
     <!-- ===== ACTIONS ===== -->
     <div class="mt-4">
       <a href="{{ url_for('facebook_entries') }}" class="btn btn-secondary">Back to list</a>
-      <form method="post" action="{{ url_for('facebook_delete', id=record.id) }}" style="display:inline;" onsubmit="return confirm('Delete this entry and file?')">
-        <button type="submit" class="btn btn-danger">Delete Entry &amp; File</button>
-      </form>
+    </div>
+
+    <div class="alert alert-info mt-3">
+      <i class="bi bi-terminal-fill"></i>
+      <strong>To modify this entry</strong>, run <code>lecture-manager</code> in
+      your terminal → <em>Facebook Manager</em>, then enter
+      <code>{{ record.facebook_id }}</code>.
+      <br>
+      <small class="text-muted">DB ID: <code>{{ record.id }}</code></small>
     </div>
   </div>
 </div>

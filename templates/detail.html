@@ -136,16 +136,18 @@
 
     <div class="mt-4">
       <a href="{{ url_for('lectures') }}" class="btn btn-secondary">Back to list</a>
-      <a href="{{ url_for('edit_lecture_web', id=record.id) }}" class="btn btn-warning">Edit</a>
-      <form method="post" action="{{ url_for('organize_lecture', id=record.id) }}" style="display:inline;">
-        <button type="submit" class="btn btn-success">Organize File</button>
-      </form>
-      <form method="post" action="{{ url_for('trash_lecture', id=record.id) }}" style="display:inline;" onsubmit="return confirm('Move video to trash?')">
-        <button type="submit" class="btn btn-secondary">Trash Video</button>
-      </form>
       <a href="{{ url_for('stream_video', id=record.id) }}" class="btn btn-primary" target="_blank">
         <i class="bi bi-play-circle"></i> Watch Local Video
       </a>
+    </div>
+
+    <div class="alert alert-info mt-3">
+      <i class="bi bi-terminal-fill"></i>
+      <strong>To modify this record</strong>, run <code>lecture-manager</code> in
+      your terminal → <em>Lecture Management → Update a lecture</em>, then enter
+      either <code>{{ record.video_id }}</code> or <code>{{ record.mirror_video_id or '—' }}</code>.
+      <br>
+      <small class="text-muted">DB ID: <code>{{ record.id }}</code></small>
     </div>
   </div>
 </div>
