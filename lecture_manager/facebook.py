@@ -18,7 +18,7 @@ from .facebook_manager import (
     delete_facebook_entry_with_file
 )
 
-DOWNLOAD_DIR = os.path.join(ROOT_DIR, '.downloads')
+DOWNLOAD_DIR = os.path.join(ROOT_DIR, 'facebook', '.downloads')
 PHOTO_BASE_DIR = os.path.join(DOWNLOAD_DIR, 'facebook_photos')
 
 # Organised directories

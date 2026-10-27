@@ -12,6 +12,12 @@ from .constants import DISPLAY_SEPARATOR
 
 ROOT_DIR = os.path.expanduser("~/foxCloud/office/RootData")
 TRASH_DIR = os.path.expanduser("~/.lecture_trash")
+# Temp landing zone for CLI YouTube downloads (before organizing into RootData).
+# Anchored to the project root, so it works regardless of CWD.
+DOWNLOAD_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'downloads',
+)
 
 
 # ANSI color codes

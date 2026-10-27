@@ -13,7 +13,7 @@ from collections import Counter
 from .db import get_connection, TABLE_NAME, get_record_by_any_id
 from .utils import clean_field, sanitize_filename, print_colored, color_text, COLORS
 from .youtube import extract_video_id
-from .utils import compute_md5, ROOT_DIR, clean_field, sanitize_filename, print_colored, color_text, COLORS, TRASH_DIR
+from .utils import compute_md5, ROOT_DIR, clean_field, sanitize_filename, print_colored, color_text, COLORS, TRASH_DIR, DOWNLOAD_DIR
 from .constants import DISPLAY_SEPARATOR
 from . import syllabus_config as SC
 
@@ -726,7 +726,7 @@ def organize_video(record, source_file=None, overwrite=False, interactive=True):
 
     # If no source file, try to find one (existing logic)
     if not source_file and interactive:
-        download_dir = "./downloads"
+        download_dir = DOWNLOAD_DIR
         if os.path.exists(download_dir):
             possible_files = []
             for f in os.listdir(download_dir):
@@ -1443,7 +1443,7 @@ def collect_tally_data():
         for f in files:
             if f.lower().endswith(video_exts):
                 all_files.append(os.path.join(root, f))
-    download_dir = './downloads'
+    download_dir = DOWNLOAD_DIR
     if os.path.exists(download_dir):
         for f in os.listdir(download_dir):
             if f.lower().endswith(video_exts):
@@ -2346,27 +2346,88 @@ def resolve_duplicates():
         print_colored(f"  You can restore them using option 14.", COLORS.BLUE)
     print("═" * 50)
 
-def remove_empty_directories(path, stop_root=ROOT_DIR):
+def remove_empty_directories(path, stop_root=ROOT_DIR, min_depth_below_root=2):
     """
-    Remove empty directories upwards from 'path' until reaching stop_root.
-    Ignores common hidden/system files when checking emptiness.
-    """
-    path = os.path.abspath(path)
-    stop_root = os.path.abspath(stop_root)
-    IGNORE_FILES = {'.DS_Store', 'Thumbs.db', 'desktop.ini'}
+    Remove empty directories upward from `path`, with safety guarantees.
 
-    while path != stop_root and os.path.exists(path):
+    What gets removed:
+      • The directory at `path`, if empty.
+      • Its parents, recursively, as long as each is empty.
+      • All removed directories must be strictly inside `stop_root`.
+
+    What is preserved (never removed):
+      • `stop_root` itself.
+      • Any directory at or above `min_depth_below_root` levels below
+        `stop_root`. Default 2 = the library's paper/ and subject/
+        folders survive; only leaf chapter folders (and deeper) are
+        cleaned up.
+      • Anything outside `stop_root` — e.g. `./downloads/`,
+        `~/.lecture_trash/`, or any external source path. Prevents the
+        old bug where moving a file out of `downloads/` deleted the
+        `downloads/` folder.
+
+    A directory counts as "empty" if it contains no entries besides
+    common OS metadata files (`.DS_Store`, `Thumbs.db`, `desktop.ini`).
+
+    Returns the number of directories removed.
+    """
+    if not path:
+        return 0
+
+    path      = os.path.abspath(path)
+    stop_root = os.path.abspath(stop_root)
+
+    # ---- Safety gate 1: only act on paths strictly inside stop_root ----
+    try:
+        rel = os.path.relpath(path, stop_root)
+    except ValueError:
+        # Different drives on Windows
+        return 0
+    if rel == '.' or rel == '..' or rel.startswith('..' + os.sep):
+        return 0
+
+    # ---- Safety gate 2: respect the minimum depth ----
+    if len(rel.split(os.sep)) <= min_depth_below_root:
+        return 0
+
+    IGNORE_FILES = {'.DS_Store', 'Thumbs.db', 'desktop.ini'}
+    removed = 0
+
+    while True:
+        # Recompute relative path each iteration (we walk up)
         try:
-            contents = os.listdir(path)
-            real_contents = [f for f in contents if f not in IGNORE_FILES]
-            if not real_contents:
-                os.rmdir(path)
-                print_colored(f"[✓] Removed empty directory: {path}", COLORS.BLUE)
-                path = os.path.dirname(path)
-            else:
-                break
+            rel = os.path.relpath(path, stop_root)
+        except ValueError:
+            break
+        if rel == '.' or rel.startswith('..'):
+            break
+        if len(rel.split(os.sep)) <= min_depth_below_root:
+            break
+        if not os.path.isdir(path):
+            break
+
+        try:
+            entries = os.listdir(path)
         except OSError:
             break
+
+        real_entries = [e for e in entries if e not in IGNORE_FILES]
+        if real_entries:
+            break
+
+        try:
+            os.rmdir(path)
+            print_colored(f"[✓] Removed empty directory: {path}", COLORS.BLUE)
+            removed += 1
+        except OSError:
+            break
+
+        parent = os.path.dirname(path)
+        if parent == path:
+            break
+        path = parent
+
+    return removed
 
 def clean_all_empty_directories():
     """

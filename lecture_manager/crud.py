@@ -5,14 +5,11 @@ import mysql.connector
 import glob
 from .db import get_connection, TABLE_NAME, get_record_by_video_id, get_record_by_any_id, get_any_media_record
 from .youtube import extract_video_id, fetch_youtube_title, get_embed_link, _ensure_cookie_file
-from .utils import clean_field, get_display_title, sanitize_filename, parse_lecture_title, color_text, print_colored, COLORS, normalize_syllabus_id, build_original_filename
+from .utils import clean_field, get_display_title, sanitize_filename, parse_lecture_title, color_text, print_colored, COLORS, normalize_syllabus_id, build_original_filename, DOWNLOAD_DIR
 from .file_manager import organize_video, sync_record_files, detect_paper, get_target_path, ROOT_DIR
 from .facebook_manager import add_facebook_lecture
 from .upload import upload_video_to_youtube, update_youtube_title
 from .constants import DISPLAY_SEPARATOR
-
-DOWNLOAD_DIR = './downloads'
-
 
 def _paper_choices():
     """
