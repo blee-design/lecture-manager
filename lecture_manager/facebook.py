@@ -18,12 +18,14 @@ from .facebook_manager import (
     delete_facebook_entry_with_file
 )
 
-DOWNLOAD_DIR = os.path.join(ROOT_DIR, 'facebook', '.downloads')
-PHOTO_BASE_DIR = os.path.join(DOWNLOAD_DIR, 'facebook_photos')
-
-# Organised directories
+# Final organized directories. Also used as temp staging areas:
+# temp downloads land here with an "fb_temp_*" prefix, then get
+# renamed to "<hash>.<ext>" once the MD5 is computed.
 FACEBOOK_VIDEO_DIR = os.path.join(ROOT_DIR, 'facebook', 'videos')
 FACEBOOK_PHOTO_DIR = os.path.join(ROOT_DIR, 'facebook', 'photos')
+
+DOWNLOAD_DIR = FACEBOOK_VIDEO_DIR
+PHOTO_BASE_DIR = FACEBOOK_PHOTO_DIR
 
 def _parse_netscape_cookies(path):
     """Parse a Netscape cookie file into a requests-compatible dict."""
