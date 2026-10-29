@@ -969,15 +969,32 @@ def upload_cloud_only(record, privacy_status="private",
                 "selfDeclaredMadeForKids": False,
             },
         }
+
+        # ---- Always-on upload summary (works in bulk mode too) ----
+        print()
+        print_colored("  ── Uploading to YouTube ──", COLORS.CYAN, bold=True)
+        print(f"    Title      : {title[:90]}")
+        print(f"    Privacy    : {privacy_status}")
+        print(f"    File size  : {size_mb:.1f} MB")
+        if record.get('subject'):
+            print(f"    Subject    : {record.get('subject')}")
+        if record.get('lecturer'):
+            print(f"    Lecturer   : {record.get('lecturer')}")
+        if record.get('syllabus_id'):
+            print(f"    Syllabus   : {record.get('syllabus_id')}")
+        if record.get('nepali_date'):
+            print(f"    Date       : {record.get('nepali_date')} "
+                  f"{record.get('time') or ''}")
+        print()
+
         media = MediaFileUpload(downloaded, chunksize=4 * 1024 * 1024,
                                 resumable=True)
         request = youtube.videos().insert(part="snippet,status",
                                           body=body, media_body=media)
 
-        print_colored(f"[⏳] Uploading (privacy={privacy_status})…", COLORS.BLUE)
         response = None
         if HAS_TQDM:
-            with tqdm(total=size_mb, unit='MB', desc="Uploading",
+            with tqdm(total=size_mb, unit='MB', desc="    Uploading",
                       unit_scale=True, leave=True) as pbar:
                 while response is None:
                     status, response = request.next_chunk()
@@ -986,12 +1003,25 @@ def upload_cloud_only(record, privacy_status="private",
                         pbar.update(done - pbar.n)
             print()
         else:
+            # Fallback progress when tqdm isn't installed
+            last_pct = -5
+            print("    Uploading...", end="", flush=True)
             while response is None:
                 status, response = request.next_chunk()
+                if status:
+                    pct = int(status.progress() * 100)
+                    if pct - last_pct >= 5:
+                        print(f" {pct}%", end="", flush=True)
+                        last_pct = pct
+            print(" 100%")
 
         new_video_id = response['id']
-        print_colored(f"[✓] Uploaded: https://youtu.be/{new_video_id}",
-                      COLORS.GREEN)
+        print_colored(f"[✓] Uploaded successfully", COLORS.GREEN)
+        print(f"    Video ID   : {new_video_id}")
+        print(f"    URL        : https://youtu.be/{new_video_id}")
+        print(f"    Privacy    : {privacy_status}")
+        print(f"    Channel    : https://studio.youtube.com/video/{new_video_id}/edit")
+        print()
 
     except Exception as e:
         _mark_upload_failed(source_video_id)
