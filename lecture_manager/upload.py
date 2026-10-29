@@ -1,4 +1,3 @@
-
 import os
 import pickle
 import sys
@@ -848,3 +847,249 @@ def upload_video_to_youtube(record, title=None, description=None, privacy_status
         cursor.close()
         conn.close()
         return False, f"❌ Upload failed: {e}", None
+
+# ---------------------------------------------------------------------------
+# Cloud-only upload — download to temp, push to YouTube, delete temp.
+# ---------------------------------------------------------------------------
+def upload_cloud_only(record, privacy_status="private",
+                      interactive=True, auto_confirm=False):
+    """
+    Download a video to a temp directory, upload it to YouTube (private),
+    then delete the temp file. No local copy is kept.
+
+    Returns (success, message, new_video_id_or_None).
+    """
+    import tempfile
+    import shutil
+    from .youtube import _ensure_cookie_file
+    import yt_dlp
+
+    youtube = _get_authenticated_service()
+    if not youtube:
+        return False, "Authentication failed.", None
+
+    source_video_id = record.get('video_id')
+    if not source_video_id:
+        return False, "No video_id in record.", None
+
+    # Refuse if the record already has a local file — we don't want to
+    # orphan it by clearing file_hash behind the user's back.
+    if record.get('file_hash'):
+        return (False,
+                "Record already has a local file. Use 'Batch upload missing "
+                "mirrors' (Menu 7 → 5) for STATE_LOCAL records.",
+                None)
+
+    # ----- Build title + description (same shape as normal upload) -----
+    from .utils import build_youtube_title
+    title = build_youtube_title(record) or f"Lecture {source_video_id}"
+    if len(title) > 100:
+        title = title[:100]
+
+    desc_lines = [
+        f"Syllabus ID  : {record.get('syllabus_id', 'N/A')}",
+        f"Subject      : {record.get('subject', 'N/A')}",
+        f"Chapter      : {record.get('chapter', 'N/A')}",
+        f"Lecturer     : {record.get('lecturer', 'N/A')}",
+        f"Nepali Date  : {record.get('nepali_date', 'N/A')}",
+        f"Time         : {record.get('time', 'N/A')}",
+        f"Video Title  : {record.get('video_title', 'N/A')}",
+        "",
+        "📚 Uploaded via Lecture Manager (cloud-only)",
+        f"🔗 Original Video ID: {source_video_id}",
+    ]
+    description = "\n".join(desc_lines)
+
+    # ----- Confirm -----
+    if interactive and not auto_confirm:
+        print()
+        print("─" * 60)
+        print_colored("  CLOUD-ONLY UPLOAD (no local copy kept)", COLORS.CYAN, bold=True)
+        print("─" * 60)
+        print(f"  Source    : {source_video_id}")
+        print(f"  Title     : {title[:80]}")
+        print(f"  Syllabus  : {record.get('syllabus_id', '')}")
+        print(f"  Subject   : {record.get('subject', '')}")
+        print(f"  Privacy   : {privacy_status}")
+        print("─" * 60)
+        print_colored("  The video is downloaded to a temp folder, uploaded,",
+                      COLORS.BLUE)
+        print_colored("  and the temp file is deleted immediately after.",
+                      COLORS.BLUE)
+        if input(color_text("Proceed? (y/n): ", COLORS.MAGENTA)).strip().lower() != 'y':
+            return False, "Cancelled by user.", None
+
+    # ----- Download to temp -----
+    _ensure_cookie_file()
+    cookie_opt = ({'cookiefile': 'cookies.txt'}
+                  if os.path.exists('cookies.txt')
+                  else {'cookiesfrombrowser': ('edge',)})
+
+    temp_dir = tempfile.mkdtemp(prefix="lm_cloud_upload_")
+    try:
+        ydl_opts = {
+            'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
+            'format': ('bestvideo[height<=720]+bestaudio/'
+                       'best[height<=720]/bestvideo+bestaudio/best'),
+            'quiet': False,
+            'no_warnings': True,
+            'ignoreerrors': True,
+            **cookie_opt,
+        }
+        print_colored("[⏳] Downloading to temp…", COLORS.BLUE)
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([f"https://www.youtube.com/watch?v={source_video_id}"])
+
+        downloaded = None
+        for root, _, files in os.walk(temp_dir):
+            for f in files:
+                downloaded = os.path.join(root, f)
+                break
+            if downloaded:
+                break
+
+        if not downloaded or not os.path.exists(downloaded):
+            return False, "Download produced no file.", None
+
+        size_mb = os.path.getsize(downloaded) / (1024 * 1024)
+        print_colored(f"[✓] Downloaded: {os.path.basename(downloaded)} "
+                      f"({size_mb:.1f} MB)", COLORS.GREEN)
+
+        # ----- Upload -----
+        body = {
+            "snippet": {
+                "title": title[:100],
+                "description": description[:5000],
+                "tags": ["lecture", "education",
+                         (record.get('subject') or '')[:30]],
+            },
+            "status": {
+                "privacyStatus": privacy_status,
+                "madeForKids": False,
+                "selfDeclaredMadeForKids": False,
+            },
+        }
+        media = MediaFileUpload(downloaded, chunksize=4 * 1024 * 1024,
+                                resumable=True)
+        request = youtube.videos().insert(part="snippet,status",
+                                          body=body, media_body=media)
+
+        print_colored(f"[⏳] Uploading (privacy={privacy_status})…", COLORS.BLUE)
+        response = None
+        if HAS_TQDM:
+            with tqdm(total=size_mb, unit='MB', desc="Uploading",
+                      unit_scale=True, leave=True) as pbar:
+                while response is None:
+                    status, response = request.next_chunk()
+                    if status:
+                        done = status.resumable_progress / (1024 * 1024)
+                        pbar.update(done - pbar.n)
+            print()
+        else:
+            while response is None:
+                status, response = request.next_chunk()
+
+        new_video_id = response['id']
+        print_colored(f"[✓] Uploaded: https://youtu.be/{new_video_id}",
+                      COLORS.GREEN)
+
+    except Exception as e:
+        _mark_upload_failed(source_video_id)
+        return False, f"Upload failed: {e}", None
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        print_colored("[✓] Temp directory cleaned.", COLORS.GREEN)
+
+    # ----- Record in DB; clear local refs (cloud-only) -----
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"""
+            UPDATE {TABLE_NAME}
+            SET mirror_video_id      = COALESCE(mirror_video_id, %s),
+                youtube_upload_id    = %s,
+                youtube_upload_status = 'uploaded',
+                youtube_title_updated = 1,
+                file_hash            = NULL,
+                original_filename    = NULL
+            WHERE video_id = %s
+        """, (new_video_id, new_video_id, source_video_id))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print_colored(f"[!] DB update failed: {e}", COLORS.RED)
+    finally:
+        cursor.close()
+        conn.close()
+
+    return True, f"Uploaded (cloud-only): https://youtu.be/{new_video_id}", new_video_id
+
+
+def _mark_upload_failed(video_id):
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            UPDATE {TABLE_NAME}
+            SET youtube_upload_status = 'failed'
+            WHERE video_id = %s
+        """, (video_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Bulk cloud-only upload — process N records, one at a time.
+# Ideal for the "10-15 videos per day" workflow.
+# ---------------------------------------------------------------------------
+def bulk_cloud_upload(limit=15, privacy="private"):
+    """Upload up to `limit` pending records in cloud-only mode."""
+    from .db import get_connection, TABLE_NAME
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(f"""
+        SELECT * FROM {TABLE_NAME}
+        WHERE youtube_upload_id IS NULL
+          AND mirror_video_id   IS NULL
+          AND (file_hash IS NULL OR file_hash = '')
+        ORDER BY id ASC
+        LIMIT %s
+    """, (limit,))
+    records = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    if not records:
+        print_colored("[i] No pending uploads.", COLORS.YELLOW)
+        return
+
+    print_colored(f"[i] {len(records)} records queued for cloud-only upload.",
+                  COLORS.BLUE)
+    if input(color_text("Proceed? (y/n): ", COLORS.MAGENTA)).strip().lower() != 'y':
+        return
+
+    ok_count = fail_count = 0
+    for i, rec in enumerate(records, 1):
+        print(f"\n[{i}/{len(records)}] {rec['video_id']} — "
+              f"{(rec.get('subject') or '')[:40]}")
+        try:
+            success, msg, _ = upload_cloud_only(rec, privacy_status=privacy,
+                                                interactive=False,
+                                                auto_confirm=True)
+            if success:
+                ok_count += 1
+                print_colored(f"  ✓ {msg}", COLORS.GREEN)
+            else:
+                fail_count += 1
+                print_colored(f"  ✗ {msg}", COLORS.RED)
+        except Exception as e:
+            fail_count += 1
+            print_colored(f"  ✗ Exception: {e}", COLORS.RED)
+
+    print_colored(
+        f"\n[✓] Cloud-only batch complete: {ok_count} uploaded, "
+        f"{fail_count} failed.", COLORS.GREEN)

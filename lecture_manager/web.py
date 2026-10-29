@@ -1,5 +1,3 @@
-# web.py
-
 import tempfile
 import os
 from werkzeug.utils import secure_filename
@@ -36,10 +34,35 @@ from .question_converter.exceptions import ConverterError
 from .utils import print_colored, COLORS
 from . import syllabus_config as SC
 from functools import wraps
+from .storage_manager import get_record_storage_state
 
 # ===== PLAYBACK CONFIGURATION =====
 PLAYBACK_SOURCE = 'mirror_only'   # Change this to your preference
 # ==================================
+
+# ===== PLAYER CONFIGURATION =====
+# PRIMARY_PLAYER — how the primary (uploaded / mirror) video is played:
+#   'auto'    → local file if present, else YouTube embed     ← recommended
+#   'youtube' → always use a YouTube embed
+#   'h5p'     → use H5P_EMBED_URL_TEMPLATE below
+#   'local'   → always use local (warns if missing)
+#
+# SECONDARY_PLAYER — how the original video is played (or hidden):
+#   'youtube' → normal YouTube embed                          ← default
+#   'none'    → don't show the secondary player
+PRIMARY_PLAYER   = 'auto'
+SECONDARY_PLAYER = 'youtube'
+
+# When PRIMARY_PLAYER == 'h5p', this template is used. {video_id} is
+# replaced with the mirror / uploaded video ID.
+# Example: 'https://your-h5p-server.com/h5p/embed/123?youtube={video_id}'
+H5P_EMBED_URL_TEMPLATE = None
+# ================================
+
+# PRIMARY_PLAYER   = 'h5p'
+# SECONDARY_PLAYER = 'youtube'
+# H5P_EMBED_URL_TEMPLATE = 'https://your-h5p-server.com/h5p/embed/123?youtube={video_id}'
+
 
 template_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'templates'))
 app = Flask(__name__, template_folder=template_dir)
@@ -506,36 +529,73 @@ def lecture_detail(id):
         flash('Record not found', 'danger')
         return redirect(url_for('lectures'))
 
-    mirror_id = record.get('mirror_video_id')
-    original_id = record['video_id']
+    # -------- Determine what's actually available --------
+    has_local    = bool(record.get('file_hash'))
+    has_mirror   = bool(record.get('mirror_video_id'))
+    has_original = bool(record.get('video_id'))
 
-    using_mirror = False
-    embed_vid = None
+    # Locate the local file if hash is set
+    local_file_path = None
+    if has_local:
+        from .storage_manager import _locate_local_file
+        local_file_path = _locate_local_file(record)
+        if not local_file_path:
+            has_local = False    # hash in DB but file gone — treat as cloud
+
+    # Mirror (private, uploaded) vs original (public)
+    mirror_id   = record.get('mirror_video_id')
+    original_id = record.get('video_id')
+
+    # -------- Decide what each player should show --------
+    # Primary source: prefer local → mirror → original
+    primary_kind = None      # 'local' | 'youtube' | 'h5p' | None
+    primary_vid  = None
+    primary_url  = None
+
+    if PRIMARY_PLAYER == 'local':
+        if local_file_path:
+            primary_kind = 'local'
+        elif mirror_id:
+            primary_kind, primary_vid = 'youtube', mirror_id
+        elif original_id:
+            primary_kind, primary_vid = 'youtube', original_id
+    elif PRIMARY_PLAYER == 'youtube':
+        primary_vid = mirror_id or original_id
+        primary_kind = 'youtube' if primary_vid else None
+    elif PRIMARY_PLAYER == 'h5p':
+        primary_vid = mirror_id or original_id
+        if primary_vid and H5P_EMBED_URL_TEMPLATE:
+            primary_kind = 'h5p'
+            primary_url = H5P_EMBED_URL_TEMPLATE.replace('{video_id}', primary_vid)
+        elif primary_vid:
+            # fall back to YouTube if template not set
+            primary_kind = 'youtube'
+    else:  # 'auto'
+        if local_file_path:
+            primary_kind = 'local'
+        elif mirror_id:
+            primary_kind, primary_vid = 'youtube', mirror_id
+        elif original_id:
+            primary_kind, primary_vid = 'youtube', original_id
+
+    if primary_kind == 'youtube' and primary_vid:
+        primary_url = f"https://www.youtube.com/embed/{primary_vid}"
+
+    # Secondary source: the original video, unless it's already the primary
+    secondary_url = None
+    if (SECONDARY_PLAYER != 'none'
+            and original_id
+            and original_id != primary_vid
+            and not (primary_kind == 'local' and has_mirror is False and
+                     original_id == primary_vid)):
+        secondary_url = f"https://www.youtube.com/embed/{original_id}"
+
+    # Legacy config_status — still shown in the template
     config_status = None
-
-    if PLAYBACK_SOURCE == 'mirror_only':
-        if mirror_id:
-            embed_vid = mirror_id
-            using_mirror = True
-            config_status = 'ok'
-        else:
-            embed_vid = None
-            config_status = 'missing_mirror'
-    elif PLAYBACK_SOURCE == 'original_only':
-        embed_vid = original_id
-        using_mirror = False
-        config_status = 'ok'
-    else:  # prefer_mirror
-        if mirror_id:
-            embed_vid = mirror_id
-            using_mirror = True
-            config_status = 'ok'
-        else:
-            embed_vid = original_id
-            using_mirror = False
-            config_status = 'using_original'
-
-    embed_url = f"https://www.youtube.com/embed/{embed_vid}" if embed_vid else None
+    if not (has_local or has_mirror or has_original):
+        config_status = 'no_media'
+    elif PLAYBACK_SOURCE == 'mirror_only' and not has_mirror:
+        config_status = 'missing_mirror'
 
     # Cross-linked questions
     from .file_manager import parse_syllabus_id
@@ -546,14 +606,62 @@ def lecture_detail(id):
     if paper_key and subj_code and chap_code:
         questions = find_questions_for_chapter(paper_key, subj_code, chap_code)
 
-    return render_template('detail.html',
-                           record=record,
-                           embed_url=embed_url,
-                           embed_vid=embed_vid,
-                           using_mirror=using_mirror,
-                           config_status=config_status,
-                           playback_config=PLAYBACK_SOURCE,
-                           questions=questions)
+    return render_template(
+        'detail.html',
+        record=record,
+        # Primary
+        primary_kind=primary_kind,
+        primary_vid=primary_vid,
+        primary_url=primary_url,
+        # Secondary
+        secondary_url=secondary_url,
+        # Availability flags
+        has_local=has_local,
+        has_mirror=has_mirror,
+        has_original=has_original,
+        local_file_path=local_file_path,
+        # Legacy / template compat
+        embed_url=primary_url if primary_kind == 'youtube' else None,
+        embed_vid=primary_vid,
+        using_mirror=(primary_vid == mirror_id and bool(mirror_id)),
+        config_status=config_status,
+        playback_config=PLAYBACK_SOURCE,
+        primary_player=PRIMARY_PLAYER,
+        secondary_player=SECONDARY_PLAYER,
+        questions=questions,
+    )
+
+@app.route('/lecture/<int:id>/download', methods=['POST'])
+def download_from_cloud(id):
+    """
+    Download the video for this record back to local disk.
+    Safe operation — allowed even in read-only mode because it only
+    ADDS a local file; it doesn't modify existing data.
+    """
+    from .crud import download_video
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE id = %s", (id,))
+    record = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if not record:
+        flash('Record not found', 'danger')
+        return redirect(url_for('lectures'))
+
+    if record.get('file_hash'):
+        flash('Local file already exists — nothing to download.', 'info')
+        return redirect(url_for('lecture_detail', id=id))
+
+    # Prefer the private mirror copy if it exists, else the original
+    vid_to_dl = record.get('mirror_video_id') or record.get('video_id')
+    try:
+        download_video(record, video_id_to_download=vid_to_dl, silent=True)
+        flash('Video downloaded and organised locally.', 'success')
+    except Exception as e:
+        flash(f'Download failed: {e}', 'danger')
+    return redirect(url_for('lecture_detail', id=id))
 
 @app.route('/lecture/add-guided', methods=['GET', 'POST'])
 @readonly_guard
@@ -886,7 +994,12 @@ def stream_video(id):
                 break
 
     if not file_path or not os.path.exists(file_path):
-        flash('Video file not found on disk.', 'warning')
+        # Cloud-only record — send the user back to the detail page where
+        # they'll see the embedded YouTube / H5P player.
+        if record.get('youtube_upload_id') or record.get('mirror_video_id'):
+            flash('No local file — playing from cloud instead.', 'info')
+        else:
+            flash('Video file not found on disk.', 'warning')
         return redirect(url_for('lecture_detail', id=id))
 
     return send_file(file_path, as_attachment=False)

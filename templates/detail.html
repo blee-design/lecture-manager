@@ -1,4 +1,3 @@
-<!-- detail.html -->
 {% extends "base.html" %}
 {% block content %}
 <h2>Lecture Details</h2>
@@ -13,12 +12,28 @@
 
       <dt class="col-sm-3">Mirror ID</dt>
       <dd class="col-sm-9">
-        {% if record.mirror_video_id %}
+        {% if has_mirror %}
           {{ record.mirror_video_id }}
           <span class="badge bg-success">available</span>
         {% else %}
           <span class="text-muted">Not available</span>
           <span class="badge bg-secondary">no mirror</span>
+        {% endif %}
+      </dd>
+
+      <dt class="col-sm-3">Storage</dt>
+      <dd class="col-sm-9">
+        {% if has_local and has_mirror %}
+          <span class="badge bg-success">Local + Cloud</span>
+        {% elif has_local %}
+          <span class="badge bg-primary">Local only</span>
+        {% elif has_mirror or has_original %}
+          <span class="badge bg-info text-dark">Cloud only ☁️</span>
+        {% else %}
+          <span class="badge bg-secondary">No media</span>
+        {% endif %}
+        {% if record.file_hash %}
+          <code class="ms-2 small">{{ record.file_hash[:8] }}…</code>
         {% endif %}
       </dd>
 
@@ -65,46 +80,118 @@
       <dd class="col-sm-9">{{ record.notes or '' }}</dd>
     </dl>
 
+    {# ============================================================ #}
+    {#  PRIMARY MEDIA                                               #}
+    {# ============================================================ #}
     <div class="mt-4">
-      <h5>Playback source:</h5>
-      {% if config_status == 'missing_mirror' %}
+      <h5>🎬 Playback</h5>
+
+      {% if primary_kind == 'local' and has_local %}
+        <div class="alert alert-success py-2">
+          <i class="bi bi-hdd-fill"></i>
+          <strong>Playing from local disk.</strong>
+          <code class="ms-2 small">{{ local_file_path }}</code>
+        </div>
+        <video controls class="w-100 rounded"
+               src="{{ url_for('stream_video', id=record.id) }}"
+               poster="">
+        </video>
+
+      {% elif primary_kind == 'h5p' %}
+        <div class="alert alert-info py-2">
+          <i class="bi bi-box"></i>
+          Interactive H5P player
+          <small class="text-muted">({{ primary_player }})</small>
+        </div>
+        <div class="ratio ratio-16x9">
+          <iframe src="{{ primary_url }}" frameborder="0" allowfullscreen></iframe>
+        </div>
+
+      {% elif primary_kind == 'youtube' and primary_vid %}
+        <div class="alert alert-info py-2">
+          <i class="bi bi-youtube"></i>
+          Playing from YouTube
+          {% if primary_vid == record.mirror_video_id %}
+            <span class="badge bg-info">private mirror</span>
+          {% else %}
+            <span class="badge bg-secondary">original</span>
+          {% endif %}
+        </div>
+        <div class="ratio ratio-16x9">
+          <iframe
+            src="{{ primary_url }}"
+            frameborder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowfullscreen></iframe>
+        </div>
+
+      {% else %}
         <div class="alert alert-warning">
           <i class="bi bi-exclamation-triangle"></i>
-          <strong>Mirror ID is not available</strong> for this lecture, but your config is set to <code>mirror_only</code>.
-          <br>
-          <small>You can change the <code>PLAYBACK_SOURCE</code> variable in <code>web.py</code> to <code>prefer_mirror</code> or <code>original_only</code>.</small>
+          <strong>No playable media.</strong>
+          This record has no local file and no cloud upload.
         </div>
-      {% elif config_status == 'using_original' %}
-        <div class="alert alert-info">
-          <i class="bi bi-info-circle"></i>
-          <strong>Using original video</strong> (no mirror available). Config: <code>{{ playback_config }}</code>
-        </div>
-      {% else %}
-        <span class="badge {% if using_mirror %}bg-info{% else %}bg-secondary{% endif %}">
-          {% if using_mirror %}
-            Mirror (ID: {{ embed_vid }})
-          {% else %}
-            Original (ID: {{ embed_vid }})
-          {% endif %}
-        </span>
       {% endif %}
 
-      {% if embed_url %}
-        <div class="ratio ratio-16x9 mt-2">
-          <iframe src="{{ embed_url }}" frameborder="0" allowfullscreen></iframe>
+      {# ============================================================ #}
+      {#  SECONDARY MEDIA (original public video)                     #}
+      {# ============================================================ #}
+      {% if secondary_url %}
+      <div class="mt-4 border-top pt-3">
+        <h6 class="text-muted">
+          <i class="bi bi-link-45deg"></i> Secondary — original video
+        </h6>
+        <div class="ratio ratio-16x9">
+          <iframe
+            src="{{ secondary_url }}"
+            frameborder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowfullscreen></iframe>
         </div>
-      {% else %}
-        <div class="alert alert-danger mt-2">
-          <i class="bi bi-x-circle"></i>
-          <strong>No video can be played.</strong>
-          {% if config_status == 'missing_mirror' %}
-            Please add a mirror ID to this lecture or change the playback config.
-          {% endif %}
-        </div>
+      </div>
       {% endif %}
     </div>
 
-    {# ---------- Cross-linked questions ---------- #}
+    {# ============================================================ #}
+    {#  ACTIONS                                                     #}
+    {# ============================================================ #}
+    <div class="mt-4 d-flex flex-wrap gap-2">
+      {% if has_local %}
+        <a href="{{ url_for('stream_video', id=record.id) }}"
+           class="btn btn-primary" target="_blank">
+          <i class="bi bi-play-circle"></i> Play local file
+        </a>
+      {% elif has_mirror or has_original %}
+        <form method="post"
+              action="{{ url_for('download_from_cloud', id=record.id) }}"
+              class="d-inline">
+          <button type="submit" class="btn btn-success">
+            <i class="bi bi-cloud-download"></i>
+            Download for offline use
+          </button>
+        </form>
+      {% endif %}
+
+      {% if has_mirror %}
+        <a href="https://youtu.be/{{ record.mirror_video_id }}"
+           class="btn btn-outline-info" target="_blank">
+          <i class="bi bi-youtube"></i> Open mirror on YouTube
+        </a>
+      {% endif %}
+      {% if has_original and record.video_id != record.mirror_video_id %}
+        <a href="https://youtu.be/{{ record.video_id }}"
+           class="btn btn-outline-secondary" target="_blank">
+          <i class="bi bi-youtube"></i> Open original on YouTube
+        </a>
+      {% endif %}
+      <a href="{{ url_for('lectures') }}" class="btn btn-outline-secondary">
+        Back to list
+      </a>
+    </div>
+
+    {# ============================================================ #}
+    {#  QUESTIONS                                                   #}
+    {# ============================================================ #}
     {% if questions %}
     <div class="mt-4 border-top pt-3">
       <h5 class="text-success">
@@ -115,18 +202,20 @@
       <div class="list-group">
         {% for q in questions %}
         <a href="{{ url_for('question_detail', id=q.id) }}"
-           class="list-group-item list-group-item-action d-flex justify-content-between align-items-start">
-          <div>
-            <span class="badge bg-secondary me-2">Q{{ q.question_number or '?' }}</span>
-            {% if q.marks %}<span class="badge bg-warning text-dark me-2">{{ q.marks }} marks</span>{% endif %}
-            <span class="badge bg-info text-dark me-2">{{ q.type or 'essay' }}</span>
-            <span class="small">
-              {% set preview = q.nepali_transcription or q.english_transcription or '' %}
-              {{ preview[:80] }}{% if preview|length > 80 %}…{% endif %}
-            </span>
-          </div>
-          <div class="text-muted small">
-            {{ q.question_date or '' }}
+           class="list-group-item list-group-item-action">
+          <div class="d-flex justify-content-between">
+            <div>
+              <span class="badge bg-secondary me-2">Q{{ q.question_number or '?' }}</span>
+              {% if q.marks %}
+                <span class="badge bg-warning text-dark me-2">{{ q.marks }} marks</span>
+              {% endif %}
+              <span class="badge bg-info text-dark me-2">{{ q.type or 'essay' }}</span>
+              <span class="small">
+                {% set preview = q.nepali_transcription or q.english_transcription or '' %}
+                {{ preview[:80] }}{% if preview|length > 80 %}…{% endif %}
+              </span>
+            </div>
+            <div class="text-muted small">{{ q.question_date or '' }}</div>
           </div>
         </a>
         {% endfor %}
@@ -134,18 +223,11 @@
     </div>
     {% endif %}
 
-    <div class="mt-4">
-      <a href="{{ url_for('lectures') }}" class="btn btn-secondary">Back to list</a>
-      <a href="{{ url_for('stream_video', id=record.id) }}" class="btn btn-primary" target="_blank">
-        <i class="bi bi-play-circle"></i> Watch Local Video
-      </a>
-    </div>
-
     <div class="alert alert-info mt-3">
       <i class="bi bi-terminal-fill"></i>
-      <strong>To modify this record</strong>, run <code>lecture-manager</code> in
-      your terminal → <em>Lecture Management → Update a lecture</em>, then enter
-      either <code>{{ record.video_id }}</code> or <code>{{ record.mirror_video_id or '—' }}</code>.
+      <strong>To modify this record</strong>, run <code>lecture-manager</code>
+      → <em>Lecture Management → Update a lecture</em> with
+      <code>{{ record.video_id }}</code>.
       <br>
       <small class="text-muted">DB ID: <code>{{ record.id }}</code></small>
     </div>

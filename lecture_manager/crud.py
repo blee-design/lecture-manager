@@ -375,28 +375,56 @@ def add_lecture():
         print_colored("[!] Record added but could not retrieve. Skipping further actions.", COLORS.RED)
         return
 
-    # ---- Step 1: Download the video (if user wants) ----
-    if input(color_text("Download now? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y':
+    # ---- Step 1: Choose media handling ----
+    print()
+    print_colored("  HOW TO HANDLE THE VIDEO FILE?", COLORS.CYAN, bold=True)
+    print("  ────────────────────────────────────────────────")
+    print("  l. Download to local disk      (current default)")
+    print("  c. Upload cloud-only           (no local copy kept)")
+    print("  b. Both (download + upload)")
+    print("  s. Skip media (record only)")
+    print("  ────────────────────────────────────────────────")
+    print_colored("  Cloud-only is ideal for large backlogs — the video",
+                  COLORS.BLUE)
+    print_colored("  is downloaded to a temp folder, uploaded, then the",
+                  COLORS.BLUE)
+    print_colored("  temp file is deleted automatically.", COLORS.BLUE)
+    print("  ────────────────────────────────────────────────")
+    media_choice = input(
+        color_text("  Choose (l/c/b/s, Enter=l): ", COLORS.MAGENTA)
+    ).strip().lower() or 'l'
+
+    if media_choice not in ('l', 'c', 'b', 's'):
+        media_choice = 'l'
+
+    # ---- Step 2: Act on the choice ----
+    if media_choice in ('l', 'b'):
         download_video(record, silent=True)
-        # Re‑fetch the record after download (file_hash and original_filename may have been updated)
         record = get_record_by_video_id(video_id)
         if not record:
-            print_colored("[!] Could not re‑fetch record after download.", COLORS.RED)
+            print_colored("[!] Could not re-fetch record after download.", COLORS.RED)
             return
 
-    # ---- Step 2: Upload to YouTube (if user wants and file exists) ----
-    if record.get('file_hash'):
-        # File exists (or was downloaded earlier)
-        if input(color_text("Upload this lecture to YouTube now? (y/n): ", COLORS.MAGENTA)).strip().lower() == 'y':
-            from .upload import upload_video_to_youtube
-            print_colored("[i] Uploading to YouTube...", COLORS.BLUE)
-            success, msg, vid = upload_video_to_youtube(record)
-            if success:
-                print_colored(f"[✓] {msg}", COLORS.GREEN)
-            else:
-                print_colored(f"[!] {msg}", COLORS.RED)
-    else:
-        print_colored("[i] Video file not found on disk. Please download it first to upload.", COLORS.YELLOW)
+    if media_choice in ('c', 'b'):
+        from .upload import upload_cloud_only, upload_video_to_youtube
+        # If we already have a local file ('b' path), use the normal
+        # upload (keeps the file). Otherwise cloud-only.
+        if media_choice == 'b' and record.get('file_hash'):
+            print_colored("[i] Uploading to YouTube (local file kept)…", COLORS.BLUE)
+            success, msg, _ = upload_video_to_youtube(
+                record, privacy_status="private", interactive=False)
+        else:
+            success, msg, _ = upload_cloud_only(
+                record, privacy_status="private",
+                interactive=False, auto_confirm=True)
+        if success:
+            print_colored(f"[✓] {msg}", COLORS.GREEN)
+        else:
+            print_colored(f"[!] {msg}", COLORS.RED)
+
+    if media_choice == 's':
+        print_colored("[i] Skipped media handling. "
+                      "Record saved without local file.", COLORS.BLUE)
 
 def view_all():
     conn = get_connection()

@@ -27,7 +27,11 @@ from .question_bank import unified_question_menu
 from .instapaper import instapaper_menu
 from .question_converter import create_tables, import_from_file, get_questions, delete_question, export_to_file, run_conversion
 from .question_converter.exceptions import ConverterError
-
+from .storage_manager import (
+    stats_summary, list_cloud_only_records, list_both_records,
+    list_local_only_records, list_no_media_records,
+    purge_local_file_for_record,
+)
 
 
 web_server_process = None
@@ -938,6 +942,187 @@ def chapters_submenu(SC, reload_paper_cache, papers):
         else:
             print_colored("[!] Invalid option.", COLORS.RED)
 
+def storage_manager_menu():
+    """
+    Manage local vs cloud-only storage.
+    Safe by design: purging requires a cloud backup.
+    """
+    while True:
+        stats = stats_summary()
+        print()
+        print_colored("  ☁️   STORAGE MANAGER", COLORS.CYAN, bold=True)
+        print_colored("  " + "─" * 58, COLORS.CYAN)
+
+        print(f"  📊 Current state")
+        print(f"     Total records            : {stats.get('total', 0)}")
+        print(f"     With local file          : {stats.get('with_local', 0)}")
+        print(f"     With cloud upload        : {stats.get('with_cloud', 0)}")
+        print_colored(
+            f"     Both (safe to purge)     : {stats.get('both_count', 0)}",
+            COLORS.GREEN)
+        print_colored(
+            f"     Cloud-only               : {stats.get('cloud_only_count', 0)}",
+            COLORS.BLUE)
+        print_colored(
+            f"     No media (record only)   : {stats.get('no_media_count', 0)}",
+            COLORS.YELLOW)
+        print_colored("  " + "─" * 58, COLORS.CYAN)
+
+        print("   1. Show cloud-only records")
+        print("   2. Show records with both local + cloud")
+        print("   3. Show local-only records")
+        print("   4. Show records with no media")
+        print("   5. " + color_text("Purge local files (keep cloud copies)",
+                                    COLORS.RED))
+        print("   6. Bulk cloud-only upload (batch, e.g. 15/day)")
+        print("   7. Download one record from cloud back to local")
+        print("   0. Back to previous menu")
+        print_colored("  " + "─" * 58, COLORS.CYAN)
+
+        choice = input(color_text("  Choose (0-7): ", COLORS.MAGENTA)).strip()
+
+        if choice == '0':
+            return
+
+        elif choice in ('1', '2', '3', '4'):
+            if choice == '1':
+                rows = list_cloud_only_records()
+                label = "CLOUD-ONLY"
+                colour = COLORS.BLUE
+            elif choice == '2':
+                rows = list_both_records()
+                label = "BOTH (local + cloud)"
+                colour = COLORS.GREEN
+            elif choice == '3':
+                rows = list_local_only_records()
+                label = "LOCAL-ONLY"
+                colour = COLORS.YELLOW
+            else:
+                rows = list_no_media_records()
+                label = "NO MEDIA"
+                colour = COLORS.RED
+
+            print(f"\n  ── {label}: {len(rows)} record(s) ──")
+            if not rows:
+                print_colored("  (none)", COLORS.YELLOW)
+            for r in rows[:30]:
+                print(f"    {r.get('syllabus_id', ''):<16}  "
+                      f"{(r.get('subject') or '')[:28]:<30}  "
+                      f"{r['video_id']}")
+            if len(rows) > 30:
+                print(f"    … and {len(rows) - 30} more")
+            input("\nPress Enter to continue...")
+
+        elif choice == '5':
+            # Purge local files for records with both
+            rows = list_both_records()
+            if not rows:
+                print_colored("\n  [i] No records with both local + cloud.",
+                              COLORS.YELLOW)
+                input("Press Enter to continue...")
+                continue
+
+            print()
+            print_colored(f"  {len(rows)} record(s) have both local + cloud.",
+                          COLORS.CYAN)
+            print("  Purging removes the local file, keeps the DB row and the")
+            print("  cloud copy. You can re-download any of them later.")
+            print()
+            print("   1. Dry run (show what would be deleted, no changes)")
+            print("   2. Purge ALL")
+            print("   3. Review one by one")
+            print("   0. Cancel")
+            sub = input(color_text("  Choose (0-3): ", COLORS.MAGENTA)).strip()
+
+            if sub == '0':
+                continue
+
+            if sub == '1':
+                total_mb = 0
+                for r in rows:
+                    ok, msg = purge_local_file_for_record(r, dry_run=True)
+                    print(f"    {r.get('syllabus_id', ''):<16}  {msg}")
+                print_colored("\n  [i] Dry run complete — nothing was deleted.",
+                              COLORS.BLUE)
+                input("\nPress Enter to continue...")
+                continue
+
+            if sub == '2':
+                confirm = input(color_text(
+                    f"\n  Type 'yes' to purge {len(rows)} local files: ",
+                    COLORS.RED)).strip().lower()
+                if confirm != 'yes':
+                    print_colored("  Cancelled.", COLORS.YELLOW)
+                    continue
+                ok_count = fail_count = 0
+                for r in rows:
+                    ok, msg = purge_local_file_for_record(r)
+                    if ok:
+                        ok_count += 1
+                    else:
+                        fail_count += 1
+                        print_colored(f"  [!] {r.get('syllabus_id','')}: {msg}",
+                                      COLORS.RED)
+                print_colored(f"\n[✓] Purged {ok_count} files. "
+                              f"{fail_count} failed.", COLORS.GREEN)
+                input("\nPress Enter to continue...")
+                continue
+
+            if sub == '3':
+                for i, r in enumerate(rows, 1):
+                    print(f"\n  [{i}/{len(rows)}] {r.get('syllabus_id', '')} "
+                          f"— {r.get('subject', '')}")
+                    ans = input(color_text(
+                        "    Purge? (y / n / q to quit): ",
+                        COLORS.MAGENTA)).strip().lower()
+                    if ans == 'q':
+                        break
+                    if ans == 'y':
+                        ok, msg = purge_local_file_for_record(r)
+                        if ok:
+                            print_colored(f"    [✓] {msg}", COLORS.GREEN)
+                        else:
+                            print_colored(f"    [!] {msg}", COLORS.RED)
+                input("\nPress Enter to continue...")
+
+        elif choice == '6':
+            from .upload import bulk_cloud_upload
+            print()
+            try:
+                limit = int(input(color_text(
+                    "How many records to upload this batch? (default 15): ",
+                    COLORS.MAGENTA)).strip() or '15')
+            except ValueError:
+                limit = 15
+            bulk_cloud_upload(limit=limit, privacy="private")
+            input("\nPress Enter to continue...")
+
+        elif choice == '7':
+            ident = input(color_text(
+                "Enter video ID / syllabus ID / DB ID: ",
+                COLORS.MAGENTA)).strip()
+            if not ident:
+                continue
+            from .db import get_record_by_any_id
+            rec = get_record_by_any_id(ident)
+            if not rec:
+                print_colored("[!] Record not found.", COLORS.RED)
+                continue
+            if rec.get('file_hash'):
+                print_colored("[i] Local file already exists.", COLORS.YELLOW)
+                continue
+            from .crud import download_video
+            vid = rec.get('mirror_video_id') or rec['video_id']
+            try:
+                download_video(rec, video_id_to_download=vid, silent=True)
+                print_colored("[✓] Downloaded and organised.", COLORS.GREEN)
+            except Exception as e:
+                print_colored(f"[!] Download failed: {e}", COLORS.RED)
+            input("\nPress Enter to continue...")
+
+        else:
+            print_colored("[!] Invalid option.", COLORS.RED)
+
 def main():
     load_or_create_config()
     create_table()
@@ -1167,6 +1352,7 @@ def main():
             ("📊 Tally database with video files", tally_db_with_files),
             ("🔎 Scan for duplicate video files", scan_duplicates),
             ("✅ Auto-resolve duplicate video files", resolve_duplicates),
+            ("☁️ Storage Manager (local / cloud-only)", storage_manager_menu),
         ],
         '4': [
             ("⚙️ Edit database configuration", edit_config),
