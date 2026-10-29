@@ -768,16 +768,31 @@ def _download_photos(url, output_dir=None):
     print_colored("[i] Note: Photo albums are NOT tracked in the database.", COLORS.YELLOW)
 
     try:
+        # Timestamp BEFORE download — only files newer than this count
+        import time as _time
+        download_start = _time.time() - 5   # 5s buffer for clock skew
+
         subprocess.run(cmd, check=True)
 
-        # Collect what gallery-dl produced and route it through the normal pipeline
+        # Collect ONLY files created/modified during this download.
+        # Without this filter, os.walk would pick up photos from every
+        # previous album on disk and merge them into this one.
         image_exts = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
         downloaded = []
+        skipped_old = 0
         for root, _, files in os.walk(output_dir):
             for f in files:
                 if f.lower().endswith(image_exts):
-                    downloaded.append(os.path.join(root, f))
+                    fp = os.path.join(root, f)
+                    if os.path.getmtime(fp) >= download_start:
+                        downloaded.append(fp)
+                    else:
+                        skipped_old += 1
 
+        if skipped_old:
+            print_colored(
+                f"[i] Skipping {skipped_old} photo(s) from previous downloads.",
+                COLORS.BLUE)
         if downloaded:
             _process_album_files(downloaded, url, uploader=None, probe=None)
 
