@@ -1,5 +1,3 @@
-# file_compressor.py
-
 import os
 import subprocess
 import shutil
@@ -138,7 +136,10 @@ def compress_file(filepath, record=None):
 
         cursor.execute("SELECT file_hash FROM hash_cache WHERE file_path = %s AND status = 'active'", (filepath,))
         row = cursor.fetchone()
+        updated = False
+
         if row:
+            # YouTube file — tracked in hash_cache and youtube_lectures
             old_hash = row[0]
             cursor.execute(f"UPDATE {TABLE_NAME} SET file_hash = %s WHERE file_hash = %s", (new_hash, old_hash))
             cursor.execute("""
@@ -147,8 +148,35 @@ def compress_file(filepath, record=None):
                 WHERE file_path = %s
             """, (new_filepath, new_hash, filepath))
             conn.commit()
-        else:
-            print_colored(f"  [WARN] No cache entry for {basename}, DB not updated.", COLORS.YELLOW)
+            updated = True
+
+        if not updated:
+            # Try facebook_entries — filename stem IS the file_hash
+            old_hash_from_name = os.path.splitext(basename)[0]
+            cursor.execute(
+                "SELECT id, title FROM facebook_entries WHERE file_hash = %s",
+                (old_hash_from_name,)
+            )
+            fb_row = cursor.fetchone()
+            if fb_row:
+                cursor.execute(
+                    "UPDATE facebook_entries SET file_hash = %s WHERE id = %s",
+                    (new_hash, fb_row[0])
+                )
+                conn.commit()
+                print_colored(
+                    f"  [✓] Updated facebook_entries.file_hash "
+                    f"({old_hash_from_name[:8]}… → {new_hash[:8]}…)",
+                    COLORS.GREEN
+                )
+                updated = True
+
+        if not updated:
+            print_colored(
+                f"  [WARN] {basename} not linked to any DB row — file renamed "
+                f"but DB unchanged. Run cleanup later.",
+                COLORS.YELLOW
+            )
 
         cursor.close()
         conn.close()
