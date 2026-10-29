@@ -1575,8 +1575,9 @@ def tally_db_with_files():
         if not (missing or orphan or mismatched) and unresolved == 0:
             print_colored("\n✅ Everything is perfectly synced!", COLORS.GREEN)
 
-        # ---- Facebook summary ----
+        # ---- Facebook summary (also expose combined orphan list) ----
         fb_tally = collect_facebook_tally_data()
+        all_orphans = list(orphan) + list(fb_tally.get('orphan') or [])
         if fb_tally['total_entries'] > 0 or fb_tally['orphan'] or fb_tally['missing']:
             print("\n" + "─" * 50)
             print_colored("  📘 FACEBOOK", COLORS.MAGENTA, bold=True)
@@ -1618,11 +1619,11 @@ def tally_db_with_files():
             input("\nPress Enter to continue...")
 
         elif choice == '2':
-            if orphan:
-                print("\n--- ORPHAN FILES ---")
-                for i, fp in enumerate(orphan):
-                    if i >= 20:
-                        print(f"  ... and {len(orphan)-20} more")
+            if all_orphans:
+                print(f"\n--- ORPHAN FILES ({len(all_orphans)}) ---")
+                for i, fp in enumerate(all_orphans):
+                    if i >= 30:
+                        print(f"  ... and {len(all_orphans)-30} more")
                         break
                     print(f"  {fp}")
             else:
@@ -1672,14 +1673,14 @@ def tally_db_with_files():
             input("\nPress Enter to continue...")
 
         elif choice == '5':
-            if not orphan:
+            if not all_orphans:
                 print("No orphan files.")
                 input("\nPress Enter to continue...")
                 continue
-            confirm = input(color_text(f"Move {len(orphan)} orphan files to trash? (y/n): ", COLORS.MAGENTA)).strip().lower()
+            confirm = input(color_text(f"Move {len(all_orphans)} orphan files to trash? (y/n): ", COLORS.MAGENTA)).strip().lower()
             if confirm == 'y':
                 count = 0
-                for fp in orphan:
+                for fp in all_orphans:
                     try:
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                         base = os.path.basename(fp)
