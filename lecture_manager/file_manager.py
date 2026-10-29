@@ -1,5 +1,3 @@
-# file_manager.py – with tally loop
-
 import os
 import shutil
 import re
@@ -59,7 +57,8 @@ def _chapter_lookup():
                    c.name
             FROM chapters c
             JOIN subjects s ON s.id = c.subject_id
-            WHERE c.active = 1 AND s.active = 1
+            JOIN papers p ON p.paper_key = s.paper
+            WHERE c.active = 1 AND s.active = 1 AND p.active = 1
         """)
         cache = {}
         for row in cursor.fetchall():
@@ -115,7 +114,12 @@ def _subject_lookup():
     if _SUBJECT_KEY_TO_NAME is None:
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT paper, chapter, name FROM subjects WHERE active = 1")
+        cursor.execute("""
+            SELECT s.paper, s.chapter, s.name
+            FROM subjects s
+            JOIN papers p ON p.paper_key = s.paper
+            WHERE s.active = 1 AND p.active = 1
+        """)
         cache = {}
         for row in cursor.fetchall():
             paper = row.get('paper')
@@ -136,7 +140,12 @@ def _subject_name_lookup():
     if _SUBJECT_NAME_TO_PAPER is None:
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT name, paper FROM subjects WHERE active = 1")
+        cursor.execute("""
+            SELECT s.name, s.paper
+            FROM subjects s
+            JOIN papers p ON p.paper_key = s.paper
+            WHERE s.active = 1 AND p.active = 1
+        """)
         cache = {}
         for row in cursor.fetchall():
             if not row.get('paper'):
@@ -599,6 +608,13 @@ def detect_paper(subject, syllabus_id=None, chapter=None, interactive=True):
             continue
 
         candidates = set(base)
+        # Defensive: drop paper keys that aren't in the active papers dict.
+        # This can happen if a paper was deactivated but its subjects or
+        # chapters still reference it (inconsistent DB state).
+        candidates = {c for c in candidates if c in papers}
+        if not candidates:
+            continue
+
         # Each weaker signal narrows the candidate set ONLY when it
         # produces a non-empty intersection. If a signal would wipe out
         # every candidate, it is skipped — so the fallback is "show all
