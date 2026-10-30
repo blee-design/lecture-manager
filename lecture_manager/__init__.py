@@ -6,4 +6,4 @@ YouTube Lecture Manager package.
 
 from .facebook_manager import add_facebook_entry, get_facebook_entry_by_id, list_facebook_entries, delete_facebook_entry
 
-__version__ = "4.1.0-0"
+__version__ = "5.0.0-11"
