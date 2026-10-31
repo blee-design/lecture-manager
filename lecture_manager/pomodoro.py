@@ -13,6 +13,7 @@ from datetime import datetime
 import os
 import re
 from .db import get_connection
+from .utils import print_colored, COLORS
 import signal
 signal.signal(signal.SIGINT, signal.SIG_IGN)
 
@@ -2161,6 +2162,76 @@ class PomodoroApp:
         self.update_display()
         self.clear_state()
 
+    def show_completion_popup(self, completed_phase):
+        """Custom attractive popup for when a session finishes."""
+        import random
+
+        popup = tk.Toplevel(self.root)
+        popup.overrideredirect(True) # Removes the ugly OS title bar and borders
+        popup.configure(bg="#1a1d28")
+        popup.attributes('-topmost', True) # Force it to the front
+
+        # --- Calculate exact center of the screen relative to main window ---
+        self.root.update_idletasks()
+        width, height = 450, 320
+        x = self.root.winfo_rootx() + (self.root.winfo_width() // 2) - (width // 2)
+        y = self.root.winfo_rooty() + (self.root.winfo_height() // 2) - (height // 2)
+        popup.geometry(f"{width}x{height}+{x}+{y}")
+
+        # --- Add a nice glowing border ---
+        border_frame = tk.Frame(popup, bg="#6366f1", bd=1)
+        border_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+
+        main_frame = tk.Frame(border_frame, bg="#1a1d28")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # --- Icon and Title ---
+        tk.Label(main_frame, text="🍅", font=("Helvetica", 48), bg="#1a1d28").pack(pady=(20, 5))
+
+        title = "Break Complete!" if completed_phase != "work" else "Session Complete!"
+        tk.Label(main_frame, text=title, font=("Helvetica Neue", 22, "bold"),
+                 bg="#1a1d28", fg="#e8eaf0").pack()
+
+        # --- Subtitle ---
+        session_type = self.type_var.get().strip() or 'study'
+        sub_text = f"Back to work!" if completed_phase != "work" else f"Type: {session_type.capitalize()}   •   {self.config['work_min']} mins"
+        tk.Label(main_frame, text=sub_text, font=("Helvetica Neue", 12),
+                 bg="#1a1d28", fg="#8b92a5").pack(pady=(5, 15))
+
+        # --- Quote Box ---
+        quote = random.choice(QUOTES) if QUOTES else "Great work!"
+        quote_frame = tk.Frame(main_frame, bg="#232734", padx=15, pady=15)
+        quote_frame.pack(fill=tk.X, padx=40)
+
+        tk.Label(quote_frame, text=f"“{quote}”", font=("Helvetica Neue", 11, "italic"),
+                 bg="#232734", fg="#a5b4fc", wraplength=320, justify=tk.CENTER).pack()
+
+        # --- Close / Continue Button ---
+        btn_frame = tk.Frame(main_frame, bg="#1a1d28")
+        btn_frame.pack(pady=20)
+
+        def close_popup():
+            popup.destroy()
+            # Ensure the main window regains focus
+            self.root.focus_force()
+            self.root.lift()
+
+        continue_btn = tk.Button(btn_frame, text="Awesome! Continue", command=close_popup,
+                                 font=("Helvetica Neue", 11, "bold"), bg="#6366f1", fg="white",
+                                 activebackground="#7c7ff2", activeforeground="white",
+                                 relief="flat", bd=0, padx=20, pady=8, cursor="hand2")
+        continue_btn.pack()
+
+        # Allow pressing Enter to close
+        popup.bind('<Return>', lambda e: close_popup())
+
+        # Center the popup and grab focus
+        popup.focus_force()
+        continue_btn.focus_set()
+
+        # This pauses the timer thread logic until the user clicks the button
+        self.root.wait_window(popup)
+
     def timer_complete(self):
         self.timer_running = False
         self.start_btn.config(state=tk.NORMAL)
@@ -2198,15 +2269,7 @@ class PomodoroApp:
                 # ============================================================
                 # 2. NOW show the completion notification
                 # ============================================================
-                import random
-                quote = random.choice(QUOTES) if QUOTES else "Great work!"
-                session_type_shown = self.type_var.get().strip() or 'study'
-                messagebox.showinfo(
-                    "🎉 Session Complete!",
-                    f"Great work!\n\n"
-                    f"Type: {session_type_shown}   •   {self.config['work_min']} min\n\n"
-                    f"{quote}"
-                )
+                self.show_completion_popup(completed_phase)
 
                 # ============================================================
                 # 3. Post-notification: badges, counters, phase switch
@@ -2241,11 +2304,9 @@ class PomodoroApp:
             self.update_display()
             self.save_state()
 
-            # Only show the "phase completed" popup for BREAKS.
-            # For work sessions, the "Session Complete!" popup above already
-            # told the user — showing a second dialog on top of it is redundant.
+            # Only show the popup for BREAKS.
             if completed_phase != "work":
-                messagebox.showinfo("Pomodoro", f"{completed_phase.capitalize()} phase completed!")
+                self.show_completion_popup(completed_phase)
 
         except Exception as e:
             print(f"[ERROR] timer_complete() crashed: {e}")
@@ -2918,66 +2979,23 @@ class PomodoroApp:
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
 
-        cursor.execute("""
-            SELECT DATE(timestamp) as date, SUM(duration_min) as total_min, COUNT(*) as sessions
-            FROM pomodoro_log
-            WHERE phase = 'work' AND timestamp >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-            GROUP BY DATE(timestamp)
-            ORDER BY date
-        """)
-        trend_data = cursor.fetchall()
-        dates = [row['date'].strftime('%m-%d') for row in trend_data] if trend_data else []
-        minutes = [float(row['total_min']) for row in trend_data] if trend_data else []
+        print("\n" + "═" * 60)
+        print_colored("  📊 POMODORO STATS ENGINE STARTING", COLORS.CYAN, bold=True)
+        print("═" * 60)
 
+        print_colored("[DB] Fetching lifetime totals...", COLORS.BLUE)
         cursor.execute("""
-            SELECT
-                COALESCE(s.name, l.subject) AS subject,
-                SUM(l.duration_min) AS total_min,
-                COUNT(*) AS sessions
-            FROM pomodoro_log l
-            LEFT JOIN subjects s ON s.id = l.subject_id
-            WHERE l.phase = 'work'
-              AND (l.subject IS NOT NULL AND l.subject != '')
-            GROUP BY COALESCE(s.name, l.subject)
-            ORDER BY total_min DESC
+            SELECT COUNT(*) as total_sessions, SUM(duration_min) as total_minutes, AVG(duration_min) as avg_session
+            FROM pomodoro_log WHERE phase = 'work'
         """)
-        subject_data = cursor.fetchall()
-        subjects = [row['subject'] for row in subject_data if row['total_min'] > 0]
-        subject_mins = [float(row['total_min']) for row in subject_data if row['total_min'] is not None and float(row['total_min']) > 0]
+        totals = cursor.fetchone() or {'total_sessions': 0, 'total_minutes': 0, 'avg_session': 0}
 
-        cursor.execute("""
-            SELECT
-                COALESCE(t.task_text, 'Uncategorized Task') as task_text,
-                SUM(l.duration_min) as total_min
-            FROM pomodoro_log l
-            LEFT JOIN pomodoro_tasks t ON l.task_id = t.id
-            WHERE l.phase = 'work'
-            GROUP BY l.task_id
-            ORDER BY total_min DESC
-            LIMIT 5
-        """)
-        task_data = cursor.fetchall()
-        tasks = [row['task_text'] for row in task_data if row['total_min'] > 0]
-        task_mins = [float(row['total_min']) for row in task_data if row['total_min'] is not None and float(row['total_min']) > 0]
-
-        cursor.execute("""
-            SELECT HOUR(timestamp) as hour, COUNT(*) as sessions
-            FROM pomodoro_log
-            WHERE phase = 'work'
-            GROUP BY HOUR(timestamp)
-            ORDER BY hour
-        """)
-        hourly_data = cursor.fetchall()
-        hour_labels = [f"{row['hour']}:00" for row in hourly_data]
-        hourly_sessions = [row['sessions'] for row in hourly_data]
-
-        cursor.execute("""
-            SELECT DISTINCT DATE(timestamp) as date
-            FROM pomodoro_log
-            WHERE phase = 'work'
-            ORDER BY date DESC
-        """)
+        print_colored("[DB] Fetching active study days for streak...", COLORS.BLUE)
+        cursor.execute("SELECT DISTINCT DATE(timestamp) as date FROM pomodoro_log WHERE phase = 'work' ORDER BY date DESC")
         days_list = [row['date'] for row in cursor.fetchall()]
+        cursor.close()
+        conn.close()
+
         streak = 0
         if days_list:
             current = datetime.now().date()
@@ -2987,343 +3005,326 @@ class PomodoroApp:
                 while check_date in days_list:
                     streak += 1
                     check_date -= timedelta(days=1)
-            else:
-                streak = 0
 
-        cursor.execute("""
-            SELECT
-                COUNT(*) as total_sessions,
-                SUM(duration_min) as total_minutes,
-                AVG(duration_min) as avg_session
-            FROM pomodoro_log
-            WHERE phase = 'work'
-        """)
-        totals = cursor.fetchone()
-        if totals:
-            totals = {
-                'total_sessions': totals['total_sessions'] or 0,
-                'total_minutes': totals['total_minutes'] or 0,
-                'avg_session': totals['avg_session'] or 0
-            }
-        else:
-            totals = {'total_sessions': 0, 'total_minutes': 0, 'avg_session': 0}
-
-        cursor.close()
-        conn.close()
-
+        print_colored("[UI] Building statistics window...", COLORS.GREEN)
         stats_win = tk.Toplevel(self.root)
         stats_win.title("📊 Overall Study Analytics")
         stats_win.geometry("1000x700")
         stats_win.configure(bg="#1e2a3a")
 
-        # ---- NEW: Track figures and close them on window destroy ----
         figures = []
-
         def close_figures():
             for fig in figures:
                 plt.close(fig)
-
         stats_win.bind('<Destroy>', lambda e: close_figures())
 
         notebook = ttk.Notebook(stats_win)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        badge_tab = ttk.Frame(notebook)
-        notebook.add(badge_tab, text="🏅 Badges")
+        def make_tab(name):
+            frame = ttk.Frame(notebook)
+            notebook.add(frame, text=name)
+            lbl = ttk.Label(frame, text="Waiting to load...", font=("Helvetica", 12), foreground="#8b92a5")
+            lbl.pack(expand=True)
+            return frame, lbl
 
-        # Query badges
-        conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT b.badge_name, b.description, b.icon, (u.id IS NOT NULL) as earned
-            FROM pomodoro_badges b
-            LEFT JOIN user_badges u ON b.badge_name = u.badge_name
-            ORDER BY b.badge_name
-        """)
-        badge_rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
+        def set_status(lbl, text, terminal_color=COLORS.CYAN):
+            """Updates the UI label and prints to terminal simultaneously."""
+            try:
+                lbl.config(text=text)
+                lbl.update_idletasks() # Force the GUI to redraw instantly
+            except tk.TclError:
+                pass # Label was destroyed
+            print_colored(f"      ↳ {text}", terminal_color)
 
-        # Display as a grid
-        badge_frame = ttk.Frame(badge_tab, padding="10")
-        badge_frame.pack(fill=tk.BOTH, expand=True)
-        row_count = 0
-        col_count = 0
-        for b in badge_rows:
-            # Earned badges get a distinct style; locked ones stay muted
-            style_name = 'Earned.TFrame' if b['earned'] else 'Locked.TFrame'
+        tab_badge, lbl_badge = make_tab("🏅 Badges")
+        tab_summary, lbl_summary = make_tab("🔥 Summary & Streak")
+        tab_week, lbl_week = make_tab("📅 Week/Month")
+        tab2, lbl_30day = make_tab("📈 30-Day Trend")
+        tab_monthly, lbl_monthly = make_tab("📆 Monthly Breakdown")
+        tab3, lbl_subject = make_tab("🧠 Subject Breakdown")
+        tab_type, lbl_type = make_tab("📊 Session Types")
+        tab4, lbl_task = make_tab("📋 Top Tasks")
+        tab5, lbl_peak = make_tab("⏰ Peak Hours")
+        tab6, lbl_insights = make_tab("💡 Insights")
 
-            frame = ttk.Frame(badge_frame, relief="solid", borderwidth=1, style=style_name)
-            frame.grid(row=row_count, column=col_count, padx=5, pady=5, sticky="nsew")
+        # ---- RENDER FUNCTIONS ----
 
-            ttk.Label(frame, text=b['icon'], font=("Helvetica", 24)).pack(pady=2)
-            ttk.Label(frame, text=b['badge_name'].replace('_', ' ').title(),
-                        font=("Helvetica", 10, "bold")).pack()
-            ttk.Label(frame, text=b['description'],
-                        font=("Helvetica", 8), wraplength=120).pack(pady=2)
+        def render_badge_tab():
+            set_status(lbl_badge, "Querying earned badges from database...", COLORS.BLUE)
+            conn = get_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("""
+                SELECT b.badge_name, b.description, b.icon, (u.id IS NOT NULL) as earned
+                FROM pomodoro_badges b LEFT JOIN user_badges u ON b.badge_name = u.badge_name ORDER BY b.badge_name
+            """)
+            badge_rows = cursor.fetchall()
+            cursor.close(); conn.close()
 
-            col_count += 1
-            if col_count >= 4:
-                col_count = 0
-                row_count += 1
+            set_status(lbl_badge, f"Rendering {len(badge_rows)} badges...", COLORS.GREEN)
+            for w in tab_badge.winfo_children(): w.destroy()
 
-        tab1 = ttk.Frame(notebook)
-        notebook.add(tab1, text="🔥 Summary & Streak")
+            badge_frame = ttk.Frame(tab_badge, padding="10")
+            badge_frame.pack(fill=tk.BOTH, expand=True)
+            r, c = 0, 0
+            for b in badge_rows:
+                style_name = 'Earned.TFrame' if b['earned'] else 'Locked.TFrame'
+                frame = ttk.Frame(badge_frame, relief="solid", borderwidth=1, style=style_name)
+                frame.grid(row=r, column=c, padx=5, pady=5, sticky="nsew")
+                ttk.Label(frame, text=b['icon'], font=("Helvetica", 24)).pack(pady=2)
+                ttk.Label(frame, text=b['badge_name'].replace('_', ' ').title(), font=("Helvetica", 10, "bold")).pack()
+                ttk.Label(frame, text=b['description'], font=("Helvetica", 8), wraplength=120).pack(pady=2)
+                c += 1
+                if c >= 4: c = 0; r += 1
 
-        summary_text = f"""
-        🏆 CURRENT STUDY STREAK: {streak} days!
-        {'🔥 Keep going! You are on fire!' if streak >= 5 else '💪 Consistency is key. Start a new streak today!'}
+        def render_summary_tab():
+            set_status(lbl_summary, "Calculating lifetime summary and daily progress...", COLORS.BLUE)
+            set_status(lbl_summary, "Rendering summary UI...", COLORS.GREEN)
+            for w in tab_summary.winfo_children(): w.destroy()
 
-        📊 LIFETIME TOTALS:
-        • Total Sessions : {totals['total_sessions'] if totals else 0}
-        • Total Time     : {totals['total_minutes'] // 60}h {totals['total_minutes'] % 60}m
-        • Avg Session    : {totals['avg_session']:.0f} minutes
-        """
+            summary_text = f"""
+            🏆 CURRENT STUDY STREAK: {streak} days!
+            {'🔥 Keep going! You are on fire!' if streak >= 5 else '💪 Consistency is key. Start a new streak today!'}
 
-        ttk.Label(tab1, text=summary_text, font=("Helvetica", 12), justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=20)
+            📊 LIFETIME TOTALS:
+            • Total Sessions : {totals['total_sessions']}
+            • Total Time     : {totals['total_minutes'] // 60}h {totals['total_minutes'] % 60}m
+            • Avg Session    : {totals['avg_session']:.0f} minutes
+            """
+            ttk.Label(tab_summary, text=summary_text, font=("Helvetica", 12), justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=20)
 
-        goal = self.config.get("daily_goal", 12)
-        today_count = self.count_today_pomodoros()
-        progress_pct = min(100, (today_count / goal) * 100)
+            goal = self.config.get("daily_goal", 12)
+            today_count = self.count_today_pomodoros()
+            progress_pct = min(100, (today_count / goal) * 100) if goal > 0 else 0
 
-        ttk.Label(tab1, text=f"🎯 Today's Progress: {today_count} / {goal} Pomodoros", font=("Helvetica", 11)).pack(anchor=tk.W, padx=20)
-        progress_bar = ttk.Progressbar(tab1, length=400, mode='determinate', maximum=goal, value=today_count)
-        progress_bar.pack(anchor=tk.W, padx=20, pady=10)
-        ttk.Label(tab1, text=f"{progress_pct:.0f}% Complete", font=("Helvetica", 10)).pack(anchor=tk.W, padx=20)
+            ttk.Label(tab_summary, text=f"🎯 Today's Progress: {today_count} / {goal} Pomodoros", font=("Helvetica", 11)).pack(anchor=tk.W, padx=20)
+            progress_bar = ttk.Progressbar(tab_summary, length=400, mode='determinate', maximum=goal, value=today_count)
+            progress_bar.pack(anchor=tk.W, padx=20, pady=10)
+            ttk.Label(tab_summary, text=f"{progress_pct:.0f}% Complete", font=("Helvetica", 10)).pack(anchor=tk.W, padx=20)
 
-        # ---- Week/Month tab with bar chart ----
-        tab_week = ttk.Frame(notebook)
-        notebook.add(tab_week, text="📅 Week/Month")
+        def render_week_tab():
+            set_status(lbl_week, "Querying this week's daily totals...", COLORS.BLUE)
+            daily = self.get_weekly_daily_totals()
+            week_days = list(daily.keys())
+            week_minutes = list(daily.values())
 
-        # Fetch weekly daily data
-        daily = self.get_weekly_daily_totals()
-        week_days = list(daily.keys())
-        week_minutes = list(daily.values())
+            set_status(lbl_week, "Drawing weekly bar chart...", COLORS.GREEN)
+            for w in tab_week.winfo_children(): w.destroy()
 
-        # Create a bar chart
-        fig_week, ax_week = plt.subplots(figsize=(8, 4))
-        figures.append(fig_week)
-        ax_week.bar(week_days, week_minutes, color='#4CAF50')
-        ax_week.set_title('Daily Study Time (Current Week)')
-        ax_week.set_ylabel('Minutes')
-        ax_week.set_xlabel('Day')
-        # Add value labels on top of bars
-        for i, v in enumerate(week_minutes):
-            if v > 0:
-                ax_week.text(i, v + 2, str(v), ha='center', fontsize=9)
+            fig_week, ax_week = plt.subplots(figsize=(8, 4))
+            figures.append(fig_week)
+            ax_week.bar(week_days, week_minutes, color='#4CAF50')
+            ax_week.set_title('Daily Study Time (Current Week)')
+            ax_week.set_ylabel('Minutes')
+            for i, v in enumerate(week_minutes):
+                if v > 0: ax_week.text(i, v + 2, str(v), ha='center', fontsize=9)
 
-        canvas_week = FigureCanvasTkAgg(fig_week, master=tab_week)
-        canvas_week.draw()
-        canvas_week.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            canvas_week = FigureCanvasTkAgg(fig_week, master=tab_week)
+            canvas_week.draw()
+            canvas_week.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # Text summary (use week and month stats)
-        week = self.get_week_stats()
-        month = self.get_month_stats()
+            week = self.get_week_stats()
+            month = self.get_month_stats()
+            week_h = (week['total_min'] or 0) // 60; week_m = (week['total_min'] or 0) % 60
+            month_h = (month['total_min'] or 0) // 60; month_m = (month['total_min'] or 0) % 60
+            summary = f"📊 WEEK (Sun–Sat): {week_h}h {week_m}m | {week['sessions']} sessions\n📆 MONTH: {month_h}h {month_m}m | {month['sessions']} sessions"
+            ttk.Label(tab_week, text=summary, font=("Helvetica", 10), justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=10)
 
-        week_total = week['total_min'] or 0
-        month_total = month['total_min'] or 0
+        def render_30day_tab():
+            set_status(lbl_30day, "Querying 30-day trend data...", COLORS.BLUE)
+            conn = get_connection(); cursor = conn.cursor(dictionary=True)
+            cursor.execute("""
+                SELECT DATE(timestamp) as date, SUM(duration_min) as total_min
+                FROM pomodoro_log WHERE phase = 'work' AND timestamp >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+                GROUP BY DATE(timestamp) ORDER BY date
+            """)
+            trend = cursor.fetchall(); cursor.close(); conn.close()
 
-        week_h = week_total // 60
-        week_m = week_total % 60
-        week_goal_h = self.config.get('weekly_goal_hours', 10)
-        week_pct = (week_total / (week_goal_h * 60)) * 100 if week_goal_h > 0 else 0
+            if trend:
+                set_status(lbl_30day, f"Plotting {len(trend)} days of data...", COLORS.GREEN)
+                for w in tab2.winfo_children(): w.destroy()
 
-        month_h = month_total // 60
-        month_m = month_total % 60
-        month_goal_h = self.config.get('monthly_goal_hours', 40)
-        month_pct = (month_total / (month_goal_h * 60)) * 100 if month_goal_h > 0 else 0
+                dates = [r['date'].strftime('%m-%d') for r in trend]
+                mins = [float(r['total_min']) for r in trend]
+                fig1, ax1 = plt.subplots(figsize=(10, 4))
+                figures.append(fig1)
+                ax1.bar(dates, mins, color='#4CAF50')
+                ax1.set_title('Daily Study Time (Last 30 Days)'); ax1.set_ylabel('Minutes')
+                plt.xticks(rotation=45)
+                canvas1 = FigureCanvasTkAgg(fig1, master=tab2)
+                canvas1.draw(); canvas1.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            else:
+                set_status(lbl_30day, "No data found for the last 30 days.", COLORS.YELLOW)
 
-        summary = f"""
-        📊 WEEK (Sun–Sat): {week_h}h {week_m}m  |  {week['sessions']} sessions  |  {week_pct:.1f}% of {week_goal_h}h goal
-        📆 MONTH: {month_h}h {month_m}m  |  {month['sessions']} sessions  |  {month_pct:.1f}% of {month_goal_h}h goal
-        """
-        ttk.Label(tab_week, text=summary, font=("Helvetica", 10), justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=10)
+        def render_monthly_tab():
+            set_status(lbl_monthly, "Aggregating monthly study data...", COLORS.BLUE)
+            conn = get_connection(); cursor = conn.cursor(dictionary=True)
+            cursor.execute("""
+                SELECT DATE_FORMAT(timestamp, '%Y-%m') AS month, SUM(duration_min) AS total_min,
+                COUNT(*) AS sessions, COUNT(DISTINCT DATE(timestamp)) AS days_active
+                FROM pomodoro_log WHERE phase = 'work' GROUP BY month ORDER BY month
+            """)
+            monthly_data = cursor.fetchall(); cursor.close(); conn.close()
 
-        tab2 = ttk.Frame(notebook)
-        notebook.add(tab2, text="📈 30-Day Trend")
-        if dates:
-            fig1, ax1 = plt.subplots(figsize=(10, 4))
-            figures.append(fig1)
-            ax1.bar(dates, minutes, color='#4CAF50')
-            ax1.set_title('Daily Study Time (Last 30 Days)')
-            ax1.set_ylabel('Minutes Studied')
-            ax1.set_xlabel('Date')
-            plt.xticks(rotation=45)
-            canvas1 = FigureCanvasTkAgg(fig1, master=tab2)
-            canvas1.draw()
-            canvas1.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        else:
-            ttk.Label(tab2, text="No data available for the last 30 days.").pack(pady=50)
+            if monthly_data and any(r['total_min'] > 0 for r in monthly_data):
+                set_status(lbl_monthly, f"Rendering {len(monthly_data)} months of data...", COLORS.GREEN)
+                for w in tab_monthly.winfo_children(): w.destroy()
 
-        # ---- Monthly Breakdown tab ----
-        tab_monthly = ttk.Frame(notebook)
-        notebook.add(tab_monthly, text="📆 Monthly Breakdown")
+                months = [r['month'] for r in monthly_data]
+                hrs = [r['total_min'] / 60 for r in monthly_data]
+                fig_monthly, ax_monthly = plt.subplots(figsize=(10, 4))
+                figures.append(fig_monthly)
+                ax_monthly.bar(months, hrs, color='#FFA500')
+                ax_monthly.set_title('Total Study Time per Month'); ax_monthly.set_ylabel('Hours')
+                plt.xticks(rotation=45)
+                canvas_monthly = FigureCanvasTkAgg(fig_monthly, master=tab_monthly)
+                canvas_monthly.draw(); canvas_monthly.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT
-                DATE_FORMAT(timestamp, '%Y-%m') AS month,
-                SUM(duration_min) AS total_min,
-                COUNT(*) AS sessions,
-                COUNT(DISTINCT DATE(timestamp)) AS days_active
-            FROM pomodoro_log
-            WHERE phase = 'work'
-            GROUP BY month
-            ORDER BY month
-        """)
-        monthly_data = cursor.fetchall()
-        cursor.close()
-        conn.close()
+                summary = "📊 Monthly Summary:\n"
+                for r in monthly_data:
+                    avg = r['total_min'] / r['days_active'] if r['days_active'] else 0
+                    summary += f"  {r['month']}: {r['total_min']//60}h {r['total_min']%60}m | {r['sessions']} sess | {r['days_active']} days | avg {avg:.0f} min/d\n"
+                ttk.Label(tab_monthly, text=summary, font=("Helvetica", 10), justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=10)
+            else:
+                set_status(lbl_monthly, "No monthly data available yet.", COLORS.YELLOW)
 
-        if monthly_data and any(row['total_min'] > 0 for row in monthly_data):
-            # Prepare data for bar chart
-            months = [row['month'] for row in monthly_data]
-            total_hours = [row['total_min'] / 60 for row in monthly_data]
+        def render_subject_tab():
+            set_status(lbl_subject, "Querying subject breakdown...", COLORS.BLUE)
+            conn = get_connection(); cursor = conn.cursor(dictionary=True)
+            cursor.execute("""
+                SELECT COALESCE(s.name, l.subject) AS subject, SUM(l.duration_min) AS total_min
+                FROM pomodoro_log l LEFT JOIN subjects s ON s.id = l.subject_id
+                WHERE l.phase = 'work' AND (l.subject IS NOT NULL AND l.subject != '')
+                GROUP BY COALESCE(s.name, l.subject) ORDER BY total_min DESC
+            """)
+            data = cursor.fetchall(); cursor.close(); conn.close()
 
-            fig_monthly, ax_monthly = plt.subplots(figsize=(10, 4))
-            figures.append(fig_monthly)
-            ax_monthly.bar(months, total_hours, color='#FFA500')
-            ax_monthly.set_title('Total Study Time per Month')
-            ax_monthly.set_ylabel('Hours')
-            ax_monthly.set_xlabel('Month')
-            plt.xticks(rotation=45)
+            if data:
+                set_status(lbl_subject, "Drawing subject pie chart...", COLORS.GREEN)
+                for w in tab3.winfo_children(): w.destroy()
 
-            canvas_monthly = FigureCanvasTkAgg(fig_monthly, master=tab_monthly)
-            canvas_monthly.draw()
-            canvas_monthly.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+                subs = [r['subject'] for r in data]
+                mins = [float(r['total_min']) for r in data]
+                fig2, ax2 = plt.subplots(figsize=(9, 5.5))
+                figures.append(fig2)
+                _render_pie_chart(ax2, mins, subs, title='Total Study Time by Subject')
+                fig2.tight_layout()
+                canvas2 = FigureCanvasTkAgg(fig2, master=tab3)
+                canvas2.draw(); canvas2.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            else:
+                set_status(lbl_subject, "No subject data available.", COLORS.YELLOW)
 
-            # Summary table (text)
-            summary_text = "📊 Monthly Summary:\n"
-            for row in monthly_data:
-                hours = row['total_min'] // 60
-                mins = row['total_min'] % 60
-                avg_per_day = row['total_min'] / row['days_active'] if row['days_active'] else 0
-                summary_text += f"  {row['month']}: {hours}h {mins}m  |  {row['sessions']} sessions  |  {row['days_active']} days  |  avg {avg_per_day:.0f} min/day\n"
-            ttk.Label(tab_monthly, text=summary_text, font=("Helvetica", 10), justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=10)
-        else:
-            ttk.Label(tab_monthly, text="No monthly data available yet.").pack(pady=50)
+        def render_session_type_tab():
+            set_status(lbl_type, "Querying session types...", COLORS.BLUE)
+            conn = get_connection(); cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT session_type, SUM(duration_min) AS total_min FROM pomodoro_log WHERE phase = 'work' GROUP BY session_type ORDER BY total_min DESC")
+            data = cursor.fetchall(); cursor.close(); conn.close()
 
-        tab3 = ttk.Frame(notebook)
-        notebook.add(tab3, text="🧠 Subject Breakdown")
-        if subjects:
-            fig2, ax2 = plt.subplots(figsize=(9, 5.5))
-            figures.append(fig2)
-            _render_pie_chart(ax2, subject_mins, subjects,
-                              title='Total Study Time by Subject')
-            fig2.tight_layout()
-            canvas2 = FigureCanvasTkAgg(fig2, master=tab3)
-            canvas2.draw()
-            canvas2.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        else:
-            ttk.Label(tab3, text="No subject data available.").pack(pady=50)
+            if data:
+                set_status(lbl_type, "Drawing session types pie chart...", COLORS.GREEN)
+                for w in tab_type.winfo_children(): w.destroy()
 
-        # ---- Session Type Distribution (new) ----
-        tab_type = ttk.Frame(notebook)
-        notebook.add(tab_type, text="📊 Session Types")
-
-        conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT
-                session_type,
-                SUM(duration_min) AS total_min
-            FROM pomodoro_log
-            WHERE phase = 'work'
-            GROUP BY session_type
-            ORDER BY total_min DESC
-        """)
-        type_data = cursor.fetchall()
-        cursor.close()
-        conn.close()
-
-        if type_data:
-            # Ensure every known session type appears, even with 0 minutes
-            known_types = ["study", "revision", "pretest", "exam", "quiz"]
-            got = {row['session_type'] for row in type_data}
-            padded = list(type_data)
-            for t in known_types:
-                if t not in got:
-                    padded.append({'session_type': t, 'total_min': 0})
-            types = [(row['session_type'] or 'Unspecified') for row in padded]
-            mins  = [float(row['total_min'] or 0) for row in padded]
-
-            if mins:
+                types = [(r['session_type'] or 'Unspecified') for r in data]
+                mins = [float(r['total_min'] or 0) for r in data]
                 fig_type, ax_type = plt.subplots(figsize=(9, 5.5))
                 figures.append(fig_type)
-                _render_pie_chart(ax_type, mins, types,
-                                  title='Total Study Time by Session Type')
+                _render_pie_chart(ax_type, mins, types, title='Total Study Time by Session Type')
                 fig_type.tight_layout()
                 canvas_type = FigureCanvasTkAgg(fig_type, master=tab_type)
-                canvas_type.draw()
-                canvas_type.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+                canvas_type.draw(); canvas_type.get_tk_widget().pack(fill=tk.BOTH, expand=True)
             else:
-                ttk.Label(tab_type, text="No session type data available.").pack(pady=50)
-        else:
-            ttk.Label(tab_type, text="No session type data available.").pack(pady=50)
+                set_status(lbl_type, "No session type data available.", COLORS.YELLOW)
 
-        tab4 = ttk.Frame(notebook)
-        notebook.add(tab4, text="📋 Top Tasks")
-        if tasks:
-            fig3, ax3 = plt.subplots(figsize=(8, 4))
-            figures.append(fig3)
-            ax3.barh(tasks, task_mins, color='#2196F3')
-            ax3.set_title('Top 5 Tasks (Time Spent)')
-            ax3.set_xlabel('Minutes')
-            canvas3 = FigureCanvasTkAgg(fig3, master=tab4)
-            canvas3.draw()
-            canvas3.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        else:
-            ttk.Label(tab4, text="No task data available.").pack(pady=50)
+        def render_top_tasks_tab():
+            set_status(lbl_task, "Querying top 5 tasks...", COLORS.BLUE)
+            conn = get_connection(); cursor = conn.cursor(dictionary=True)
+            cursor.execute("""
+                SELECT COALESCE(t.task_text, 'Uncategorized Task') as task_text, SUM(l.duration_min) as total_min
+                FROM pomodoro_log l LEFT JOIN pomodoro_tasks t ON l.task_id = t.id
+                WHERE l.phase = 'work' GROUP BY l.task_id ORDER BY total_min DESC LIMIT 5
+            """)
+            data = cursor.fetchall(); cursor.close(); conn.close()
 
-        tab5 = ttk.Frame(notebook)
-        notebook.add(tab5, text="⏰ Peak Hours")
-        if hour_labels:
-            fig4, ax4 = plt.subplots(figsize=(10, 4))
-            figures.append(fig4)
-            ax4.bar(hour_labels, hourly_sessions, color='#FF9800')
-            ax4.set_title('Pomodoro Sessions by Hour of Day')
-            ax4.set_ylabel('Number of Sessions')
-            ax4.set_xlabel('Hour')
-            plt.xticks(rotation=45)
-            canvas4 = FigureCanvasTkAgg(fig4, master=tab5)
-            canvas4.draw()
-            canvas4.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        else:
-            ttk.Label(tab5, text="No hourly data available.").pack(pady=50)
+            if data:
+                set_status(lbl_task, "Drawing task bar chart...", COLORS.GREEN)
+                for w in tab4.winfo_children(): w.destroy()
 
-        tab6 = ttk.Frame(notebook)
-        notebook.add(tab6, text="💡 Insights")
-
-        insights = "📌 **DYNAMIC INSIGHTS BASED ON YOUR DATA**\n\n"
-        if hourly_sessions and hour_labels:
-            max_idx = int(hourly_sessions.index(max(hourly_sessions)))
-            best_hour = hour_labels[max_idx]
-            insights += f"🚀 Your peak productivity time is around **{best_hour}**.\n"
-            insights += f"   Schedule your hardest subjects during this hour!\n\n"
-
-        if subjects and subject_mins:
-            top_subj = subjects[0]
-            pct = (subject_mins[0] / sum(subject_mins)) * 100
-            insights += f"📚 You spend {pct:.0f}% of your time on **{top_subj}**.\n"
-            if pct < 50:
-                insights += f"   You have a great balanced approach! Keep exploring other subjects.\n\n"
+                tasks = [r['task_text'] for r in data]
+                mins = [float(r['total_min']) for r in data]
+                fig3, ax3 = plt.subplots(figsize=(8, 4))
+                figures.append(fig3)
+                ax3.barh(tasks, mins, color='#2196F3')
+                ax3.set_title('Top 5 Tasks (Time Spent)'); ax3.set_xlabel('Minutes')
+                canvas3 = FigureCanvasTkAgg(fig3, master=tab4)
+                canvas3.draw(); canvas3.get_tk_widget().pack(fill=tk.BOTH, expand=True)
             else:
-                insights += f"   Consider diversifying slightly if other subjects need attention.\n\n"
+                set_status(lbl_task, "No task data available.", COLORS.YELLOW)
 
-        if totals and totals['total_sessions'] > 20:
-            avg = totals['total_minutes'] / totals['total_sessions']
-            if avg > 25:
-                insights += f"💪 Your average session is {avg:.0f} min. Excellent deep work!"
+        def render_peak_hours_tab():
+            set_status(lbl_peak, "Querying peak productivity hours...", COLORS.BLUE)
+            conn = get_connection(); cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT HOUR(timestamp) as hour, COUNT(*) as sessions FROM pomodoro_log WHERE phase = 'work' GROUP BY HOUR(timestamp) ORDER BY hour")
+            data = cursor.fetchall(); cursor.close(); conn.close()
+
+            if data:
+                set_status(lbl_peak, "Drawing hourly bar chart...", COLORS.GREEN)
+                for w in tab5.winfo_children(): w.destroy()
+
+                hours = [f"{r['hour']}:00" for r in data]
+                counts = [r['sessions'] for r in data]
+                fig4, ax4 = plt.subplots(figsize=(10, 4))
+                figures.append(fig4)
+                ax4.bar(hours, counts, color='#FF9800')
+                ax4.set_title('Pomodoro Sessions by Hour of Day'); ax4.set_ylabel('Sessions')
+                plt.xticks(rotation=45)
+                canvas4 = FigureCanvasTkAgg(fig4, master=tab5)
+                canvas4.draw(); canvas4.get_tk_widget().pack(fill=tk.BOTH, expand=True)
             else:
-                insights += f"⏳ Your average session is {avg:.0f} min. Try extending them to 25-30 min for better flow."
+                set_status(lbl_peak, "No hourly data available.", COLORS.YELLOW)
 
-        if streak >= 5:
-            insights += f"\n🔥 **You are on a {streak}-day streak!** This is your prime time to build momentum. Don't break the chain!"
-        elif streak == 0:
-            insights += f"\n🔄 Start a new streak today! Just 1 Pomodoro is enough to get back on track."
+        def render_insights_tab():
+            set_status(lbl_insights, "Analyzing data for insights...", COLORS.BLUE)
+            set_status(lbl_insights, "Rendering insights...", COLORS.GREEN)
+            for w in tab6.winfo_children(): w.destroy()
 
-        ttk.Label(tab6, text=insights, font=("Helvetica", 11), justify=tk.LEFT, wraplength=800).pack(anchor=tk.W, padx=20, pady=20)
+            insights = "📌 **DYNAMIC INSIGHTS BASED ON YOUR DATA**\n\n"
+            insights += "🚀 Your peak productivity time is shown in the 'Peak Hours' tab.\n"
+            insights += "📚 Keep focusing on your top subjects to build momentum.\n"
+            if streak >= 5:
+                insights += f"\n🔥 **You are on a {streak}-day streak!** This is your prime time to build momentum."
+            else:
+                insights += f"\n🔄 Start a new streak today! Just 1 Pomodoro is enough."
+
+            ttk.Label(tab6, text=insights, font=("Helvetica", 11), justify=tk.LEFT, wraplength=800).pack(anchor=tk.W, padx=20, pady=20)
+
+        # ---- Lazy Loading Router ----
+        rendered_tabs = set()
+        render_map = {
+            str(tab_badge): render_badge_tab,
+            str(tab_summary): render_summary_tab,
+            str(tab_week): render_week_tab,
+            str(tab2): render_30day_tab,
+            str(tab_monthly): render_monthly_tab,
+            str(tab3): render_subject_tab,
+            str(tab_type): render_session_type_tab,
+            str(tab4): render_top_tasks_tab,
+            str(tab5): render_peak_hours_tab,
+            str(tab6): render_insights_tab,
+        }
+
+        def on_tab_changed(event):
+            selected_tab = notebook.nametowidget(notebook.select())
+            tab_id = str(selected_tab)
+            if tab_id not in rendered_tabs and tab_id in render_map:
+                render_map[tab_id]()
+                rendered_tabs.add(tab_id)
+
+        notebook.bind("<<NotebookTabChanged>>", on_tab_changed)
+
+        stats_win.update_idletasks()
+        render_badge_tab()
+        rendered_tabs.add(str(tab_badge))
+        print("═" * 60 + "\n")
 
     # ---------- ON CLOSE (with error handling) ----------
     def on_close(self):
