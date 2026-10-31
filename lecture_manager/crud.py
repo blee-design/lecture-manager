@@ -379,10 +379,10 @@ def add_lecture():
     print()
     print_colored("  HOW TO HANDLE THE VIDEO FILE?", COLORS.CYAN, bold=True)
     print("  ────────────────────────────────────────────────")
-    print("  l. Download to local disk      (current default)")
+    print("  l. Download to local disk")
     print("  c. Upload cloud-only           (no local copy kept)")
     print("  b. Both (download + upload)")
-    print("  s. Skip media (record only)")
+    print("  s. Skip media (record only)    (default)")
     print("  ────────────────────────────────────────────────")
     print_colored("  Cloud-only is ideal for large backlogs — the video",
                   COLORS.BLUE)
@@ -391,11 +391,11 @@ def add_lecture():
     print_colored("  temp file is deleted automatically.", COLORS.BLUE)
     print("  ────────────────────────────────────────────────")
     media_choice = input(
-        color_text("  Choose (l/c/b/s, Enter=l): ", COLORS.MAGENTA)
-    ).strip().lower() or 'l'
+        color_text("  Choose (l/c/b/s, Enter=s): ", COLORS.MAGENTA)
+    ).strip().lower() or 's'
 
     if media_choice not in ('l', 'c', 'b', 's'):
-        media_choice = 'l'
+        media_choice = 's'
 
     # ---- Step 2: Act on the choice ----
     if media_choice in ('l', 'b'):
