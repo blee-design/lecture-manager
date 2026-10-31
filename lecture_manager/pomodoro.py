@@ -2931,12 +2931,14 @@ class PomodoroApp:
 
         cursor.execute("""
             SELECT
-                l.subject AS subject,
+                COALESCE(s.name, l.subject) AS subject,
                 SUM(l.duration_min) AS total_min,
                 COUNT(*) AS sessions
             FROM pomodoro_log l
-            WHERE l.phase = 'work' AND l.subject IS NOT NULL AND l.subject != ''
-            GROUP BY l.subject
+            LEFT JOIN subjects s ON s.id = l.subject_id
+            WHERE l.phase = 'work'
+              AND (l.subject IS NOT NULL AND l.subject != '')
+            GROUP BY COALESCE(s.name, l.subject)
             ORDER BY total_min DESC
         """)
         subject_data = cursor.fetchall()
