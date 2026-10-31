@@ -1695,9 +1695,15 @@ class PomodoroApp:
             if task:
                 # Update the priority spinbox to show the selected task's priority
                 self.priority_var.set(str(task['priority']))
-                if not task['completed']:
+
+                if task['completed']:
+                    print_colored(f"  [Task Selected] '{task['task_text']}' (Completed ✓)", COLORS.YELLOW)
+                else:
                     label = f"[P{task['priority']}] {task['task_text']}"
                     self.task_var.set(label)
+
+                    # --- New Terminal Output ---
+                    print_colored(f"  🎯 Task Selected: {label}", COLORS.GREEN)
 
     def show_context_menu(self, event):
         index = self.task_listbox.nearest(event.y)
