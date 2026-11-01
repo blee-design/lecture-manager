@@ -2169,7 +2169,7 @@ class PomodoroApp:
         self.clear_state()
 
     def show_completion_popup(self, completed_phase):
-        """Custom attractive popup for when a session finishes."""
+        """Custom attractive popup for when a session finishes (Auto-sizing)."""
         import random
 
         popup = tk.Toplevel(self.root)
@@ -2177,12 +2177,8 @@ class PomodoroApp:
         popup.configure(bg="#1a1d28")
         popup.attributes('-topmost', True) # Force it to the front
 
-        # --- Calculate exact center of the screen relative to main window ---
-        self.root.update_idletasks()
-        width, height = 450, 320
-        x = self.root.winfo_rootx() + (self.root.winfo_width() // 2) - (width // 2)
-        y = self.root.winfo_rooty() + (self.root.winfo_height() // 2) - (height // 2)
-        popup.geometry(f"{width}x{height}+{x}+{y}")
+        # Set a minimum width so the text wraps nicely
+        popup.minsize(450, 200)
 
         # --- Add a nice glowing border ---
         border_frame = tk.Frame(popup, bg="#6366f1", bd=1)
@@ -2210,7 +2206,7 @@ class PomodoroApp:
         quote_frame.pack(fill=tk.X, padx=40)
 
         tk.Label(quote_frame, text=f"“{quote}”", font=("Helvetica Neue", 11, "italic"),
-                 bg="#232734", fg="#a5b4fc", wraplength=320, justify=tk.CENTER).pack()
+                 bg="#232734", fg="#a5b4fc", wraplength=340, justify=tk.CENTER).pack()
 
         # --- Close / Continue Button ---
         btn_frame = tk.Frame(main_frame, bg="#1a1d28")
@@ -2225,13 +2221,25 @@ class PomodoroApp:
         continue_btn = tk.Button(btn_frame, text="Awesome! Continue", command=close_popup,
                                  font=("Helvetica Neue", 11, "bold"), bg="#6366f1", fg="white",
                                  activebackground="#7c7ff2", activeforeground="white",
-                                 relief="flat", bd=0, padx=20, pady=8, cursor="hand2")
+                                 relief="flat", bd=0, padx=25, pady=8, cursor="hand2")
         continue_btn.pack()
 
         # Allow pressing Enter to close
         popup.bind('<Return>', lambda e: close_popup())
 
-        # Center the popup and grab focus
+        # --- DYNAMIC AUTO-SIZING & CENTERING ---
+        popup.update_idletasks() # Let Tkinter calculate the real required size based on the quote length
+
+        width = popup.winfo_reqwidth()
+        height = popup.winfo_reqheight()
+
+        # Center based on the calculated size
+        x = self.root.winfo_rootx() + (self.root.winfo_width() // 2) - (width // 2)
+        y = self.root.winfo_rooty() + (self.root.winfo_height() // 2) - (height // 2)
+
+        popup.geometry(f"{width}x{height}+{x}+{y}")
+
+        # Grab focus
         popup.focus_force()
         continue_btn.focus_set()
 
