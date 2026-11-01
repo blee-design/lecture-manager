@@ -32,6 +32,7 @@ from .storage_manager import (
     list_local_only_records, list_no_media_records,
     purge_local_file_for_record,
 )
+from .pomodoro_io import pomodoro_io_menu
 
 
 web_server_process = None
@@ -1376,6 +1377,7 @@ def main():
             ("❓ Question Bank", unified_question_menu),
             ("📰 Instapaper", instapaper_menu),
             ("⏱️ Pomodoro Timer", pomodoro_launcher),
+            ("📦 Pomodoro Import/Export (CLI)", pomodoro_io_menu),
             ("🔗 Zoom Link Extractor", zoom_extractor_launcher),
         ],
         '9': [

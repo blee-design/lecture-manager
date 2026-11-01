@@ -1,5 +1,3 @@
-# File utils.py (unchanged, except clear_screen kept but not used)
-
 import re
 import sys
 import os
@@ -62,6 +60,7 @@ _EXPORT_CATEGORIES = {
     'facebook':  os.path.join(EXPORTS_ROOT, 'facebook'),
     'syllabus':  os.path.join(EXPORTS_ROOT, 'syllabus'),
     'exams':     os.path.join(EXPORTS_ROOT, 'exams'),
+    'pomodoro':  os.path.join(EXPORTS_ROOT, 'pomodoro'),
 }
 
 
