@@ -3,70 +3,106 @@
 import re
 import urllib.parse
 
-def extract_zoom_link(dirty_text: str) -> str:
+def parse_zoom_invite(dirty_text: str) -> dict:
     """
-    Extract a clean Zoom meeting link from messy text.
-
-    Supports:
-      - Meeting number: mn=123456789 or id=123456789 or /j/123456789
-      - Password: pwd=xxxxxx (URL-encoded or plain)
-      - Also handles: zoom.us/j/123456789?pwd=xxxxxx
-
-    Returns:
-        Clean Zoom URL as a string, or an error message if not found.
+    Extracts Zoom meeting details from messy text.
+    Returns a dictionary with keys: url, meeting_id, passcode, domain.
+    Returns an empty dictionary if no Zoom data is found.
     """
     if not dirty_text:
-        return "No text provided."
+        return {}
 
-    # Normalize: decode URL encoding in the whole text
+    # Decode URL encoding just in case (e.g., %20 -> space)
     decoded = urllib.parse.unquote(dirty_text)
 
-    # Pattern 1: zoom.us/j/... with optional pwd
-    # Example: https://zoom.us/j/123456789?pwd=xyz
-    match = re.search(r'(https?://zoom\.us/j/(\d+)(?:\?pwd=([^&\s]+))?)', decoded, re.IGNORECASE)
-    if match:
-        full_url = match.group(1)
-        meeting_id = match.group(2)
-        pwd = match.group(3)
-        if pwd:
-            # Ensure password is included in the clean link
-            # Sometimes the full_url already contains it, but we can reconstruct.
-            return f"https://zoom.us/j/{meeting_id}?pwd={pwd}"
-        else:
-            return f"https://zoom.us/j/{meeting_id}"
+    result = {
+        "url": None,
+        "meeting_id": None,
+        "passcode": None,
+        "domain": "zoom.us"
+    }
 
-    # Pattern 2: meeting number and password separate
-    # e.g., mn=123456789 or id=123456789
-    mn_match = re.search(r'(?:mn|id)[:=](\d+)', decoded, re.IGNORECASE)
-    if not mn_match:
-        return "Could not find a valid Meeting Number (mn) in the text."
+    # ---- 1. Find the Domain (default to zoom.us) ----
+    domain_match = re.search(r'(?:https?://)?([a-zA-Z0-9.-]*zoom\.(?:us|com|cn|gov)[a-zA-Z0-9./-]*)', decoded, re.IGNORECASE)
+    if domain_match:
+        result["domain"] = domain_match.group(1).split('/')[0]
 
-    meeting_id = mn_match.group(1)
+    # ---- 2. Extract Meeting ID ----
+    # Look for standard formats: mn=123456789, Meeting ID: 123 456 7890, /j/123456789
+    mn_patterns = [
+        r'/j/(\d{9,11})',
+        r'/w/(\d{9,11})',
+        r'(?:Meeting ID|mn|id)[\s:=]*([0-9\s-]{9,15})'
+    ]
 
-    # Look for password: pwd=xxxxx (may be URL-encoded)
-    pwd_match = re.search(r'pwd=([^&\s]+)', decoded, re.IGNORECASE)
-    password = pwd_match.group(1) if pwd_match else None
+    for pattern in mn_patterns:
+        match = re.search(pattern, decoded, re.IGNORECASE)
+        if match:
+            # Strip spaces and hyphens
+            raw_id = re.sub(r'[\s-]', '', match.group(1))
+            if 9 <= len(raw_id) <= 11:
+                result["meeting_id"] = raw_id
+                break
 
-    # Build the clean link
-    clean_link = f"https://zoom.us/j/{meeting_id}"
-    if password:
-        clean_link += f"?pwd={password}"
+    # ---- 3. Extract Passcode ----
+    # Look for pwd=abc, Passcode: abc123
+    pwd_patterns = [
+        r'[?&]pwd=([a-zA-Z0-9._-]+)',
+        r'(?:Passcode|Password|pwd)[\s:=]*([a-zA-Z0-9._-]+)'
+    ]
+    for pattern in pwd_patterns:
+        match = re.search(pattern, decoded, re.IGNORECASE)
+        if match:
+            # Prevent matching "Passcode:" with empty space
+            pwd = match.group(1).strip()
+            if pwd and pwd.lower() not in ('required', 'none'):
+                result["passcode"] = pwd
+                break
 
-    return clean_link
+    # ---- 4. Construct Clean URL ----
+    if result["meeting_id"]:
+        # Determine if it's a webinar or regular meeting based on the text
+        path = "w" if "/w/" in decoded else "j"
+        base_url = f"https://{result['domain']}/{path}/{result['meeting_id']}"
+        if result["passcode"]:
+            base_url += f"?pwd={result['passcode']}"
+        result["url"] = base_url
+
+    # Fallback: if no ID found, but a clean URL exists, try to use it
+    elif "zoom.us" in decoded:
+        url_match = re.search(r'(https?://[a-zA-Z0-9.-]*zoom\.(?:us|com|cn|gov)[a-zA-Z0-9./?=&_%-]+)', decoded)
+        if url_match:
+            result["url"] = url_match.group(1)
+
+    return result
+
+
+def extract_zoom_link(dirty_text: str) -> str:
+    """Backward compatibility wrapper for the old function."""
+    parsed = parse_zoom_invite(dirty_text)
+    if parsed.get("url"):
+        return parsed["url"]
+    elif parsed.get("meeting_id"):
+        return f"https://zoom.us/j/{parsed['meeting_id']}"
+    else:
+        return "Could not find a valid Zoom Meeting ID or Link."
 
 
 def interactive_zoom_extractor():
     """Interactive CLI function to extract Zoom link from user input."""
     print("\n" + "═" * 60)
-    print("🔗 ZOOM MEETING LINK EXTRACTOR")
+    print_colored("🔗 SMART ZOOM MEETING EXTRACTOR", COLORS.CYAN, bold=True)
     print("═" * 60)
-    print("Paste the messy Zoom text (meeting number, password, etc.)")
-    print("and I'll extract a clean, clickable Zoom link.")
+    print("Paste the messy Zoom text (IDs with spaces, separate passwords, etc.)")
+    print("and I'll build a clean, clickable Zoom link for you.")
     print("Type 'exit' or press Ctrl+C to cancel.\n")
+
+    # Import here to avoid circular imports if utils imports zoom_utils
+    from .utils import print_colored, COLORS, color_text
 
     while True:
         try:
-            dirty = input("📋 Paste text (or 'exit'): ").strip()
+            dirty = input("📋 Paste Zoom text (or 'exit'): ").strip()
         except KeyboardInterrupt:
             print("\nCancelled.")
             break
@@ -75,12 +111,22 @@ def interactive_zoom_extractor():
         if dirty.lower() in ('exit', 'quit', 'q'):
             break
 
-        clean = extract_zoom_link(dirty)
-        if clean.startswith("Could not"):
-            print(f"❌ {clean}")
+        result = parse_zoom_invite(dirty)
+
+        if not result.get("url"):
+            print_colored("❌ Could not find a valid Zoom Meeting ID or Link in that text.", COLORS.RED)
         else:
-            print("\n✅ Your clean Zoom link:")
-            print(f"   {clean}\n")
-            # Ask if they want to copy to clipboard? Not easily in terminal, but we can show.
-            print("(You can now copy the link above.)")
-        print("-" * 60)
+            print("\n✅ Clean Zoom Link:")
+            print(color_text(f"   {result['url']}", COLORS.GREEN, bold=True))
+
+            # Show the breakdown so the user can verify
+            print("\n   📋 Extracted Details:")
+            if result.get("meeting_id"):
+                print(f"      • Meeting ID : {result['meeting_id']}")
+            if result.get("passcode"):
+                print(f"      • Passcode   : {result['passcode']}")
+            if result.get("domain") and result['domain'] != 'zoom.us':
+                print(f"      • Domain     : {result['domain']}")
+
+            print("\n   (You can now copy the link above.)")
+        print("─" * 60)
