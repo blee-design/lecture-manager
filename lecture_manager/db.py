@@ -645,6 +645,12 @@ def _baseline_migration_v1(cursor):
         cursor.execute("ALTER TABLE youtube_lectures ADD COLUMN original_filename VARCHAR(512) NULL")
         print_colored("[✓] Added 'original_filename' column.", COLORS.GREEN)
 
+    # Add source column if missing
+    cursor.execute("SHOW COLUMNS FROM youtube_lectures LIKE 'source'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE youtube_lectures ADD COLUMN source VARCHAR(255) NULL")
+        print_colored("[✓] Added 'source' column.", COLORS.GREEN)
+
     # --- NEW: Add index on facebook_entries.url for faster duplicate lookups ---
     cursor.execute("SHOW INDEX FROM facebook_entries WHERE Key_name = 'idx_url'")
     if not cursor.fetchone():
