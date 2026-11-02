@@ -3744,7 +3744,6 @@ def add_question_interactive():
 
     subject = _prompt_field("Subject: ")
     paper   = _prompt_field("Paper: ")
-    group   = _prompt_field("Group: ")
 
     marks = _prompt_number("Marks (numeric, Enter to skip): ", default=None)
     marks_breakdown = _prompt_field(
@@ -3786,6 +3785,24 @@ def add_question_interactive():
             from .utils import normalize_syllabus_code
             first_code = codes[0].split('&')[0].split(',')[0].strip()
             syllabus_code = normalize_syllabus_code(first_code)
+
+    # ---- NEW: Auto-detect Group from Syllabus ----
+    auto_group = None
+    if paper and syllabus_code:
+        subj_code = str(syllabus_code).split('.')[0].zfill(2)
+        conn_g = get_connection()
+        cur_g = conn_g.cursor()
+        cur_g.execute("SELECT `group` FROM subjects WHERE paper = %s AND chapter = %s LIMIT 1", (paper, subj_code))
+        row_g = cur_g.fetchone()
+        if row_g and row_g[0]:
+            auto_group = row_g[0]
+        cur_g.close()
+        conn_g.close()
+
+    group_prompt = f"Group [{auto_group}]: " if auto_group else "Group: "
+    group = _prompt_field(group_prompt)
+    if not group and auto_group:
+        group = auto_group
 
     # ========== 3. Type-specific fields ==========
     options = pairs = hints = None
