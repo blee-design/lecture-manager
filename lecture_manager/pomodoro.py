@@ -27,6 +27,7 @@ SESSION_TYPES = [
     "revision",
     "pretest",
     "exam",
+    "class",
     "quiz",
     "newspaper",
 ]
