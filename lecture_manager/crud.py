@@ -6,7 +6,7 @@ import glob
 from .db import get_connection, TABLE_NAME, get_record_by_video_id, get_record_by_any_id, get_any_media_record
 from .youtube import extract_video_id, fetch_youtube_title, get_embed_link, _ensure_cookie_file
 from .utils import clean_field, get_display_title, sanitize_filename, parse_lecture_title, color_text, print_colored, COLORS, normalize_syllabus_id, build_original_filename, DOWNLOAD_DIR
-from .file_manager import organize_video, sync_record_files, detect_paper, get_target_path, ROOT_DIR
+from .file_manager import organize_video, sync_record_files, detect_paper, get_target_path, ROOT_DIR, auto_detect_from_syllabus
 from .facebook_manager import add_facebook_lecture
 from .upload import upload_video_to_youtube, update_youtube_title
 from .constants import DISPLAY_SEPARATOR
@@ -170,11 +170,48 @@ def add_lecture():
         return
     syllabus_id = normalize_syllabus_id(syllabus_raw)
 
-    chapter = input(color_text("Chapter/Topic: ", COLORS.MAGENTA)).strip()
+    # ---- NEW: Auto-detect paper, subject, chapter, group from syllabus code ----
+    auto_info = auto_detect_from_syllabus(
+        syllabus_id,
+        title_text=title,
+        title_subject=parsed['subject'] if parsed else None,
+        interactive=True,
+    )
+
+    detected_paper = None
+    auto_subject = None
+    auto_chapter = None
+    auto_group = None
+
+    if auto_info['status'] == 'ok':
+        detected_paper = auto_info['paper_key']
+        auto_subject = auto_info['subject_name']
+        auto_chapter = auto_info['chapter_name']
+        auto_group = auto_info['group']
+
+        print()
+        print_colored("  ✓ Auto-detected from syllabus:", COLORS.GREEN, bold=True)
+        print(f"    Paper   : {auto_info['paper_display']}")
+        if auto_subject:
+            print(f"    Subject : {auto_info['subject_code']} — {auto_subject}")
+        if auto_chapter:
+            print(f"    Chapter : {auto_info['chapter_code']} — {auto_chapter}")
+        if auto_group:
+            print(f"    Group   : {auto_group}")
+        print()
+
+    # ---- Chapter input with default from syllabus ----
+    if auto_chapter:
+        chapter = input(color_text(
+            f"Chapter/Topic [{auto_chapter}]: ", COLORS.MAGENTA
+        )).strip() or auto_chapter
+    else:
+        chapter = input(color_text("Chapter/Topic: ", COLORS.MAGENTA)).strip()
 
     if parsed:
-        # ---- Auto‑detect paper ----
-        detected_paper = detect_paper(parsed['subject'], syllabus_id, chapter, interactive=True)
+        # ---- Fall back to title-based detection only if needed ----
+        if not detected_paper:
+            detected_paper = detect_paper(parsed['subject'], syllabus_id, chapter, interactive=True)
         if not detected_paper:
             choices = _paper_choices()
             if not choices:
@@ -192,21 +229,24 @@ def add_lecture():
                 return
 
         print("\n" + "─" * 40)
-        print_colored("  Auto‑detected from video title:", COLORS.BLUE)
-        print(f"  Subject      : {parsed['subject']}")
+        print_colored("  Detected information:", COLORS.BLUE)
+        final_subject = auto_subject or parsed['subject']
+        print(f"  Subject      : {final_subject}" + ("  (from syllabus)" if auto_subject else "  (from title)"))
         print(f"  Lecturer     : {parsed['lecturer']}")
         print(f"  Nepali Date  : {parsed['nepali_date']}")
         print(f"  Time         : {parsed['time']}")
         _paper_map = {k: name for k, name, _folder in _paper_choices()}
         paper_display = f"{detected_paper} ({_paper_map.get(detected_paper, 'unknown')})"
         print(f"  Paper        : {paper_display}")
+        if auto_group:
+            print(f"  Group        : {auto_group}")
         print("─" * 40)
         use = input(color_text("Use these values? (y/n, default y): ", COLORS.MAGENTA)).strip().lower()
         if use == 'n':
             fields = {
                 'syllabus_id': syllabus_id,
                 'chapter': chapter,
-                'subject': parsed['subject'],
+                'subject': auto_subject or parsed['subject'],
                 'lecturer': parsed['lecturer'],
                 'nepali_date': parsed['nepali_date'],
                 'time': parsed['time'],
@@ -298,22 +338,30 @@ def add_lecture():
             paper = detected_paper
     else:
         print_colored("[i] Could not auto-parse title. Please enter manually.", COLORS.YELLOW)
-        subject = input(color_text("Subject (course name): ", COLORS.MAGENTA)).strip()
+        default_subj = auto_subject or ''
+        subj_prompt = f"Subject (course name) [{default_subj}]: " if default_subj else "Subject (course name): "
+        subject = input(color_text(subj_prompt, COLORS.MAGENTA)).strip() or default_subj
         lecturer = input(color_text("Lecturer Name: ", COLORS.MAGENTA)).strip()
         nepali_date = input(color_text("Nepali Date (B.S.): ", COLORS.MAGENTA)).strip()
         time_str = input(color_text("Time: ", COLORS.MAGENTA)).strip()
-        choices = _paper_choices()
-        if not choices:
-            print_colored("[!] No papers configured. Please set up your syllabus first.", COLORS.RED)
-            return
-        print("Select paper:")
-        for i, (k, name, _folder) in enumerate(choices, 1):
-            print(f"  {i}. {k} - {name}")
-        paper_choice = input(color_text("Paper number (default 1): ", COLORS.MAGENTA)).strip()
-        if paper_choice.isdigit() and 1 <= int(paper_choice) <= len(choices):
-            paper = choices[int(paper_choice) - 1][0]
+
+        if detected_paper:
+            paper = detected_paper
+            _paper_map = {k: name for k, name, _folder in _paper_choices()}
+            print_colored(f"[✓] Using auto-detected paper: {detected_paper} ({_paper_map.get(detected_paper, '')})", COLORS.GREEN)
         else:
-            paper = choices[0][0]
+            choices = _paper_choices()
+            if not choices:
+                print_colored("[!] No papers configured. Please set up your syllabus first.", COLORS.RED)
+                return
+            print("Select paper:")
+            for i, (k, name, _folder) in enumerate(choices, 1):
+                print(f"  {i}. {k} - {name}")
+            paper_choice = input(color_text("Paper number (default 1): ", COLORS.MAGENTA)).strip()
+            if paper_choice.isdigit() and 1 <= int(paper_choice) <= len(choices):
+                paper = choices[int(paper_choice) - 1][0]
+            else:
+                paper = choices[0][0]
 
     # ---- Mirror ID ----
     mirror_id = input(color_text("Mirror Video ID (optional, press Enter to skip): ", COLORS.MAGENTA)).strip()

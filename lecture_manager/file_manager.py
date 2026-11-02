@@ -104,6 +104,136 @@ def describe_syllabus_id(syllabus_id, paper_key):
         out['chapter_name'] = _chapter_lookup().get((paper_key, subj_code, chap_code))
     return out
 
+def auto_detect_from_syllabus(syllabus_id, title_text=None, title_subject=None, interactive=True):
+    """
+    Given a syllabus_id like '3.1.0' or '04.02.03', auto-detect which paper
+    contains that subject+chapter, and return all related names.
+    """
+    from .file_manager import parse_syllabus_id, _subject_lookup, _chapter_lookup, _papers, _keywords
+    import re as _re
+
+    result = {
+        'paper_key': None, 'paper_display': None,
+        'subject_code': None, 'subject_name': None,
+        'chapter_code': None, 'chapter_name': None,
+        'group': None,
+        'status': 'not_found',
+        'candidates': [],
+    }
+
+    subj_code, chap_code, _ = parse_syllabus_id(syllabus_id)
+    if not subj_code:
+        return result
+
+    result['subject_code'] = subj_code
+    result['chapter_code'] = chap_code
+
+    subject_lookup = _subject_lookup()
+    papers = _papers()
+    kws = _keywords()
+
+    # Step 1: Find all papers that contain this subject code
+    candidates = []
+    for (pk, sc), subj_name in subject_lookup.items():
+        if sc == subj_code and pk in papers:
+            candidates.append({
+                'paper_key': pk,
+                'paper_display': papers[pk].get('display_name', pk),
+                'subject_name': subj_name,
+            })
+
+    if not candidates:
+        return result
+
+    # Step 2: Narrow by title text using paper keywords
+    if title_text and len(candidates) > 1:
+        combined = (title_text + " " + (title_subject or "")).lower()
+        narrowed = []
+        for c in candidates:
+            pk = c['paper_key']
+            if pk in kws:
+                for kw in kws[pk]:
+                    if _re.search(r'(?<!\w)' + _re.escape(kw) + r'(?!\w)', combined):
+                        narrowed.append(c)
+                        break
+        if narrowed:
+            candidates = narrowed
+
+    # Step 3: Narrow by chapter code presence
+    if len(candidates) > 1:
+        chap_lookup = _chapter_lookup()
+        with_chap = [c for c in candidates
+                     if (c['paper_key'], subj_code, chap_code) in chap_lookup]
+        if with_chap:
+            candidates = with_chap
+
+    result['candidates'] = candidates
+
+    # Step 4: Resolve to single paper
+    if len(candidates) == 1:
+        chosen = candidates[0]
+        result['status'] = 'ok'
+    elif not interactive:
+        return result
+    else:
+        # Group candidates by syllabus for a clean display
+        from . import syllabus_config as SC
+        syll_map = {s['id']: s for s in SC.get_syllabi(active_only=False)}
+        grouped = {}
+        for c in candidates:
+            p = papers.get(c['paper_key'], {})
+            sid = p.get('syllabus_id')
+            syll_name = syll_map.get(sid, {}).get('display_name', 'Unknown syllabus') if sid else '(no syllabus)'
+            grouped.setdefault(syll_name, []).append(c)
+
+        print()
+        print_colored(f"[!] Subject code '{subj_code}' found in {len(candidates)} paper(s). "
+                      f"Which one is this lecture for?", COLORS.YELLOW)
+        print()
+        idx = 0
+        flat_list = []
+        for syll_name, group in grouped.items():
+            print_colored(f"  📚 {syll_name}", COLORS.CYAN, bold=True)
+            for c in group:
+                idx += 1
+                flat_list.append(c)
+                print(f"    {idx}. [{c['paper_key']}] {c['paper_display']}")
+                print(f"       Subject: {subj_code} — {c['subject_name']}")
+            print()
+        print("    0. Cancel (skip auto-detect)")
+
+        choice = input(color_text(f"  Choose (1-{len(flat_list)}, 0=cancel): ", COLORS.MAGENTA)).strip()
+        if not choice.isdigit() or not (1 <= int(choice) <= len(flat_list)):
+            result['status'] = 'ambiguous'
+            return result
+        chosen = flat_list[int(choice) - 1]
+        result['status'] = 'ok'
+
+    # Populate remaining details
+    paper_key = chosen['paper_key']
+    result['paper_key'] = paper_key
+    result['paper_display'] = chosen['paper_display']
+    result['subject_name'] = chosen['subject_name']
+
+    desc = describe_syllabus_id(syllabus_id, paper_key)
+    result['chapter_name'] = desc.get('chapter_name')
+
+    try:
+        conn = get_connection()
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            "SELECT `group` FROM subjects WHERE paper = %s AND chapter = %s LIMIT 1",
+            (paper_key, subj_code)
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row:
+            result['group'] = row.get('group')
+    except Exception:
+        pass
+
+    return result
 
 def _subject_lookup():
     """
