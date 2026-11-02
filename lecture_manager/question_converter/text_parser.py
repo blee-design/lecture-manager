@@ -652,7 +652,7 @@ def parse_text_file(file_path, args):
     question_no = 0
 
     for block in raw_blocks:
-        lines = [line.strip() for line in block.split('\n') if line.strip()]
+        lines = [line.rstrip() for line in block.split('\n') if line.strip()]
         if not lines:
             skipped_lines += 1
             continue

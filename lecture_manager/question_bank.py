@@ -5280,8 +5280,7 @@ def export_questions_txt(question_ids=None, verbose=True):
         if not question_ids:
             print_colored("[i] No questions selected.", COLORS.YELLOW)
             return
-        print_colored(f"[i] Fetching {len(question_ids)} selected question(s)...",
-                      COLORS.BLUE)
+        print_colored(f"[i] Fetching {len(question_ids)} selected question(s)...", COLORS.BLUE)
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
         placeholders = ','.join(['%s'] * len(question_ids))
@@ -5299,39 +5298,38 @@ def export_questions_txt(question_ids=None, verbose=True):
         print_colored("[i] No questions to export.", COLORS.YELLOW)
         return
 
-    # Batch-load children once (avoids N+1 queries)
     rows = _attach_children_to_questions(rows)
 
     default_name = "questions_export.txt"
     hint = export_default_hint('questions', default_name)
-    filename = input(color_text(f"Enter TXT filename (default: {hint}): ",
-                                COLORS.MAGENTA)).strip()
+    filename = input(color_text(f"Enter TXT filename (default: {hint}): ", COLORS.MAGENTA)).strip()
     if not filename:
         filename = default_name
     if not filename.endswith('.txt'):
         filename += '.txt'
     filename = resolve_export_path(filename, 'questions')
 
+    # Helper to write multi-line fields safely for the importer
+    def _write_multiline_field(f, label, text, suffix=""):
+        if text is None: return
+        text = str(text).strip()
+        if not text: return
+        lines = text.split('\n')
+        f.write(f"{label}: {lines[0]}{suffix}\n")
+        for line in lines[1:]:
+            f.write(f"    {line}\n") # 4-space indentation
+
     field_order = [
         'question_date', 'institution', 'level', 'alias', 'paper', 'group',
         'subject', 'chapter', 'marks', 'marks_breakdown', 'notes', 'source'
     ]
     labels = {
-        'question_date': 'Date',
-        'institution':   'Institution',
-        'level':         'Level',
-        'alias':         'Alias',
-        'paper':         'Paper',
-        'group':         'Group',
-        'subject':       'Subject',
-        'chapter':       'Chapter',
-        'marks':         'Marks',
-        'marks_breakdown': 'Marks Breakdown',
-        'notes':         'Notes',
-        'source':        'Source',
+        'question_date': 'Date', 'institution': 'Institution', 'level': 'Level',
+        'alias': 'Alias', 'paper': 'Paper', 'group': 'Group',
+        'subject': 'Subject', 'chapter': 'Chapter', 'marks': 'Marks',
+        'marks_breakdown': 'Marks Breakdown', 'notes': 'Notes', 'source': 'Source'
     }
 
-    # ---- Collect unique passages → assign local 1..N markers ----
     used_passages = {}
     for q in rows:
         pid = q.get('passage_id')
@@ -5348,16 +5346,6 @@ def export_questions_txt(question_ids=None, verbose=True):
     import time
     start_time = time.time()
 
-    if verbose:
-        print_colored(f"\n📤 Exporting {total} questions to {filename}...",
-                      COLORS.CYAN)
-    else:
-        print_colored(f"\n📤 Exporting {total} questions...", COLORS.CYAN)
-
-    type_counts = {}
-    exported = 0
-    skipped = 0
-
     try:
         with open(filename, 'w', encoding='utf-8') as f:
             f.write("# Exported Question Bank (with IDs)\n")
@@ -5365,49 +5353,24 @@ def export_questions_txt(question_ids=None, verbose=True):
             if used_passages:
                 f.write(f"# Passages: {len(used_passages)}\n")
             f.write("# Each block is separated by '---'\n")
-            f.write("# The 'Question No.' line must come first in each block.\n\n")
+            f.write("# Indented lines are continuations of the field above them.\n\n")
 
-            # ---- Passages first ----
             for pid, num in used_passages.items():
-                if pid not in passage_content:
-                    continue
+                if pid not in passage_content: continue
                 f.write(f"[passage:{num}]\n")
                 f.write(passage_content[pid].rstrip() + "\n\n")
 
             for idx, q in enumerate(rows, 1):
-                if not q:
-                    skipped += 1
-                    if verbose:
-                        print(f"  [{idx:>3}/{total}]  (empty row — skipped)")
-                    continue
-
+                if not q: continue
                 q_type = q.get('type', 'essay')
-                type_counts[q_type] = type_counts.get(q_type, 0) + 1
-
-                if verbose:
-                    qid   = q.get('id', '?')
-                    qno   = q.get('question_number') or '?'
-                    qdate = q.get('question_date') or '          '
-                    preview = _short_preview(
-                        q.get('nepali_transcription')
-                        or q.get('english_transcription')
-                        or q.get('text') or '',
-                        42,
-                    )
-                    marker = ''
-                    if q.get('passage_id'):
-                        marker += ' 📖'
-                    print(f"  [{idx:>3}/{total}]  ID {qid:>5}  "
-                          f"{qdate:<10}  Q{qno:<4}  "
-                          f"{q_type:<11}  {preview}{marker}")
 
                 f.write("---\n")
 
-                # ---- Question No. line: NO TEXT, only the number ----
                 qno = q.get('question_number', '')
                 marker = ""
                 if q.get('passage_id') and q['passage_id'] in used_passages:
                     marker = f" (passage:{used_passages[q['passage_id']]})"
+
                 if qno:
                     f.write(f"Question No. {qno}{marker}:\n")
                 else:
@@ -5421,152 +5384,112 @@ def export_questions_txt(question_ids=None, verbose=True):
                     val = q.get(key)
                     if val is not None and val != '':
                         if key == 'marks':
-                            val = _fmt_marks(val)      # ← use the helper
+                            val = _fmt_marks(val)
+                            f.write(f"{labels.get(key, key)}: {val}\n")
                         elif isinstance(val, (date, datetime)):
                             val = str(val)
-                        f.write(f"{labels.get(key, key)}: {val}\n")
+                            f.write(f"{labels.get(key, key)}: {val}\n")
+                        elif key == 'notes':
+                            _write_multiline_field(f, labels.get(key, key), val)
+                        else:
+                            f.write(f"{labels.get(key, key)}: {val}\n")
+
                 if q.get('syllabus_code'):
                     f.write(f"Syllabus Code: {q['syllabus_code']}\n")
 
                 # ---- Cross-syllabus links ----
-                # Skip any extra that duplicates the question's own
-                # primary (paper + code) — it's a stale artefact and
-                # would be rejected on re-import anyway.
                 _home_paper = (q.get('paper') or '').strip()
-                _home_code  = (q.get('syllabus_code') or '').strip()
+                _home_code = (q.get('syllabus_code') or '').strip()
                 for _l in get_question_links(q['id']):
-                    if _l['is_primary']:
-                        continue
-                    if (_l['paper_key'] == _home_paper
-                            and _l['syllabus_code'] == _home_code):
-                        continue
+                    if _l['is_primary']: continue
+                    if (_l['paper_key'] == _home_paper and _l['syllabus_code'] == _home_code): continue
                     line = f"Also in: {_l['paper_key']} | {_l['syllabus_code']}"
                     if _l.get('note'):
                         line += f" | {_l['note']}"
                     f.write(f"{line}\n")
 
-                # ---- Exam Type (only if non-default) ----
                 et = (q.get('exam_type') or 'open').lower()
                 if et != 'open':
-                    nice = {
-                        'internal':    'Internal',
-                        'promotional': 'Promotional',
-                        'other':       'Other',
-                    }.get(et, et.capitalize())
+                    nice = {'internal': 'Internal', 'promotional': 'Promotional', 'other': 'Other'}.get(et, et.capitalize())
                     f.write(f"Exam Type: {nice}\n")
 
-                # ---- Question text: Nepali / English only (no dup) ----
+                # ---- Question text ----
                 nep = (q.get('nepali_transcription') or '').strip()
                 eng = (q.get('english_transcription') or '').strip()
 
                 if nep and eng and nep.lower() == eng.lower():
-                    # Identical → keep only one (prefer Nepali)
-                    f.write(f"Nepali: {nep}\n")
+                    _write_multiline_field(f, "Nepali", nep)
                 else:
-                    if nep:
-                        f.write(f"Nepali: {nep}\n")
-                    if eng:
-                        f.write(f"English: {eng}\n")
+                    if nep: _write_multiline_field(f, "Nepali", nep)
+                    if eng: _write_multiline_field(f, "English", eng)
 
                 if not nep and not eng:
-                    # No split transcription — fall back to combined text
                     _fb = (q.get('text') or '').strip()
                     if _fb:
                         if re.search(r'[\u0900-\u097F]', _fb):
-                            f.write(f"Nepali: {_fb}\n")
+                            _write_multiline_field(f, "Nepali", _fb)
                         else:
-                            f.write(f"English: {_fb}\n")
+                            _write_multiline_field(f, "English", _fb)
 
-                # ---- Type ----
                 f.write(f"Type: {q_type}\n")
 
                 # ---- Type-specific content ----
                 if q_type == "multichoice":
                     for opt in q.get('options', []):
                         marker_opt = " *" if opt.get('correct', False) else ""
-                        f.write(f"Option: {opt.get('text', '')}{marker_opt}\n")
-                    if q.get('grade', 1) != 1:
-                        f.write(f"Grade: {q.get('grade', 1)}\n")
-                    if q.get('penalty', 0) != 0:
-                        f.write(f"Penalty: {q.get('penalty', 0)}\n")
-                    for _lbl, _key in (
-                        ('Correct Feedback',           'correct_feedback'),
-                        ('Partially Correct Feedback', 'partially_correct_feedback'),
-                        ('Incorrect Feedback',         'incorrect_feedback'),
-                    ):
-                        if q.get(_key):
-                            f.write(f"{_lbl}: {q[_key]}\n")
+                        _write_multiline_field(f, "Option", opt.get('text', ''), suffix=marker_opt)
+
+                    if q.get('grade', 1) != 1: f.write(f"Grade: {q.get('grade', 1)}\n")
+                    if q.get('penalty', 0) != 0: f.write(f"Penalty: {q.get('penalty', 0)}\n")
+
+                    for _lbl, _key in (('Correct Feedback', 'correct_feedback'), ('Partially Correct Feedback', 'partially_correct_feedback'), ('Incorrect Feedback', 'incorrect_feedback')):
+                        if q.get(_key): _write_multiline_field(f, _lbl, q[_key])
 
                 elif q_type == "truefalse":
                     for opt in q.get('options', []):
                         if opt.get('correct', False):
                             f.write(f"Correct: {opt.get('text', '').lower()}\n")
                             break
-                    if q.get('grade', 1) != 1:
-                        f.write(f"Grade: {q.get('grade', 1)}\n")
-                    if q.get('penalty', 0) != 0:
-                        f.write(f"Penalty: {q.get('penalty', 0)}\n")
-                    if q.get('feedback_true'):
-                        f.write(f"Feedback True: {q['feedback_true']}\n")
-                    for _lbl, _key in (
-                        ('Correct Feedback',           'correct_feedback'),
-                        ('Partially Correct Feedback', 'partially_correct_feedback'),
-                        ('Incorrect Feedback',         'incorrect_feedback'),
-                    ):
-                        if q.get(_key):
-                            f.write(f"{_lbl}: {q[_key]}\n")
+                    if q.get('grade', 1) != 1: f.write(f"Grade: {q.get('grade', 1)}\n")
+                    if q.get('penalty', 0) != 0: f.write(f"Penalty: {q.get('penalty', 0)}\n")
+                    if q.get('feedback_true'): _write_multiline_field(f, "Feedback True", q['feedback_true'])
+                    for _lbl, _key in (('Correct Feedback', 'correct_feedback'), ('Partially Correct Feedback', 'partially_correct_feedback'), ('Incorrect Feedback', 'incorrect_feedback')):
+                        if q.get(_key): _write_multiline_field(f, _lbl, q[_key])
 
                 elif q_type == "matching":
                     for pair in q.get('pairs', []):
-                        f.write(f"Subquestion: {pair.get('subquestion', '')}\n")
-                        f.write(f"Answer: {pair.get('answer', '')}\n")
-                    if q.get('grade', 1) != 1:
-                        f.write(f"Grade: {q.get('grade', 1)}\n")
-                    if q.get('penalty', 0) != 0:
-                        f.write(f"Penalty: {q.get('penalty', 0)}\n")
-                    if q.get('shuffle_answers', True) is False:
-                        f.write("Shuffle Answers: false\n")
-                    if q.get('show_num_correct', False):
-                        f.write("Show Number Correct: true\n")
-                    if q.get('correct_feedback') and \
-                       q['correct_feedback'] != "Your answer is correct.":
-                        f.write(f"Correct Feedback: {q['correct_feedback']}\n")
-                    if q.get('partially_correct_feedback') and \
-                       q['partially_correct_feedback'] != "Your answer is partially correct.":
-                        f.write(f"Partially Correct Feedback: {q['partially_correct_feedback']}\n")
-                    if q.get('incorrect_feedback') and \
-                       q['incorrect_feedback'] != "Your answer is incorrect.":
-                        f.write(f"Incorrect Feedback: {q['incorrect_feedback']}\n")
+                        _write_multiline_field(f, "Subquestion", pair.get('subquestion', ''))
+                        _write_multiline_field(f, "Answer", pair.get('answer', ''))
+
+                    if q.get('grade', 1) != 1: f.write(f"Grade: {q.get('grade', 1)}\n")
+                    if q.get('penalty', 0) != 0: f.write(f"Penalty: {q.get('penalty', 0)}\n")
+                    if q.get('shuffle_answers', True) is False: f.write("Shuffle Answers: false\n")
+                    if q.get('show_num_correct', False): f.write("Show Number Correct: true\n")
+
+                    for _lbl, _key in (('Correct Feedback', 'correct_feedback'), ('Partially Correct Feedback', 'partially_correct_feedback'), ('Incorrect Feedback', 'incorrect_feedback')):
+                        if q.get(_key) and q[_key] not in ("Your answer is correct.", "Your answer is partially correct.", "Your answer is incorrect."):
+                            _write_multiline_field(f, _lbl, q[_key])
+
                     for h_idx, h in enumerate(q.get('hints', []), 1):
-                        f.write(f"Hint {h_idx}: {h.get('text', '')}\n")
-                        if h.get('clear_incorrect', False):
-                            f.write(f"Hint {h_idx} Clear Incorrect: true\n")
-                        if h.get('show_num_correct', False):
-                            f.write(f"Hint {h_idx} Show Number Correct: true\n")
+                        _write_multiline_field(f, f"Hint {h_idx}", h.get('text', ''))
+                        if h.get('clear_incorrect', False): f.write(f"Hint {h_idx} Clear Incorrect: true\n")
+                        if h.get('show_num_correct', False): f.write(f"Hint {h_idx} Show Number Correct: true\n")
 
                 else:  # essay
-                    if q.get('grade', 1) != 1:
-                        f.write(f"Grade: {q.get('grade', 1)}\n")
-                    if q.get('lines', 15) != 15:
-                        f.write(f"Lines: {q.get('lines', 15)}\n")
+                    if q.get('grade', 1) != 1: f.write(f"Grade: {q.get('grade', 1)}\n")
+                    if q.get('lines', 15) != 15: f.write(f"Lines: {q.get('lines', 15)}\n")
                     if q.get('attachments', 0) > 0:
                         f.write(f"Attachments: {q.get('attachments')}\n")
                         f.write(f"FileTypes: {q.get('filetypes', '.doc,.docx,.pdf,.png,.jpg,.jpeg')}\n")
                         _mb = q.get('maxbytes', 2 * 1024 * 1024) / (1024 * 1024)
                         f.write(f"MaxFileSizeMB: {_mb:.0f}\n")
-                    if q.get('grader_info'):
-                        f.write(f"Grader Information: {q['grader_info']}\n")
+                    if q.get('grader_info'): _write_multiline_field(f, "Grader Information", q['grader_info'])
 
-                # ---- Feedback / explanation (common) ----
-                if q.get('feedback_true'):
-                    f.write(f"Feedback True: {q['feedback_true']}\n")
-                if q.get('feedback_false'):
-                    f.write(f"Feedback False: {q['feedback_false']}\n")
-                if q.get('general_feedback'):
-                    f.write(f"General Feedback: {q['general_feedback']}\n")
+                if q.get('feedback_true'): _write_multiline_field(f, "Feedback True", q['feedback_true'])
+                if q.get('feedback_false'): _write_multiline_field(f, "Feedback False", q['feedback_false'])
+                if q.get('general_feedback'): _write_multiline_field(f, "General Feedback", q['general_feedback'])
 
                 f.write("\n")
-                exported += 1
 
             f.write("---\n")
 
@@ -5577,18 +5500,7 @@ def export_questions_txt(question_ids=None, verbose=True):
     elapsed = time.time() - start_time
     file_size = os.path.getsize(filename) / 1024
 
-    print("\n" + "═" * 60)
-    print_colored("  📤 EXPORT SUMMARY", COLORS.CYAN, bold=True)
-    print("═" * 60)
-    print(f"  📁 Output file: {filename}")
-    print(f"  📊 Questions  : {exported} (skipped: {skipped})")
-    print(f"  🏷️  Format     : TXT")
-    print(f"  💾 File size  : {file_size:.2f} KB")
-    print(f"  ⏱️  Time       : {elapsed:.2f}s")
-    if type_counts:
-        print(f"  📈 Types      : " +
-              ", ".join(f"{k}: {v}" for k, v in type_counts.items()))
-    print("═" * 60)
+    print_colored(f"\n[✓] Exported {len(rows)} questions to {filename} ({file_size:.2f} KB, {elapsed:.2f}s)", COLORS.GREEN)
 
 def import_questions_txt():
     print("\n" + "═" * 50)
