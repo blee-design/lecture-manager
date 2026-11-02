@@ -3,6 +3,7 @@
 import os
 import csv
 import json
+import mysql.connector
 from .db import get_connection, TABLE_NAME
 from .youtube import extract_video_id
 from .utils import (
@@ -17,14 +18,14 @@ def get_export_data(full=False):
 
     if full:
         columns = [
-            'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
+            'id', 'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
             'subject', 'chapter', 'lecturer', 'nepali_date', 'time',
-            'notes', 'file_hash', 'original_filename', 'paper',
+            'notes', 'file_hash', 'original_filename', 'paper', 'source',
             'youtube_upload_id', 'youtube_upload_status', 'youtube_title_updated'
         ]
     else:
         columns = [
-            'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
+            'id', 'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
             'subject', 'chapter', 'lecturer', 'nepali_date', 'time', 'notes'
         ]
 
@@ -37,13 +38,12 @@ def get_export_data(full=False):
 
 def _get_export_columns(full=False):
     if full:
-        return ['video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
+        return ['id', 'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
                 'subject', 'chapter', 'lecturer', 'nepali_date', 'time',
-                'notes', 'file_hash', 'original_filename', 'paper',
-                'youtube_upload_id', 'youtube_upload_status',
-                'youtube_title_updated']
+                'notes', 'file_hash', 'original_filename', 'paper', 'source',
+                'youtube_upload_id', 'youtube_upload_status', 'youtube_title_updated']
     else:
-        return ['video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
+        return ['id', 'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
                 'subject', 'chapter', 'lecturer', 'nepali_date', 'time', 'notes']
 
 def export_csv():
@@ -52,7 +52,7 @@ def export_csv():
     print("═" * 50)
     print("Do you want to export all columns (full backup) or basic columns?")
     print("  (b) Basic  - video_id, mirror, title, syllabus, subject, chapter, lecturer, date, time, notes")
-    print("  (f) Full   - all columns including file_hash, original_filename, paper, YouTube upload data")
+    print("  (f) Full   - all columns including file_hash, original_filename, paper, source, YouTube data")
     choice = input(color_text("Choose (b/f, default b): ", COLORS.MAGENTA)).strip().lower()
     full = (choice == 'f')
 
@@ -87,7 +87,7 @@ def export_json():
     print("═" * 50)
     print("Do you want to export all columns (full backup) or basic columns?")
     print("  (b) Basic  - video_id, mirror, title, syllabus, subject, chapter, lecturer, date, time, notes")
-    print("  (f) Full   - all columns including file_hash, original_filename, paper, YouTube upload data")
+    print("  (f) Full   - all columns including file_hash, original_filename, paper, source, YouTube data")
     choice = input(color_text("Choose (b/f, default b): ", COLORS.MAGENTA)).strip().lower()
     full = (choice == 'f')
 
@@ -144,101 +144,115 @@ def _import_rows(rows, format_name):
     updated = 0
     skipped = 0
 
-    for item in rows:
-        if not isinstance(item, dict):
-            print_colored("[!] Item is not a dict, skipping.", COLORS.YELLOW)
-            skipped += 1
-            continue
-
-        video_id = item.get('video_id', '').strip()
-        if not video_id or not extract_video_id(video_id):
-            print_colored(f"[!] Invalid video_id '{video_id}', skipping.", COLORS.YELLOW)
-            skipped += 1
-            continue
-
-        cursor.execute(f"SELECT id FROM {TABLE_NAME} WHERE video_id = %s", (video_id,))
-        exists = cursor.fetchone()
-
-        mirror_video_id = _clean_val(item.get('mirror_video_id'))
-        video_title = _clean_val(item.get('video_title'))
-        syllabus_id = _clean_val(item.get('syllabus_id'))
-        subject = _clean_val(item.get('subject'))
-        chapter = _clean_val(item.get('chapter'))
-        lecturer = _clean_val(item.get('lecturer'))
-        nepali_date = _clean_val(item.get('nepali_date'))
-        time_val = _clean_val(item.get('time'))
-        notes = _clean_val(item.get('notes'))
-        file_hash = _clean_val(item.get('file_hash'))
-        original_filename = _clean_val(item.get('original_filename'))
-        paper = _clean_val(item.get('paper'))
-        youtube_upload_id = _clean_val(item.get('youtube_upload_id'))
-        youtube_upload_status = _clean_val(item.get('youtube_upload_status'))
-        youtube_title_updated = _clean_val(item.get('youtube_title_updated'))
-
-        if exists:
-            if choice == '1':
+    try:
+        for item in rows:
+            if not isinstance(item, dict):
+                print_colored("[!] Item is not a dict, skipping.", COLORS.YELLOW)
                 skipped += 1
                 continue
-            elif choice == '2':
-                update_fields = []
-                params = []
-                for key, val in [
-                    ('mirror_video_id', mirror_video_id),
-                    ('video_title', video_title),
-                    ('syllabus_id', syllabus_id),
-                    ('subject', subject),
-                    ('chapter', chapter),
-                    ('lecturer', lecturer),
-                    ('nepali_date', nepali_date),
-                    ('time', time_val),
-                    ('notes', notes),
-                    ('file_hash', file_hash),
-                    ('original_filename', original_filename),
-                    ('paper', paper),
-                    ('youtube_upload_id', youtube_upload_id),
-                    ('youtube_upload_status', youtube_upload_status),
-                    ('youtube_title_updated', youtube_title_updated),
-                ]:
-                    if val is not None:
-                        update_fields.append(f"{key} = %s")
-                        params.append(val)
-                if not update_fields:
+
+            video_id = item.get('video_id', '').strip()
+            if not video_id or not extract_video_id(video_id):
+                print_colored(f"[!] Invalid video_id '{video_id}', skipping.", COLORS.YELLOW)
+                skipped += 1
+                continue
+
+            cursor.execute(f"SELECT id FROM {TABLE_NAME} WHERE video_id = %s", (video_id,))
+            exists = cursor.fetchone()
+
+            mirror_video_id = _clean_val(item.get('mirror_video_id'))
+            video_title = _clean_val(item.get('video_title'))
+            syllabus_id = _clean_val(item.get('syllabus_id'))
+            subject = _clean_val(item.get('subject'))
+            chapter = _clean_val(item.get('chapter'))
+            lecturer = _clean_val(item.get('lecturer'))
+            nepali_date = _clean_val(item.get('nepali_date'))
+            time_val = _clean_val(item.get('time'))
+            notes = _clean_val(item.get('notes'))
+            file_hash = _clean_val(item.get('file_hash'))
+            original_filename = _clean_val(item.get('original_filename'))
+            paper = _clean_val(item.get('paper'))
+            source = _clean_val(item.get('source'))
+            youtube_upload_id = _clean_val(item.get('youtube_upload_id'))
+            youtube_upload_status = _clean_val(item.get('youtube_upload_status'))
+            youtube_title_updated = _clean_val(item.get('youtube_title_updated'))
+
+            if exists:
+                if choice == '1':
                     skipped += 1
                     continue
-                params.append(video_id)
-                sql = f"UPDATE {TABLE_NAME} SET {', '.join(update_fields)} WHERE video_id = %s"
-                cursor.execute(sql, params)
-                updated += 1
-                continue
-            else:  # choice == 3
-                print_colored(f"[!] Duplicate video_id {video_id}, aborting.", COLORS.RED)
-                conn.rollback()
-                cursor.close()
-                conn.close()
-                print("Import aborted.")
-                return
-        else:
-            insert_fields = [
-                'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
-                'subject', 'chapter', 'lecturer', 'nepali_date', 'time',
-                'notes', 'file_hash', 'original_filename', 'paper',
-                'youtube_upload_id', 'youtube_upload_status', 'youtube_title_updated'
-            ]
-            values = [
-                video_id, mirror_video_id, video_title, syllabus_id,
-                subject, chapter, lecturer, nepali_date, time_val,
-                notes, file_hash, original_filename, paper,
-                youtube_upload_id, youtube_upload_status, youtube_title_updated
-            ]
-            placeholders = ','.join(['%s'] * len(insert_fields))
-            sql = f"INSERT INTO {TABLE_NAME} ({', '.join(insert_fields)}) VALUES ({placeholders})"
-            cursor.execute(sql, values)
-            added += 1
+                elif choice == '2':
+                    update_fields = []
+                    params = []
+                    for key, val in [
+                        ('mirror_video_id', mirror_video_id),
+                        ('video_title', video_title),
+                        ('syllabus_id', syllabus_id),
+                        ('subject', subject),
+                        ('chapter', chapter),
+                        ('lecturer', lecturer),
+                        ('nepali_date', nepali_date),
+                        ('time', time_val),
+                        ('notes', notes),
+                        ('file_hash', file_hash),
+                        ('original_filename', original_filename),
+                        ('paper', paper),
+                        ('source', source),
+                        ('youtube_upload_id', youtube_upload_id),
+                        ('youtube_upload_status', youtube_upload_status),
+                        ('youtube_title_updated', youtube_title_updated),
+                    ]:
+                        if val is not None:
+                            update_fields.append(f"{key} = %s")
+                            params.append(val)
+                    if not update_fields:
+                        skipped += 1
+                        continue
+                    params.append(video_id)
+                    sql = f"UPDATE {TABLE_NAME} SET {', '.join(update_fields)} WHERE video_id = %s"
 
-    conn.commit()
-    cursor.close()
-    conn.close()
-    print_colored(f"[✓] Import complete: {added} added, {updated} updated, {skipped} skipped.", COLORS.GREEN)
+                    try:
+                        cursor.execute(sql, params)
+                        updated += 1
+                    except mysql.connector.IntegrityError:
+                        print_colored(f"[!] Skipped update for {video_id}: Mirror ID '{mirror_video_id}' is already used by another record.", COLORS.YELLOW)
+                        skipped += 1
+                    continue
+                else:  # choice == 3
+                    print_colored(f"[!] Duplicate video_id {video_id}, aborting.", COLORS.RED)
+                    conn.rollback()
+                    return
+            else:
+                insert_fields = [
+                    'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
+                    'subject', 'chapter', 'lecturer', 'nepali_date', 'time',
+                    'notes', 'file_hash', 'original_filename', 'paper', 'source',
+                    'youtube_upload_id', 'youtube_upload_status', 'youtube_title_updated'
+                ]
+                values = [
+                    video_id, mirror_video_id, video_title, syllabus_id,
+                    subject, chapter, lecturer, nepali_date, time_val,
+                    notes, file_hash, original_filename, paper, source,
+                    youtube_upload_id, youtube_upload_status, youtube_title_updated
+                ]
+                placeholders = ','.join(['%s'] * len(insert_fields))
+                sql = f"INSERT INTO {TABLE_NAME} ({', '.join(insert_fields)}) VALUES ({placeholders})"
+
+                try:
+                    cursor.execute(sql, values)
+                    added += 1
+                except mysql.connector.IntegrityError:
+                    print_colored(f"[!] Skipped insert for {video_id}: Mirror ID '{mirror_video_id}' is already used by another record.", COLORS.YELLOW)
+                    skipped += 1
+
+        conn.commit()
+        print_colored(f"[✓] Import complete: {added} added, {updated} updated, {skipped} skipped.", COLORS.GREEN)
+    except Exception as e:
+        conn.rollback()
+        print_colored(f"[!] Fatal error during import: {e}", COLORS.RED)
+    finally:
+        cursor.close()
+        conn.close()
 
 def import_csv():
     print("\n" + "═" * 50)
