@@ -19,14 +19,14 @@ def get_export_data(full=False):
     if full:
         columns = [
             'id', 'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
-            'subject', 'chapter', 'lecturer', 'nepali_date', 'time',
+            'subject', 'chapter', 'topic', 'lecturer', 'nepali_date', 'time',
             'notes', 'file_hash', 'original_filename', 'paper', 'source',
             'youtube_upload_id', 'youtube_upload_status', 'youtube_title_updated'
         ]
     else:
         columns = [
             'id', 'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
-            'subject', 'chapter', 'lecturer', 'nepali_date', 'time', 'notes'
+            'subject', 'chapter', 'topic', 'lecturer', 'nepali_date', 'time', 'notes'
         ]
 
     query = f"SELECT {', '.join(columns)} FROM {TABLE_NAME} ORDER BY nepali_date DESC, time DESC"
@@ -39,12 +39,12 @@ def get_export_data(full=False):
 def _get_export_columns(full=False):
     if full:
         return ['id', 'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
-                'subject', 'chapter', 'lecturer', 'nepali_date', 'time',
+                'subject', 'chapter', 'topic', 'lecturer', 'nepali_date', 'time',
                 'notes', 'file_hash', 'original_filename', 'paper', 'source',
                 'youtube_upload_id', 'youtube_upload_status', 'youtube_title_updated']
     else:
         return ['id', 'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
-                'subject', 'chapter', 'lecturer', 'nepali_date', 'time', 'notes']
+                'subject', 'chapter', 'topic', 'lecturer', 'nepali_date', 'time', 'notes']
 
 def export_csv():
     print("\n" + "═" * 50)
@@ -165,6 +165,7 @@ def _import_rows(rows, format_name):
             syllabus_id = _clean_val(item.get('syllabus_id'))
             subject = _clean_val(item.get('subject'))
             chapter = _clean_val(item.get('chapter'))
+            topic = _clean_val(item.get('topic'))
             lecturer = _clean_val(item.get('lecturer'))
             nepali_date = _clean_val(item.get('nepali_date'))
             time_val = _clean_val(item.get('time'))
@@ -190,6 +191,7 @@ def _import_rows(rows, format_name):
                         ('syllabus_id', syllabus_id),
                         ('subject', subject),
                         ('chapter', chapter),
+                        ('topic', topic),
                         ('lecturer', lecturer),
                         ('nepali_date', nepali_date),
                         ('time', time_val),
@@ -225,13 +227,13 @@ def _import_rows(rows, format_name):
             else:
                 insert_fields = [
                     'video_id', 'mirror_video_id', 'video_title', 'syllabus_id',
-                    'subject', 'chapter', 'lecturer', 'nepali_date', 'time',
+                    'subject', 'chapter', 'topic', 'lecturer', 'nepali_date', 'time',
                     'notes', 'file_hash', 'original_filename', 'paper', 'source',
                     'youtube_upload_id', 'youtube_upload_status', 'youtube_title_updated'
                 ]
                 values = [
                     video_id, mirror_video_id, video_title, syllabus_id,
-                    subject, chapter, lecturer, nepali_date, time_val,
+                    subject, chapter, topic, lecturer, nepali_date, time_val,
                     notes, file_hash, original_filename, paper, source,
                     youtube_upload_id, youtube_upload_status, youtube_title_updated
                 ]

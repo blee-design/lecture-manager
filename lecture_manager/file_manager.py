@@ -826,7 +826,8 @@ def get_target_path(record, interactive=True):
                             subj_name, f"{subject_num}.{chapter_num}")
 
     syllabus = clean_field(record.get("syllabus_id"))
-    chapter_display = record.get('chapter') or record.get('video_title', '').split('||')[0].strip() or "chapter"
+    from .utils import get_display_title
+    chapter_display = get_display_title(record) or "chapter"
     subject_display = clean_field(record.get('subject', ''))
     lecturer = clean_field(record.get('lecturer', ''))
     nepali_date = clean_field(record.get('nepali_date', ''))

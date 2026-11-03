@@ -778,6 +778,7 @@ def add_lecture_web():
         syllabus_id = request.form.get('syllabus_id')
         subject = request.form.get('subject')
         chapter = request.form.get('chapter')
+        topic = request.form.get('topic') or None
         lecturer = request.form.get('lecturer')
         nepali_date = request.form.get('nepali_date')
         time_str = request.form.get('time')
@@ -789,9 +790,9 @@ def add_lecture_web():
         try:
             cursor.execute(f"""
                 INSERT INTO {TABLE_NAME}
-                (video_id, mirror_video_id, video_title, syllabus_id, subject, chapter, lecturer, nepali_date, time, notes)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (video_id, mirror_id, title, syllabus_id, subject, chapter, lecturer, nepali_date, time_str, notes))
+                (video_id, mirror_video_id, video_title, syllabus_id, subject, chapter, topic, lecturer, nepali_date, time, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (video_id, mirror_id, title, syllabus_id, subject, chapter, topic, lecturer, nepali_date, time_str, notes))
             conn.commit()
             flash('Lecture added successfully!', 'success')
         except Exception as e:
@@ -822,6 +823,7 @@ def edit_lecture_web(id):
         syllabus_id = request.form.get('syllabus_id')
         subject = request.form.get('subject')
         chapter = request.form.get('chapter')
+        topic = request.form.get('topic') or None
         lecturer = request.form.get('lecturer')
         nepali_date = request.form.get('nepali_date')
         time_str = request.form.get('time')
@@ -839,10 +841,10 @@ def edit_lecture_web(id):
             cursor.execute(f"""
                 UPDATE {TABLE_NAME}
                 SET video_id = %s, mirror_video_id = %s, video_title = %s,
-                    syllabus_id = %s, subject = %s, chapter = %s,
+                    syllabus_id = %s, subject = %s, chapter = %s, topic = %s,
                     lecturer = %s, nepali_date = %s, time = %s, notes = %s
                 WHERE id = %s
-            """, (video_id, mirror_id, new_title, syllabus_id, subject, chapter,
+            """, (video_id, mirror_id, new_title, syllabus_id, subject, chapter, topic,
                   lecturer, nepali_date, time_str, notes, id))
             conn.commit()
             flash('Lecture updated successfully!', 'success')

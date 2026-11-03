@@ -18,7 +18,7 @@ TABLE_NAME = 'youtube_lectures'
 #  Users never touch this. It runs on startup and skips itself
 #  when the DB is already current.
 # =============================================================
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Populated below, after the migration functions are defined.
 MIGRATIONS = []
@@ -1541,11 +1541,19 @@ def _v3_marks_breakdown(cursor):
             "ALTER TABLE questions ADD COLUMN marks_breakdown VARCHAR(100) NULL")
         print_colored("[✓] Added 'marks_breakdown' column.", COLORS.GREEN)
 
+def _v4_topic_column(cursor):
+    """v4 — add separate 'topic' column to youtube_lectures."""
+    cursor.execute("SHOW COLUMNS FROM youtube_lectures LIKE 'topic'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE youtube_lectures ADD COLUMN topic VARCHAR(255) NULL")
+        print_colored("[✓] Added 'topic' column to youtube_lectures.", COLORS.GREEN)
+
 # Register the migrations AFTER all functions are defined.
 # Order must be ascending by version number.
 MIGRATIONS.append((1, "baseline", _baseline_migration_v1))
 MIGRATIONS.append((2, "question_links", _v2_question_links))
 MIGRATIONS.append((3, "marks_breakdown", _v3_marks_breakdown))
+MIGRATIONS.append((4, "topic_column", _v4_topic_column))
 
 def ensure_subjects_populated():
     from .syllabus_config import is_configured

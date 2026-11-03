@@ -19,6 +19,10 @@
     <label for="chapter" class="form-label">Chapter</label>
     <input type="text" class="form-control" id="chapter" name="chapter" value="{{ record.chapter if record else '' }}">
   </div>
+    <div class="mb-3">
+    <label for="topic" class="form-label">Topic</label>
+    <input type="text" class="form-control" id="topic" name="topic" value="{{ record.topic if record else '' }}">
+  </div>
   <div class="mb-3">
     <label for="lecturer" class="form-label">Lecturer</label>
     <input type="text" class="form-control" id="lecturer" name="lecturer" value="{{ record.lecturer if record else '' }}">

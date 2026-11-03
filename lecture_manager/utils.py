@@ -631,13 +631,12 @@ def clean_field(text):
     return text.strip() if text else ""
 
 def get_display_title(record):
-    if record.get('chapter'):
-        return clean_field(record['chapter'])
-    raw = record.get('video_title', '')
-    if raw and '||' in raw:
-        parts = [p.strip() for p in raw.split('||') if p.strip()]
-        return parts[0] if parts else raw.strip()
-    return clean_field(record.get('subject', ''))
+    chapter = clean_field(record.get('chapter', ''))
+    topic = clean_field(record.get('topic', ''))
+
+    if chapter and topic:
+        return f"{chapter} - {topic}"
+    return chapter or topic or clean_field(record.get('subject', ''))
 
 def parse_lecture_title(title):
     if not title:
@@ -723,7 +722,7 @@ def build_original_filename(record):
     """
     parts = [
         record.get('syllabus_id', ''),
-        record.get('chapter', ''),
+        get_display_title(record),
         record.get('subject', ''),
         record.get('lecturer', ''),
         record.get('nepali_date', ''),

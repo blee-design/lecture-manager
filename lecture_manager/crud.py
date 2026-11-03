@@ -11,17 +11,26 @@ from .facebook_manager import add_facebook_lecture
 from .upload import upload_video_to_youtube, update_youtube_title
 from .constants import DISPLAY_SEPARATOR
 
-def _paper_choices():
+def _paper_choices(subject_code=None):
     """
-    Return a list of (paper_key, display_name, folder_name) tuples for
-    the currently configured papers, ordered by display_order.
-    Empty list if none configured.
+    Return a list of (paper_key, display_name, folder_name) tuples.
+    If subject_code is provided, it filters to only papers that actually
+    contain that subject in the syllabus.
     """
-    from .file_manager import _papers
-    return [
+    from .file_manager import _papers, _subject_lookup
+    papers = _papers()
+    choices = [
         (k, p.get('display_name') or k, p.get('folder_name') or k)
-        for k, p in _papers().items()
+        for k, p in papers.items()
     ]
+
+    if subject_code:
+        lookup = _subject_lookup()
+        possible = {pk for (pk, sc) in lookup.keys() if sc == subject_code}
+        if possible:
+            choices = [c for c in choices if c[0] in possible]
+
+    return choices
 
 def download_video(record, output_dir=DOWNLOAD_DIR, video_id_to_download=None, silent=False):
     """
@@ -200,20 +209,25 @@ def add_lecture():
             print(f"    Group   : {auto_group}")
         print()
 
-    # ---- Chapter input with default from syllabus ----
+    # ---- Chapter (auto-detected from syllabus) ----
     if auto_chapter:
         chapter = input(color_text(
-            f"Chapter/Topic [{auto_chapter}]: ", COLORS.MAGENTA
+            f"Chapter [{auto_chapter}]: ", COLORS.MAGENTA
         )).strip() or auto_chapter
     else:
-        chapter = input(color_text("Chapter/Topic: ", COLORS.MAGENTA)).strip()
+        chapter = input(color_text("Chapter: ", COLORS.MAGENTA)).strip()
+
+    # ---- Topic (manual input) ----
+    topic = input(color_text("Topic (optional): ", COLORS.MAGENTA)).strip() or None
 
     if parsed:
         # ---- Fall back to title-based detection only if needed ----
         if not detected_paper:
             detected_paper = detect_paper(parsed['subject'], syllabus_id, chapter, interactive=True)
         if not detected_paper:
-            choices = _paper_choices()
+            from .file_manager import parse_syllabus_id
+            subj_code, _, _ = parse_syllabus_id(syllabus_id)
+            choices = _paper_choices(subject_code=subj_code)
             if not choices:
                 print_colored("[!] No papers configured. Please set up your syllabus first.", COLORS.RED)
                 print_colored("   Use '📚 Syllabus Setup' from the main menu (option 9).", COLORS.YELLOW)
@@ -232,6 +246,9 @@ def add_lecture():
         print_colored("  Detected information:", COLORS.BLUE)
         final_subject = auto_subject or parsed['subject']
         print(f"  Subject      : {final_subject}" + ("  (from syllabus)" if auto_subject else "  (from title)"))
+        print(f"  Chapter      : {chapter}")
+        if topic:
+            print(f"  Topic        : {topic}")
         print(f"  Lecturer     : {parsed['lecturer']}")
         print(f"  Nepali Date  : {parsed['nepali_date']}")
         print(f"  Time         : {parsed['time']}")
@@ -350,7 +367,9 @@ def add_lecture():
             _paper_map = {k: name for k, name, _folder in _paper_choices()}
             print_colored(f"[✓] Using auto-detected paper: {detected_paper} ({_paper_map.get(detected_paper, '')})", COLORS.GREEN)
         else:
-            choices = _paper_choices()
+            from .file_manager import parse_syllabus_id
+            subj_code, _, _ = parse_syllabus_id(syllabus_id)
+            choices = _paper_choices(subject_code=subj_code)
             if not choices:
                 print_colored("[!] No papers configured. Please set up your syllabus first.", COLORS.RED)
                 return
@@ -399,9 +418,9 @@ def add_lecture():
         original_filename = DISPLAY_SEPARATOR.join([p for p in [syllabus_id, chapter, subject, lecturer, nepali_date, time_str] if p])
         cursor.execute(f"""
         INSERT INTO {TABLE_NAME}
-        (video_id, mirror_video_id, video_title, syllabus_id, subject, chapter, lecturer, nepali_date, time, notes, paper, original_filename)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (video_id, mirror_id, title, syllabus_id, subject, chapter, lecturer, nepali_date, time_str, notes, paper, original_filename))
+        (video_id, mirror_video_id, video_title, syllabus_id, subject, chapter, topic, lecturer, nepali_date, time, notes, paper, original_filename)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (video_id, mirror_id, title, syllabus_id, subject, chapter, topic, lecturer, nepali_date, time_str, notes, paper, original_filename))
         conn.commit()
         cursor.close()
         conn.close()
@@ -585,7 +604,7 @@ def view_one():
     cursor = conn.cursor(dictionary=True, buffered=True)
     cursor.execute(f"""
         SELECT id, video_id, mirror_video_id, video_title, syllabus_id, subject,
-               chapter, lecturer, nepali_date, time, notes, original_filename, file_hash
+               chapter, topic, lecturer, nepali_date, time, notes, original_filename, file_hash
         FROM {TABLE_NAME}
         WHERE video_id = %s OR syllabus_id = %s OR mirror_video_id = %s
     """, (identifier, identifier, identifier))
@@ -625,7 +644,8 @@ def view_one():
     print(f"Video ID     : {row['video_id']}")
     print(f"Syllabus ID  : {clean_field(row['syllabus_id'])}")
     print(f"Subject      : {clean_field(row['subject'])}")
-    print(f"Chapter      : {clean_field(row['chapter']) if row['chapter'] else '(auto: ' + get_display_title({'chapter': row['chapter'], 'video_title': row['video_title'], 'subject': row['subject']}) + ')'}")
+    print(f"Chapter      : {clean_field(row['chapter']) or '(none)'}")
+    print(f"Topic        : {clean_field(row['topic']) or '(none)'}")
     print(f"Lecturer     : {clean_field(row['lecturer'])}")
     print(f"Nepali Date  : {clean_field(row['nepali_date'])}")
     print(f"Time         : {clean_field(row['time'])}")
@@ -712,13 +732,14 @@ def update_lecture():
             print(f"2. Syllabus ID  : {row['syllabus_id']}")
             print(f"3. Subject      : {row['subject']}")
             print(f"4. Chapter      : {row['chapter'] if row['chapter'] else '(auto)'}")
-            print(f"5. Lecturer     : {row['lecturer']}")
-            print(f"6. Nepali Date  : {row['nepali_date']}")
-            print(f"7. Time         : {row['time']}")
-            print(f"8. Video Title  : {row['video_title']}")
-            print(f"9. Mirror ID    : {row['mirror_video_id'] if row['mirror_video_id'] else '(none)'}")
-            print("10. Notes        : " + (row['notes'] if row['notes'] else '(none)'))
-            print("11. Paper        : " + (row['paper'] if row['paper'] else '(none)'))
+            print(f"5. Topic        : {row.get('topic') or '(none)'}")
+            print(f"6. Lecturer     : {row['lecturer']}")
+            print(f"7. Nepali Date  : {row['nepali_date']}")
+            print(f"8. Time         : {row['time']}")
+            print(f"9. Video Title  : {row['video_title']}")
+            print(f"10. Mirror ID    : {row['mirror_video_id'] if row['mirror_video_id'] else '(none)'}")
+            print("11. Notes        : " + (row['notes'] if row['notes'] else '(none)'))
+            print("12. Paper        : " + (row['paper'] if row['paper'] else '(none)'))
             print("0. Finish / Exit update mode for this lecture")
 
             field_map = {
@@ -726,16 +747,17 @@ def update_lecture():
                 '2': 'syllabus_id',
                 '3': 'subject',
                 '4': 'chapter',
-                '5': 'lecturer',
-                '6': 'nepali_date',
-                '7': 'time',
-                '8': 'video_title',
-                '9': 'mirror_video_id',
-                '10': 'notes',
-                '11': 'paper'
+                '5': 'topic',
+                '6': 'lecturer',
+                '7': 'nepali_date',
+                '8': 'time',
+                '9': 'video_title',
+                '10': 'mirror_video_id',
+                '11': 'notes',
+                '12': 'paper'
             }
 
-            choice = input(color_text("Choose field to update (1-11) or 0 to exit: ", COLORS.MAGENTA)).strip()
+            choice = input(color_text("Choose field to update (1-12) or 0 to exit: ", COLORS.MAGENTA)).strip()
             if choice == '0':
                 print_colored("Exiting update mode for this lecture.", COLORS.YELLOW)
                 break
@@ -1216,6 +1238,7 @@ def search_lectures():
     WHERE syllabus_id LIKE %s
        OR subject LIKE %s
        OR chapter LIKE %s
+       OR topic LIKE %s
        OR lecturer LIKE %s
        OR nepali_date LIKE %s
        OR time LIKE %s
@@ -1226,7 +1249,7 @@ def search_lectures():
        OR file_hash LIKE %s
     ORDER BY nepali_date DESC, time DESC
     """
-    params = (like, like, like, like, like, like, like, like, like, like, like)  # 11 placeholders
+    params = (like, like, like, like, like, like, like, like, like, like, like, like)  # 12 placeholders
 
     try:
         cursor.execute(sql, params)
@@ -1282,6 +1305,7 @@ def search_all():
     WHERE syllabus_id LIKE %s
        OR subject LIKE %s
        OR chapter LIKE %s
+       OR topic LIKE %s
        OR lecturer LIKE %s
        OR nepali_date LIKE %s
        OR time LIKE %s
