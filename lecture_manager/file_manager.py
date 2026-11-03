@@ -145,19 +145,19 @@ def auto_detect_from_syllabus(syllabus_id, title_text=None, title_subject=None, 
     if not candidates:
         return result
 
-    # Step 2: Narrow by title text using paper keywords
+    # Step 2: Sort by title text using paper keywords (DO NOT HIDE OTHER PAPERS)
     if title_text and len(candidates) > 1:
         combined = (title_text + " " + (title_subject or "")).lower()
-        narrowed = []
         for c in candidates:
+            c['keyword_match'] = False
             pk = c['paper_key']
             if pk in kws:
                 for kw in kws[pk]:
                     if _re.search(r'(?<!\w)' + _re.escape(kw) + r'(?!\w)', combined):
-                        narrowed.append(c)
+                        c['keyword_match'] = True
                         break
-        if narrowed:
-            candidates = narrowed
+        # Sort: papers with matching keywords go to the top, others stay at the bottom
+        candidates.sort(key=lambda x: x.get('keyword_match', False), reverse=True)
 
     # Step 3: Narrow by chapter code presence
     if len(candidates) > 1:
@@ -197,7 +197,8 @@ def auto_detect_from_syllabus(syllabus_id, title_text=None, title_subject=None, 
             for c in group:
                 idx += 1
                 flat_list.append(c)
-                print(f"    {idx}. [{c['paper_key']}] {c['paper_display']}")
+                star = " ⭐ (Title matched)" if c.get('keyword_match') else ""
+                print(f"    {idx}. [{c['paper_key']}] {c['paper_display']}{star}")
                 print(f"       Subject: {subj_code} — {c['subject_name']}")
             print()
         print("    0. Cancel (skip auto-detect)")
