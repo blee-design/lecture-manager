@@ -1315,7 +1315,7 @@ def search_all():
        OR notes LIKE %s
        OR file_hash LIKE %s
     """
-    params = (like, like, like, like, like, like, like, like, like, like, like)
+    params = (like, like, like, like, like, like, like, like, like, like, like, like)
     cursor.execute(sql_yt, params)
     yt_rows = cursor.fetchall()
 

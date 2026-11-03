@@ -711,8 +711,9 @@ def add_lecture_guided():
             cursor.execute(f"""
                 INSERT INTO {TABLE_NAME}
                 (video_id, mirror_video_id, video_title, syllabus_id, subject,
-                 chapter, lecturer, nepali_date, time, notes, paper, original_filename)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 chapter, topic, lecturer, nepali_date, time, notes, paper,
+                 original_filename)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 video_id,
                 request.form.get('mirror_id') or None,
@@ -720,6 +721,7 @@ def add_lecture_guided():
                 syllabus_id,
                 subject_name,
                 request.form.get('chapter_title') or '',
+                request.form.get('topic') or None,
                 request.form.get('lecturer') or '',
                 request.form.get('nepali_date') or '',
                 request.form.get('time') or '',

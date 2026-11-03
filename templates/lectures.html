@@ -177,6 +177,7 @@
           </a>
         </th>
         <th>Chapter</th>
+        <th>Topic</th>
         <th>
           {% set new_order = 'desc' if sort_by == 'lecturer' and order == 'asc' else 'asc' %}
           <a href="{{ url_for('lectures', sort='lecturer', order=new_order,
@@ -247,6 +248,7 @@
         <td>{{ rec.syllabus_id or '' }}</td>
         <td>{{ rec.subject or '' }}</td>
         <td>{{ rec.chapter or '' }}</td>
+        <td>{{ rec.topic or '' }}</td>
         <td>{{ rec.lecturer or '' }}</td>
         <td>{{ rec.nepali_date or '' }}</td>
         <td>{{ rec.time or '' }}</td>

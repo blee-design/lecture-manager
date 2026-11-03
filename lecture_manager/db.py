@@ -161,6 +161,7 @@ def create_table():
         syllabus_id VARCHAR(20),
         subject VARCHAR(255),
         chapter VARCHAR(255),
+        topic VARCHAR(255) NULL,
         lecturer VARCHAR(255),
         nepali_date VARCHAR(20),
         time VARCHAR(20),
