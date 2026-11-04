@@ -219,6 +219,17 @@ def auto_detect_from_syllabus(syllabus_id, title_text=None, title_subject=None, 
     desc = describe_syllabus_id(syllabus_id, paper_key)
     result['chapter_name'] = desc.get('chapter_name')
 
+    # NEW: Fetch syllabus name for richer display
+    papers = _papers()
+    if paper_key in papers:
+        from . import syllabus_config as SC
+        sid = papers[paper_key].get('syllabus_id')
+        if sid:
+            syll = next((s for s in SC.get_syllabi(active_only=False) if s['id'] == sid), None)
+            if syll:
+                result['syllabus_display'] = syll['display_name']
+                result['syllabus_level'] = syll.get('level')
+
     try:
         conn = get_connection()
         cur = conn.cursor(dictionary=True)

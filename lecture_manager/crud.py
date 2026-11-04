@@ -200,13 +200,17 @@ def add_lecture():
 
         print()
         print_colored("  ✓ Auto-detected from syllabus:", COLORS.GREEN, bold=True)
-        print(f"    Paper   : {auto_info['paper_display']}")
+        if auto_info.get('syllabus_display'):
+            _lvl = f" (Level {auto_info.get('syllabus_level')})" if auto_info.get('syllabus_level') else ""
+            print(f"    Syllabus : {auto_info['syllabus_display']}{_lvl}")
+        print(f"    Paper    : {auto_info['paper_display']}")
+        print(f"    Code     : {syllabus_id}")
         if auto_subject:
-            print(f"    Subject : {auto_info['subject_code']} — {auto_subject}")
+            print(f"    Subject  : {auto_info['subject_code']} — {auto_subject}")
         if auto_chapter:
-            print(f"    Chapter : {auto_info['chapter_code']} — {auto_chapter}")
+            print(f"    Chapter  : {auto_info['chapter_code']} — {auto_chapter}")
         if auto_group:
-            print(f"    Group   : {auto_group}")
+            print(f"    Group    : {auto_group}")
         print()
 
     # ---- Chapter (auto-detected from syllabus) ----
@@ -271,81 +275,90 @@ def add_lecture():
                 'paper': detected_paper
             }
             while True:
-                print("\n" + "─" * 40)
-                print_colored("  EDIT ALL FIELDS", COLORS.CYAN, bold=True)
-                print("─" * 40)
-                print(f"  1. Syllabus ID  : {fields['syllabus_id']}")
-                print(f"  2. Chapter      : {fields['chapter']}")
-                print(f"  3. Subject      : {fields['subject']}")
-                print(f"  4. Lecturer     : {fields['lecturer']}")
-                print(f"  5. Nepali Date  : {fields['nepali_date']}")
-                print(f"  6. Time         : {fields['time']}")
-                print(f"  7. Paper        : {fields['paper']}")
-                print(f"  8. Topic        : {fields['topic'] or '(none)'}")
-                print("  0. Done – proceed with these values")
-                print("  9. Cancel – abort adding this lecture")
-                print("─" * 40)
-                choice = input(color_text("Choose field to edit (1-8), 0 to proceed, or 9 to cancel: ", COLORS.MAGENTA)).strip()
-                if choice == '0':
-                    break
-                elif choice == '9':
-                    print_colored("Operation cancelled by user.", COLORS.YELLOW)
-                    return
-                elif choice == '1':
-                    new_val = input(color_text(f"Syllabus ID [{fields['syllabus_id']}]: ", COLORS.MAGENTA)).strip()
-                    if new_val:
-                        fields['syllabus_id'] = normalize_syllabus_id(new_val)
-                elif choice == '2':
-                    new_val = input(color_text(f"Chapter/Topic [{fields['chapter']}]: ", COLORS.MAGENTA)).strip()
-                    if new_val:
-                        fields['chapter'] = new_val
-                elif choice == '3':
-                    new_val = input(color_text(f"Subject [{fields['subject']}]: ", COLORS.MAGENTA)).strip()
-                    if new_val:
-                        fields['subject'] = new_val
-                elif choice == '4':
-                    new_val = input(color_text(f"Lecturer [{fields['lecturer']}]: ", COLORS.MAGENTA)).strip()
-                    if new_val:
-                        fields['lecturer'] = new_val
-                elif choice == '5':
-                    new_val = input(color_text(f"Nepali Date [{fields['nepali_date']}]: ", COLORS.MAGENTA)).strip()
-                    if new_val:
-                        fields['nepali_date'] = new_val
-                elif choice == '6':
-                    new_val = input(color_text(f"Time [{fields['time']}]: ", COLORS.MAGENTA)).strip()
-                    if new_val:
-                        fields['time'] = new_val
-                elif choice == '7':
-                    choices = _paper_choices()
-                    if not choices:
-                        print_colored("[!] No papers configured. Run Syllabus Setup first.", COLORS.RED)
-                        continue
-                    print("\nAvailable papers:")
-                    for i, (k, name, _folder) in enumerate(choices, 1):
-                        print(f"  {i}. {k} ({name})")
-                    print("  0. Cancel (keep current)")
-                    paper_choice = input(color_text(f"Choose paper (1-{len(choices)}, or 0 to keep '{fields['paper']}'): ", COLORS.MAGENTA)).strip()
-                    if paper_choice.isdigit():
-                        idx = int(paper_choice)
-                        if 1 <= idx <= len(choices):
-                            fields['paper'] = choices[idx - 1][0]
-                        elif idx == 0:
-                            pass
-                        else:
-                            print_colored("[!] Invalid choice.", COLORS.RED)
-                    else:
-                        new_val = input(color_text(f"Paper key (or press Enter to keep '{fields['paper']}'): ", COLORS.MAGENTA)).strip()
-                        if new_val:
-                            valid_keys = {k for k, _n, _f in choices}
-                            if new_val in valid_keys:
-                                fields['paper'] = new_val
+                    print("\n" + "─" * 40)
+                    print_colored("  EDIT ALL FIELDS", COLORS.CYAN, bold=True)
+                    print("─" * 40)
+                    print(f"  1. Paper        : {fields['paper']}")
+                    print(f"  2. Syllabus ID  : {fields['syllabus_id']}")
+                    print(f"  3. Subject      : {fields['subject']}")
+                    print(f"  4. Chapter      : {fields['chapter']}")
+                    print(f"  5. Topic        : {fields['topic'] or '(none)'}")
+                    print(f"  6. Lecturer     : {fields['lecturer']}")
+                    print(f"  7. Nepali Date  : {fields['nepali_date']}")
+                    print(f"  8. Time         : {fields['time']}")
+                    print("  0. Done – proceed with these values")
+                    print("  9. Cancel – abort adding this lecture")
+                    print("─" * 40)
+                    choice = input(color_text("Choose field to edit (1-8), 0 to proceed, or 9 to cancel: ", COLORS.MAGENTA)).strip()
+
+                    if choice == '0':
+                        break
+                    elif choice == '9':
+                        print_colored("Operation cancelled by user.", COLORS.YELLOW)
+                        return
+
+                    elif choice == '1': # Paper
+                        choices = _paper_choices()
+                        if not choices:
+                            print_colored("[!] No papers configured. Run Syllabus Setup first.", COLORS.RED)
+                            continue
+                        print("\nAvailable papers:")
+                        for i, (k, name, _folder) in enumerate(choices, 1):
+                            print(f"  {i}. {k} ({name})")
+                        print("  0. Cancel (keep current)")
+                        paper_choice = input(color_text(f"Choose paper (1-{len(choices)}, or 0 to keep '{fields['paper']}'): ", COLORS.MAGENTA)).strip()
+                        if paper_choice.isdigit():
+                            idx = int(paper_choice)
+                            if 1 <= idx <= len(choices):
+                                fields['paper'] = choices[idx - 1][0]
+                            elif idx == 0:
+                                pass
                             else:
-                                print_colored(f"[!] Unknown paper key. Valid keys: {', '.join(sorted(valid_keys))}", COLORS.RED)
-                elif choice == '8':
-                    new_val = input(color_text(f"Topic [{fields['topic'] or ''}]: ", COLORS.MAGENTA)).strip()
-                    if new_val:
-                        fields['topic'] = new_val
-                        print_colored(f"[✓] Topic set to '{new_val}'.", COLORS.GREEN)
+                                print_colored("[!] Invalid choice.", COLORS.RED)
+                        else:
+                            new_val = input(color_text(f"Paper key (or press Enter to keep '{fields['paper']}'): ", COLORS.MAGENTA)).strip()
+                            if new_val:
+                                valid_keys = {k for k, _n, _f in choices}
+                                if new_val in valid_keys:
+                                    fields['paper'] = new_val
+                                else:
+                                    print_colored(f"[!] Unknown paper key. Valid keys: {', '.join(sorted(valid_keys))}", COLORS.RED)
+
+                    elif choice == '2': # Syllabus ID
+                        new_val = input(color_text(f"Syllabus ID [{fields['syllabus_id']}]: ", COLORS.MAGENTA)).strip()
+                        if new_val:
+                            fields['syllabus_id'] = normalize_syllabus_id(new_val)
+
+                    elif choice == '3': # Subject
+                        new_val = input(color_text(f"Subject [{fields['subject']}]: ", COLORS.MAGENTA)).strip()
+                        if new_val:
+                            fields['subject'] = new_val
+
+                    elif choice == '4': # Chapter
+                        new_val = input(color_text(f"Chapter [{fields['chapter']}]: ", COLORS.MAGENTA)).strip()
+                        if new_val:
+                            fields['chapter'] = new_val
+
+                    elif choice == '5': # Topic
+                        new_val = input(color_text(f"Topic [{fields['topic'] or ''}]: ", COLORS.MAGENTA)).strip()
+                        if new_val:
+                            fields['topic'] = new_val
+                            print_colored(f"[✓] Topic set to '{new_val}'.", COLORS.GREEN)
+
+                    elif choice == '6': # Lecturer
+                        new_val = input(color_text(f"Lecturer [{fields['lecturer']}]: ", COLORS.MAGENTA)).strip()
+                        if new_val:
+                            fields['lecturer'] = new_val
+
+                    elif choice == '7': # Nepali Date
+                        new_val = input(color_text(f"Nepali Date [{fields['nepali_date']}]: ", COLORS.MAGENTA)).strip()
+                        if new_val:
+                            fields['nepali_date'] = new_val
+
+                    elif choice == '8': # Time
+                        new_val = input(color_text(f"Time [{fields['time']}]: ", COLORS.MAGENTA)).strip()
+                        if new_val:
+                            fields['time'] = new_val
 
             syllabus_id = fields['syllabus_id']
             chapter = fields['chapter']
