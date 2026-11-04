@@ -18,7 +18,7 @@ TABLE_NAME = 'youtube_lectures'
 #  Users never touch this. It runs on startup and skips itself
 #  when the DB is already current.
 # =============================================================
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Populated below, after the migration functions are defined.
 MIGRATIONS = []
@@ -1549,12 +1549,171 @@ def _v4_topic_column(cursor):
         cursor.execute("ALTER TABLE youtube_lectures ADD COLUMN topic VARCHAR(255) NULL")
         print_colored("[✓] Added 'topic' column to youtube_lectures.", COLORS.GREEN)
 
+def _v5_chapter_to_topic(cursor):
+    """
+    v5 — migrate old 'chapter' descriptive text into 'topic', then
+    backfill 'chapter' with canonical names from the syllabus chapters
+    table.
+
+    Three phases:
+
+      1. For rows with chapter data and empty topic:
+         - If chapter already matches the canonical name → skip (no-op).
+         - Else: copy chapter → topic, then replace chapter with canonical.
+      2. For rows with empty chapter and empty topic but valid paper +
+         syllabus_id: auto-populate chapter from syllabus.
+      3. Rebuild `original_filename` for every row we touch.
+
+    Idempotent: safe to re-run. Once all rows are migrated, a second
+    pass finds nothing to change.
+    """
+    from .file_manager import parse_syllabus_id
+    from .utils import build_original_filename
+
+    # ---- Build the canonical chapter lookup ----
+    # Query directly (don't rely on file_manager's session cache, which
+    # may be populated with pre-migration state during startup).
+    cursor.execute("""
+        SELECT s.paper, s.chapter, c.chapter_code, c.name
+        FROM chapters c
+        JOIN subjects s ON s.id = c.subject_id
+        JOIN papers   p ON p.paper_key = s.paper
+        WHERE c.active = 1 AND s.active = 1 AND p.active = 1
+    """)
+    chapter_lookup = {}
+    for paper, subj, chap, name in cursor.fetchall():
+        paper = (paper or '').strip()
+        subj = str(subj).zfill(2)
+        chap = str(chap).zfill(2)
+        if paper and subj and chap and name:
+            chapter_lookup[(paper, subj, chap)] = name
+
+    def _canonical(paper, sid):
+        if not paper or not sid:
+            return None
+        subj_code, chap_code, _ = parse_syllabus_id(sid)
+        if not (subj_code and chap_code):
+            return None
+        return chapter_lookup.get((paper, subj_code, chap_code))
+
+    def _rebuild_filename(_id):
+        """Rebuild original_filename for a single row."""
+        cursor.execute("""
+            SELECT syllabus_id, chapter, topic, subject, lecturer,
+                   nepali_date, time
+            FROM youtube_lectures WHERE id = %s
+        """, (_id,))
+        r = cursor.fetchone()
+        if not r:
+            return
+        sid, chap, top, subj, lect, date, t = r
+        new_fn = build_original_filename({
+            'syllabus_id': sid, 'chapter': chap, 'topic': top,
+            'subject': subj, 'lecturer': lect,
+            'nepali_date': date, 'time': t,
+        })
+        if new_fn:
+            cursor.execute(
+                "UPDATE youtube_lectures SET original_filename = %s WHERE id = %s",
+                (new_fn, _id),
+            )
+
+    # ---- Phase 1: copy chapter → topic, backfill chapter ----
+    cursor.execute("""
+        SELECT id, chapter, paper, syllabus_id
+        FROM youtube_lectures
+        WHERE chapter IS NOT NULL AND chapter != ''
+          AND (topic IS NULL OR topic = '')
+    """)
+    rows = cursor.fetchall()
+
+    copied = 0
+    backfilled = 0
+    unchanged = 0
+    unresolved = []
+
+    for row in rows:
+        _id, old_chapter, paper, sid = row
+        canonical = _canonical(paper, sid)
+
+        # Already correct — nothing to migrate
+        if canonical and old_chapter.strip().lower() == canonical.strip().lower():
+            unchanged += 1
+            continue
+
+        # Copy chapter → topic
+        cursor.execute(
+            "UPDATE youtube_lectures SET topic = %s WHERE id = %s",
+            (old_chapter, _id),
+        )
+        copied += 1
+
+        # Replace chapter with canonical (if we have one)
+        if canonical:
+            cursor.execute(
+                "UPDATE youtube_lectures SET chapter = %s WHERE id = %s",
+                (canonical, _id),
+            )
+            backfilled += 1
+        else:
+            # No canonical — old text stays in chapter too. User can
+            # clean up manually (topic has the old value now).
+            unresolved.append(_id)
+
+        _rebuild_filename(_id)
+
+    # ---- Phase 2: auto-generate chapter for empty rows ----
+    cursor.execute("""
+        SELECT id, paper, syllabus_id
+        FROM youtube_lectures
+        WHERE (chapter IS NULL OR chapter = '')
+          AND (topic IS NULL OR topic = '')
+    """)
+    empty_rows = cursor.fetchall()
+
+    auto_generated = 0
+    for _id, paper, sid in empty_rows:
+        canonical = _canonical(paper, sid)
+        if canonical:
+            cursor.execute(
+                "UPDATE youtube_lectures SET chapter = %s WHERE id = %s",
+                (canonical, _id),
+            )
+            auto_generated += 1
+            _rebuild_filename(_id)
+
+    # ---- Summary ----
+    if copied == 0 and auto_generated == 0 and unchanged == 0:
+        print_colored(
+            "[i] chapter→topic migration: nothing to migrate.",
+            COLORS.BLUE,
+        )
+        return
+
+    print_colored(
+        f"[✓] chapter→topic: {copied} copied, {backfilled} chapter "
+        f"names backfilled, {auto_generated} auto-generated, "
+        f"{unchanged} already correct.",
+        COLORS.GREEN,
+    )
+    if unresolved:
+        preview = unresolved[:10]
+        tail = "..." if len(unresolved) > 10 else ""
+        print_colored(
+            f"    {len(unresolved)} row(s) had no syllabus chapter match — "
+            f"old text kept in chapter (also copied to topic). IDs: "
+            f"{preview}{tail}",
+            COLORS.YELLOW,
+        )
+
+
 # Register the migrations AFTER all functions are defined.
 # Order must be ascending by version number.
 MIGRATIONS.append((1, "baseline", _baseline_migration_v1))
 MIGRATIONS.append((2, "question_links", _v2_question_links))
 MIGRATIONS.append((3, "marks_breakdown", _v3_marks_breakdown))
 MIGRATIONS.append((4, "topic_column", _v4_topic_column))
+MIGRATIONS.append((5, "chapter_to_topic", _v5_chapter_to_topic))
 
 def ensure_subjects_populated():
     from .syllabus_config import is_configured
@@ -1675,6 +1834,35 @@ def _cli_reset():
     )
 
 
+def _cli_migrate_chapter_topic(dry_run=False):
+    """Run the v5 chapter→topic migration manually."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        if dry_run:
+            print_colored(
+                "[DRY-RUN] Preview only — nothing will be committed.",
+                COLORS.YELLOW,
+            )
+        _v5_chapter_to_topic(cursor)
+        if dry_run:
+            conn.rollback()
+            print_colored(
+                "[DRY-RUN] Rolled back (no changes applied).",
+                COLORS.YELLOW,
+            )
+        else:
+            conn.commit()
+            print_colored("[✓] Migration committed.", COLORS.GREEN)
+    except Exception as e:
+        conn.rollback()
+        print_colored(f"[!] Migration failed: {e}", COLORS.RED)
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
+
 if __name__ == "__main__":
     import sys
     if "--status" in sys.argv:
@@ -1683,8 +1871,12 @@ if __name__ == "__main__":
         _cli_reset()
     elif "--force" in sys.argv:
         migrate_table(force=True)
+    elif "--migrate-chapter-topic" in sys.argv:
+        _cli_migrate_chapter_topic(dry_run="--dry-run" in sys.argv)
     else:
         print("Usage:")
-        print("  python -m lecture_manager.db --status   # show schema report")
-        print("  python -m lecture_manager.db --reset    # force re-migration")
-        print("  python -m lecture_manager.db --force    # force re-migration")
+        print("  python -m lecture_manager.db --status                    # show schema report")
+        print("  python -m lecture_manager.db --reset                     # force re-migration")
+        print("  python -m lecture_manager.db --force                     # force re-migration")
+        print("  python -m lecture_manager.db --migrate-chapter-topic --dry-run  # preview v5")
+        print("  python -m lecture_manager.db --migrate-chapter-topic     # run v5 now")

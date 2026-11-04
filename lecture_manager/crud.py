@@ -263,6 +263,7 @@ def add_lecture():
             fields = {
                 'syllabus_id': syllabus_id,
                 'chapter': chapter,
+                'topic': topic or '',
                 'subject': auto_subject or parsed['subject'],
                 'lecturer': parsed['lecturer'],
                 'nepali_date': parsed['nepali_date'],
@@ -274,16 +275,17 @@ def add_lecture():
                 print_colored("  EDIT ALL FIELDS", COLORS.CYAN, bold=True)
                 print("─" * 40)
                 print(f"  1. Syllabus ID  : {fields['syllabus_id']}")
-                print(f"  2. Chapter/Topic: {fields['chapter']}")
+                print(f"  2. Chapter      : {fields['chapter']}")
                 print(f"  3. Subject      : {fields['subject']}")
                 print(f"  4. Lecturer     : {fields['lecturer']}")
                 print(f"  5. Nepali Date  : {fields['nepali_date']}")
                 print(f"  6. Time         : {fields['time']}")
                 print(f"  7. Paper        : {fields['paper']}")
+                print(f"  8. Topic        : {fields['topic'] or '(none)'}")
                 print("  0. Done – proceed with these values")
                 print("  9. Cancel – abort adding this lecture")
                 print("─" * 40)
-                choice = input(color_text("Choose field to edit (1-7), 0 to proceed, or 9 to cancel: ", COLORS.MAGENTA)).strip()
+                choice = input(color_text("Choose field to edit (1-8), 0 to proceed, or 9 to cancel: ", COLORS.MAGENTA)).strip()
                 if choice == '0':
                     break
                 elif choice == '9':
@@ -339,9 +341,15 @@ def add_lecture():
                                 fields['paper'] = new_val
                             else:
                                 print_colored(f"[!] Unknown paper key. Valid keys: {', '.join(sorted(valid_keys))}", COLORS.RED)
+                elif choice == '8':
+                    new_val = input(color_text(f"Topic [{fields['topic'] or ''}]: ", COLORS.MAGENTA)).strip()
+                    if new_val:
+                        fields['topic'] = new_val
+                        print_colored(f"[✓] Topic set to '{new_val}'.", COLORS.GREEN)
 
             syllabus_id = fields['syllabus_id']
             chapter = fields['chapter']
+            topic = fields.get('topic') or None
             subject = fields['subject']
             lecturer = fields['lecturer']
             nepali_date = fields['nepali_date']
@@ -415,7 +423,15 @@ def add_lecture():
     cursor = conn.cursor()
     try:
         # Build original_filename from fields
-        original_filename = DISPLAY_SEPARATOR.join([p for p in [syllabus_id, chapter, subject, lecturer, nepali_date, time_str] if p])
+        original_filename = build_original_filename({
+            'syllabus_id': syllabus_id,
+            'chapter': chapter,
+            'topic': topic,
+            'subject': subject,
+            'lecturer': lecturer,
+            'nepali_date': nepali_date,
+            'time': time_str,
+        })
         cursor.execute(f"""
         INSERT INTO {TABLE_NAME}
         (video_id, mirror_video_id, video_title, syllabus_id, subject, chapter, topic, lecturer, nepali_date, time, notes, paper, original_filename)
@@ -544,7 +560,7 @@ def view_all():
         order_clause = f"ORDER BY {col} {order}"
 
     query = f"""
-        SELECT syllabus_id, chapter, subject, lecturer, nepali_date, time, video_id, mirror_video_id
+        SELECT syllabus_id, chapter, topic, subject, lecturer, nepali_date, time, video_id, mirror_video_id
         FROM {TABLE_NAME}
         {order_clause}
     """
@@ -559,9 +575,9 @@ def view_all():
 
     sort_desc = f"{col} ({order.lower()})"
     print(f"\n--- ALL RECORDS (sorted by {sort_desc}) ---")
-    for syllabus_id, chapter, subject, lecturer, nepali_date, time_str, video_id, mirror_id in rows:
+    for syllabus_id, chapter, topic, subject, lecturer, nepali_date, time_str, video_id, mirror_id in rows:
         syllabus = clean_field(syllabus_id)
-        chapter_display = clean_field(chapter) if chapter else get_display_title({'chapter': chapter, 'video_title': '', 'subject': subject})
+        chapter_display = get_display_title({'chapter': chapter, 'topic': topic, 'subject': subject})
         subject = clean_field(subject)
         lecturer = clean_field(lecturer)
         nepali_date = clean_field(nepali_date)
@@ -1270,7 +1286,7 @@ def search_lectures():
     print(f"\n--- SEARCH RESULTS ({len(rows)} found, newest first) ---")
     for syllabus_id, chapter, subject, lecturer, nepali_date, time_str, video_id, mirror_id in rows:
         syllabus = clean_field(syllabus_id)
-        chapter_display = clean_field(chapter) if chapter else get_display_title({'chapter': chapter, 'video_title': '', 'subject': subject})
+        chapter_display = get_display_title({'chapter': chapter, 'topic': topic, 'subject': subject})
         subject = clean_field(subject)
         lecturer = clean_field(lecturer)
         nepali_date = clean_field(nepali_date)

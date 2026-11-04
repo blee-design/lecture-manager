@@ -437,6 +437,7 @@ def lectures():
     subject = request.args.get('subject', '')
     syllabus = request.args.get('syllabus', '')
     chapter = request.args.get('chapter', '')
+    topic = request.args.get('topic', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
     notes = request.args.get('notes', '')
@@ -457,6 +458,8 @@ def lectures():
         records = [r for r in records if _syllabus_matches(r.get('syllabus_id'), syllabus)]
     if chapter:
         records = [r for r in records if chapter.lower() in (r.get('chapter') or '').lower()]
+    if topic:
+        records = [r for r in records if topic.lower() in (r.get('topic') or '').lower()]
     if notes:
         records = [r for r in records if notes.lower() in (r.get('notes') or '').lower()]
     if video_id:
@@ -478,6 +481,7 @@ def lectures():
                        search_lower in (r.get('syllabus_id') or '').lower() or
                        search_lower in (r.get('subject') or '').lower() or
                        search_lower in (r.get('chapter') or '').lower() or
+                       search_lower in (r.get('topic') or '').lower() or
                        search_lower in (r.get('lecturer') or '').lower() or
                        search_lower in (r.get('video_id') or '').lower() or
                        search_lower in (r.get('mirror_video_id') or '').lower() or
@@ -489,6 +493,7 @@ def lectures():
                        search_lower in (r.get('syllabus_id') or '').lower() or
                        search_lower in (r.get('subject') or '').lower() or
                        search_lower in (r.get('chapter') or '').lower() or
+                       search_lower in (r.get('topic') or '').lower() or
                        search_lower in (r.get('lecturer') or '').lower() or
                        search_lower in (r.get('video_id') or '').lower() or
                        search_lower in (r.get('mirror_video_id') or '').lower() or
@@ -513,7 +518,7 @@ def lectures():
     return render_template('lectures.html', records=records, search=search,
                            sort_by=sort_by, order=order, paper_filter=paper_filter,
                            lecturer=lecturer, subject=subject, syllabus=syllabus,
-                           chapter=chapter, date_from=date_from, date_to=date_to,
+                           chapter=chapter, topic=topic, date_from=date_from, date_to=date_to,
                            notes=notes, video_id=video_id, mirror_id=mirror_id,
                            exact=exact, papers=papers)
 

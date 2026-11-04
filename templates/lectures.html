@@ -53,6 +53,7 @@
       <input type="hidden" name="subject" value="{{ subject or '' }}">
       <input type="hidden" name="syllabus" value="{{ syllabus or '' }}">
       <input type="hidden" name="chapter" value="{{ chapter or '' }}">
+      <input type="hidden" name="topic" value="{{ topic or '' }}">
       <input type="hidden" name="date_from" value="{{ date_from or '' }}">
       <input type="hidden" name="date_to" value="{{ date_to or '' }}">
       <input type="hidden" name="notes" value="{{ notes or '' }}">
@@ -94,6 +95,10 @@
         <div class="col-md-3">
           <label for="chapter" class="form-label">Chapter</label>
           <input type="text" class="form-control" id="chapter" name="chapter" value="{{ chapter or '' }}">
+        </div>
+        <div class="col-md-3">
+          <label for="topic" class="form-label">Topic</label>
+          <input type="text" class="form-control" id="topic" name="topic" value="{{ topic or '' }}">
         </div>
         <div class="col-md-3">
           <label for="date_from" class="form-label">Date from (YYYY-MM-DD)</label>
@@ -147,6 +152,7 @@
                     subject=subject,
                     syllabus=syllabus,
                     chapter=chapter,
+                    topic=topic,
                     date_from=date_from,
                     date_to=date_to,
                     notes=notes,

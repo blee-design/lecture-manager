@@ -635,6 +635,11 @@ def get_display_title(record):
     topic = clean_field(record.get('topic', ''))
 
     if chapter and topic:
+        # Don't duplicate when the lecturer genuinely covered the same
+        # topic as the chapter title (e.g. "National Income Accounting"
+        # as both chapter and topic) — a single copy reads better.
+        if topic.lower() == chapter.lower():
+            return chapter
         return f"{chapter} - {topic}"
     return chapter or topic or clean_field(record.get('subject', ''))
 
