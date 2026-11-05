@@ -24,9 +24,9 @@ print("🚀 LOADING POMODORO MODULE")
 # Stats and charts update automatically the moment a new type is logged.
 SESSION_TYPES = [
     "study",
+    "exam",
     "revision",
     "pretest",
-    "exam",
     "class",
     "quiz",
     "newspaper",
