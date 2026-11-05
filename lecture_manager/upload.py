@@ -933,23 +933,50 @@ def upload_cloud_only(record, privacy_status="private",
                        'best[height<=720]/bestvideo+bestaudio/best'),
             'quiet': False,
             'no_warnings': True,
-            'ignoreerrors': True,
+            'ignoreerrors': False,          # Force error if audio/video fails
+            'merge_output_format': 'mp4',   # Force merge to a single mp4 file
             **cookie_opt,
         }
         print_colored("[⏳] Downloading to temp…", COLORS.BLUE)
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([f"https://www.youtube.com/watch?v={source_video_id}"])
 
         downloaded = None
-        for root, _, files in os.walk(temp_dir):
-            for f in files:
-                downloaded = os.path.join(root, f)
-                break
-            if downloaded:
-                break
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # extract_info returns the exact final path of the merged file
+                info_dict = ydl.extract_info(f"https://www.youtube.com/watch?v={source_video_id}", download=True)
+                if 'requested_downloads' in info_dict and info_dict['requested_downloads']:
+                    downloaded = info_dict['requested_downloads'][0].get('filepath')
+                elif 'filepath' in info_dict:
+                    downloaded = info_dict['filepath']
+        except yt_dlp.utils.DownloadError as e:
+             return False, f"Download failed (possibly network timeout): {e}", None
+
+        # Fallback if filepath wasn't returned (rare)
+        if not downloaded or not os.path.exists(downloaded):
+            for root, _, files in os.walk(temp_dir):
+                for f in files:
+                    # Only accept actual output files, not intermediate .fXXX files
+                    if '.f' not in f and f.startswith(source_video_id):
+                        downloaded = os.path.join(root, f)
+                        break
+                if downloaded:
+                    break
 
         if not downloaded or not os.path.exists(downloaded):
-            return False, "Download produced no file.", None
+            return False, "Download produced no valid merged file.", None
+
+        # --- NEW: FINAL VERIFICATION ---
+        # Use ffprobe to ensure the file actually contains an audio stream
+        import subprocess
+        try:
+            result = subprocess.run(
+                ['ffprobe', '-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', downloaded],
+                capture_output=True, text=True
+            )
+            if 'audio' not in result.stdout:
+                return False, "Downloaded file has no audio track. Aborting upload to prevent silent video.", None
+        except Exception:
+            pass # If ffprobe isn't installed, skip check but rely on yt-dlp success
 
         size_mb = os.path.getsize(downloaded) / (1024 * 1024)
         print_colored(f"[✓] Downloaded: {os.path.basename(downloaded)} "
