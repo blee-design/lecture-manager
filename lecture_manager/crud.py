@@ -11,6 +11,66 @@ from .facebook_manager import add_facebook_lecture
 from .upload import upload_video_to_youtube, update_youtube_title
 from .constants import DISPLAY_SEPARATOR
 
+def _print_grouped_papers(subject_code=None):
+    """
+    Prints papers grouped by syllabus for interactive menus.
+    If subject_code is provided, it filters to only papers containing that subject.
+    Returns a flat list of (paper_key, display_name, folder_name) tuples
+    matching the printed order, so the caller can use the index.
+    """
+    from . import syllabus_config as SC
+    from .file_manager import _papers, _subject_lookup
+
+    papers_data = _papers()
+    if not papers_data:
+        return []
+
+    # --- NEW: Filter by subject_code if provided ---
+    if subject_code:
+        lookup = _subject_lookup()
+        possible_papers = {pk for (pk, sc) in lookup.keys() if sc == subject_code}
+        papers_data = {k: v for k, v in papers_data.items() if k in possible_papers}
+        if not papers_data:
+            return []
+
+    syllabi = SC.get_syllabi(active_only=True)
+    # Sort alphabetically to group providers
+    syllabi.sort(key=lambda s: s['display_name'].lower())
+
+    choices_flat = []
+    idx = 1
+
+    for syl in syllabi:
+        syl_papers = [p for p in papers_data.values() if p.get('syllabus_id') == syl['id']]
+        if not syl_papers:
+            continue
+
+        lvl = f"  (Level {syl['level']})" if syl.get('level') else ""
+        print_colored(f"\n  📚 {syl['display_name']}{lvl}", COLORS.CYAN, bold=True)
+
+        syl_papers.sort(key=lambda x: x.get('display_order', 0))
+        for p in syl_papers:
+            k = p['paper_key']
+            name = p['display_name']
+            print(f"    {idx:>2}. [{k}] {name}")
+            choices_flat.append((k, name, p.get('folder_name', k)))
+            idx += 1
+
+    # Handle any papers without a syllabus
+    orphans = [p for p in papers_data.values() if not p.get('syllabus_id')]
+    if orphans:
+        print_colored("\n  📚 Unassigned Papers", COLORS.YELLOW, bold=True)
+        orphans.sort(key=lambda x: x.get('display_order', 0))
+        for p in orphans:
+            k = p['paper_key']
+            name = p['display_name']
+            print(f"    {idx:>2}. [{k}] {name}")
+            choices_flat.append((k, name, p.get('folder_name', k)))
+            idx += 1
+
+    print()
+    return choices_flat
+
 def _paper_choices(subject_code=None):
     """
     Return a list of (paper_key, display_name, folder_name) tuples.
@@ -237,11 +297,26 @@ def add_lecture():
                 print_colored("   Use '📚 Syllabus Setup' from the main menu (option 9).", COLORS.YELLOW)
                 return
             print_colored("[!] Could not auto-detect paper. Please select manually:", COLORS.YELLOW)
-            for i, (k, name, _folder) in enumerate(choices, 1):
-                print(f"  {i}. {k} ({name})")
-            paper_choice = input(color_text("Enter paper number (or blank to cancel): ", COLORS.MAGENTA)).strip()
-            if paper_choice.isdigit() and 1 <= int(paper_choice) <= len(choices):
-                detected_paper = choices[int(paper_choice) - 1][0]
+
+            # Use the new grouped display, filtered by the subject code
+            choices = _print_grouped_papers(subject_code=subj_code)
+            if not choices:
+                print_colored("[!] No papers configured for this subject.", COLORS.RED)
+                return
+
+            print("  0. Cancel")
+            paper_choice = input(color_text(f"Enter paper number (1-{len(choices)}, or 0 to cancel): ", COLORS.MAGENTA)).strip()
+
+            if paper_choice.isdigit():
+                idx = int(paper_choice)
+                if 1 <= idx <= len(choices):
+                    detected_paper = choices[idx - 1][0]
+                elif idx == 0:
+                    print_colored("Cancelled.", COLORS.YELLOW)
+                    return
+                else:
+                    print_colored("Invalid choice.", COLORS.RED)
+                    return
             else:
                 print_colored("Cancelled.", COLORS.YELLOW)
                 return
@@ -298,19 +373,18 @@ def add_lecture():
                         return
 
                     elif choice == '1': # Paper
-                        choices = _paper_choices()
-                        if not choices:
+                        choices_flat = _print_grouped_papers()
+                        if not choices_flat:
                             print_colored("[!] No papers configured. Run Syllabus Setup first.", COLORS.RED)
                             continue
-                        print("\nAvailable papers:")
-                        for i, (k, name, _folder) in enumerate(choices, 1):
-                            print(f"  {i}. {k} ({name})")
+
                         print("  0. Cancel (keep current)")
-                        paper_choice = input(color_text(f"Choose paper (1-{len(choices)}, or 0 to keep '{fields['paper']}'): ", COLORS.MAGENTA)).strip()
+                        paper_choice = input(color_text(f"Choose paper (1-{len(choices_flat)}, or 0 to keep '{fields['paper']}'): ", COLORS.MAGENTA)).strip()
+
                         if paper_choice.isdigit():
                             idx = int(paper_choice)
-                            if 1 <= idx <= len(choices):
-                                fields['paper'] = choices[idx - 1][0]
+                            if 1 <= idx <= len(choices_flat):
+                                fields['paper'] = choices_flat[idx - 1][0]
                             elif idx == 0:
                                 pass
                             else:
@@ -318,7 +392,7 @@ def add_lecture():
                         else:
                             new_val = input(color_text(f"Paper key (or press Enter to keep '{fields['paper']}'): ", COLORS.MAGENTA)).strip()
                             if new_val:
-                                valid_keys = {k for k, _n, _f in choices}
+                                valid_keys = {k for k, _n, _f in choices_flat}
                                 if new_val in valid_keys:
                                     fields['paper'] = new_val
                                 else:
@@ -394,12 +468,20 @@ def add_lecture():
             if not choices:
                 print_colored("[!] No papers configured. Please set up your syllabus first.", COLORS.RED)
                 return
-            print("Select paper:")
-            for i, (k, name, _folder) in enumerate(choices, 1):
-                print(f"  {i}. {k} - {name}")
-            paper_choice = input(color_text("Paper number (default 1): ", COLORS.MAGENTA)).strip()
+            print_colored("\n[!] Please select the paper manually:", COLORS.YELLOW)
+            choices = _print_grouped_papers(subject_code=subj_code)
+            if not choices:
+                print_colored("[!] No papers configured for this subject.", COLORS.RED)
+                return
+
+            print("  0. Cancel")
+            paper_choice = input(color_text(f"Paper number (1-{len(choices)}, default 1): ", COLORS.MAGENTA)).strip()
+
             if paper_choice.isdigit() and 1 <= int(paper_choice) <= len(choices):
                 paper = choices[int(paper_choice) - 1][0]
+            elif paper_choice == '0':
+                print_colored("Cancelled.", COLORS.YELLOW)
+                return
             else:
                 paper = choices[0][0]
 
@@ -451,9 +533,28 @@ def add_lecture():
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (video_id, mirror_id, title, syllabus_id, subject, chapter, topic, lecturer, nepali_date, time_str, notes, paper, original_filename))
         conn.commit()
+        new_id = cursor.lastrowid
         cursor.close()
         conn.close()
-        print_colored("[✓] Record added.", COLORS.GREEN)
+
+        # --- Print a receipt of the newly added record ---
+        print_colored("[✓] Record added to database.", COLORS.GREEN)
+        print("  ────────────────────────────────────────────────")
+        print(f"  DB ID    : {new_id}")
+        print(f"  Video ID : {video_id}")
+        print(f"  Syllabus : {syllabus_id}")
+        print(f"  Paper    : {paper}")
+        print(f"  Subject  : {subject}")
+        print(f"  Chapter  : {chapter}")
+        if topic:
+            print(f"  Topic    : {topic}")
+        print(f"  Lecturer : {lecturer}")
+        print(f"  Date     : {nepali_date}")
+        print(f"  Time     : {time_str}")
+        if mirror_id:
+            print(f"  Mirror ID: {mirror_id}")
+        print("  ────────────────────────────────────────────────")
+        print()
     except mysql.connector.IntegrityError as e:
         conn.rollback()
         cursor.close()
@@ -799,20 +900,18 @@ def update_lecture():
 
             # --- Special handling for paper field (show options) ---
             if field == 'paper':
-                choices = _paper_choices()
-                if not choices:
+                choices_flat = _print_grouped_papers()
+                if not choices_flat:
                     print_colored("[!] No papers configured. Run Syllabus Setup first.", COLORS.RED)
                     continue
-                print("\nAvailable papers:")
-                for i, (k, name, _folder) in enumerate(choices, 1):
-                    print(f"  {i}. {k} ({name})")
+
                 print("  0. Cancel (keep current)")
-                paper_choice = input(color_text(f"Choose paper (1-{len(choices)}, or 0 to keep '{row['paper'] if row['paper'] else 'none'}'): ", COLORS.MAGENTA)).strip()
+                paper_choice = input(color_text(f"Choose paper (1-{len(choices_flat)}, or 0 to keep '{row['paper'] if row['paper'] else 'none'}'): ", COLORS.MAGENTA)).strip()
 
                 if paper_choice.isdigit():
                     idx = int(paper_choice)
-                    if 1 <= idx <= len(choices):
-                        new_paper = choices[idx - 1][0]
+                    if 1 <= idx <= len(choices_flat):
+                        new_paper = choices_flat[idx - 1][0]
                     elif idx == 0:
                         new_paper = row['paper']  # keep existing
                     else:
@@ -820,20 +919,86 @@ def update_lecture():
                         continue
                 else:
                     new_paper = input(color_text(f"Paper key (or press Enter to keep '{row['paper'] if row['paper'] else 'none'}'): ", COLORS.MAGENTA)).strip()
-                    valid_keys = {k for k, _n, _f in choices}
+                    valid_keys = {k for k, _n, _f in choices_flat}
                     if new_paper and new_paper not in valid_keys:
                         print_colored(f"[!] Unknown paper key. Valid keys: {', '.join(sorted(valid_keys))}", COLORS.RED)
                         continue
 
                 # Now update
                 if new_paper:
+                    from .file_manager import describe_syllabus_id
+                    current_syllabus = row.get('syllabus_id') or ''
+
+                    # Check if the current syllabus_id exists in the new paper
+                    desc = describe_syllabus_id(current_syllabus, new_paper)
+
+                    update_subject = row.get('subject')
+                    update_chapter = row.get('chapter')
+                    apply_auto = False
+
+                    if desc.get('subject_name') or desc.get('chapter_name'):
+                        print()
+                        print_colored("  ✓ Resolved current syllabus code for the new paper:", COLORS.GREEN, bold=True)
+                        print(f"    Code     : {current_syllabus}")
+                        if desc.get('subject_name'):
+                            print(f"    Subject  : {desc['subject_code']} — {desc['subject_name']}")
+                        if desc.get('chapter_name'):
+                            print(f"    Chapter  : {desc['chapter_code']} — {desc['chapter_name']}")
+                        print()
+
+                        use_auto = input(color_text("Apply detected Subject and Chapter? (y/n, default y): ", COLORS.MAGENTA)).strip().lower()
+                        if use_auto != 'n':
+                            if desc.get('subject_name'):
+                                update_subject = desc['subject_name']
+                            if desc.get('chapter_name'):
+                                update_chapter = desc['chapter_name']
+                            apply_auto = True
+                    else:
+                        print_colored("\n  [!] WARNING: The current syllabus code does not exist in the new paper.", COLORS.YELLOW)
+                        print_colored(f"      Code '{current_syllabus}' is not part of this paper.", COLORS.YELLOW)
+                        print_colored("      You should update the Syllabus ID (Option 2) to fix this.", COLORS.YELLOW)
+
                     conn = get_connection()
                     cursor = conn.cursor()
-                    cursor.execute(f"UPDATE {TABLE_NAME} SET paper = %s WHERE id = %s", (new_paper, row['id']))
-                    conn.commit()
-                    cursor.close()
-                    conn.close()
-                    print_colored("[✓] Paper updated.", COLORS.GREEN)
+                    try:
+                        if apply_auto:
+                            cursor.execute(f"""
+                                UPDATE {TABLE_NAME}
+                                SET paper = %s, subject = %s, chapter = %s
+                                WHERE id = %s
+                            """, (new_paper, update_subject, update_chapter, row['id']))
+                            print_colored("[✓] Paper, Subject, and Chapter updated.", COLORS.GREEN)
+                        else:
+                            cursor.execute(f"UPDATE {TABLE_NAME} SET paper = %s WHERE id = %s", (new_paper, row['id']))
+                            print_colored("[✓] Paper updated.", COLORS.GREEN)
+
+                        conn.commit()
+
+                        # Auto-regenerate original_filename
+                        conn2 = get_connection()
+                        cur2 = conn2.cursor(dictionary=True)
+                        cur2.execute(f"SELECT * FROM {TABLE_NAME} WHERE id = %s", (row['id'],))
+                        updated_row = cur2.fetchone()
+                        cur2.close()
+                        conn2.close()
+
+                        if updated_row:
+                            new_original = build_original_filename(updated_row)
+                            if new_original:
+                                conn3 = get_connection()
+                                cur3 = conn3.cursor()
+                                cur3.execute(f"UPDATE {TABLE_NAME} SET original_filename = %s WHERE id = %s", (new_original, row['id']))
+                                conn3.commit()
+                                cur3.close()
+                                conn3.close()
+                                print_colored(f"[✓] Original filename auto-regenerated.", COLORS.GREEN)
+
+                    except mysql.connector.Error as e:
+                        conn.rollback()
+                        print_colored(f"[!] Update failed: {e}", COLORS.RED)
+                    finally:
+                        cursor.close()
+                        conn.close()
 
                     if new_paper != row['paper']:
                         updated_record = get_record_by_video_id(video_id)
@@ -853,7 +1018,6 @@ def update_lecture():
                     cursor.close()
                     conn.close()
                     print_colored("[✓] Paper cleared.", COLORS.GREEN)
-                # After paper update, we may also want to rebuild original_filename? Paper does not affect original_filename, so skip.
                 continue
 
             # --- For other fields, get new value ---
@@ -893,14 +1057,56 @@ def update_lecture():
             elif field == 'syllabus_id':
                 if new_value:
                     new_value = normalize_syllabus_id(new_value)
+
+                # --- Auto-detect Paper, Subject, and Chapter ---
+                from .file_manager import auto_detect_from_syllabus
+                print_colored("\n[i] Auto-detecting syllabus details...", COLORS.BLUE)
+                auto_info = auto_detect_from_syllabus(
+                    new_value,
+                    title_text=row.get('video_title', ''),
+                    interactive=True,
+                    existing_paper=row.get('paper')
+                )
+
+                # If the user cancelled the auto-detect menu (e.g., chose option 0)
+                if auto_info['status'] != 'ok':
+                    print_colored("[i] Auto-detect cancelled or failed. Database remains unchanged.", COLORS.YELLOW)
+                    continue
+
+                print()
+                print_colored("  ✓ Auto-detected from syllabus:", COLORS.GREEN, bold=True)
+                if auto_info.get('syllabus_display'):
+                    _lvl = f" (Level {auto_info.get('syllabus_level')})" if auto_info.get('syllabus_level') else ""
+                    print(f"    Syllabus : {auto_info['syllabus_display']}{_lvl}")
+                print(f"    Paper    : {auto_info['paper_display']}")
+                print(f"    Code     : {new_value}")
+                if auto_info.get('subject_name'):
+                    print(f"    Subject  : {auto_info['subject_code']} — {auto_info['subject_name']}")
+                if auto_info.get('chapter_name'):
+                    print(f"    Chapter  : {auto_info['chapter_code']} — {auto_info['chapter_name']}")
+                print()
+
+                use_auto = input(color_text("Apply detected Paper, Subject, and Chapter? (y/n, default y): ", COLORS.MAGENTA)).strip().lower()
+
+                # If user says NO, abort entirely. Touch nothing.
+                if use_auto == 'n':
+                    print_colored("[i] Cancelled. Database remains unchanged.", COLORS.YELLOW)
+                    continue
+
+                # If we reach here, the user pressed 'y' (or Enter). Apply everything.
                 conn = get_connection()
                 cursor = conn.cursor()
                 try:
-                    cursor.execute(f"UPDATE {TABLE_NAME} SET syllabus_id = %s WHERE id = %s", (new_value, row['id']))
+                    cursor.execute(f"""
+                        UPDATE {TABLE_NAME}
+                        SET syllabus_id = %s, paper = %s, subject = %s, chapter = %s
+                        WHERE id = %s
+                    """, (new_value, auto_info['paper_key'], auto_info['subject_name'], auto_info['chapter_name'], row['id']))
                     conn.commit()
                     cursor.close()
                     conn.close()
-                    print_colored("[✓] Syllabus ID updated.", COLORS.GREEN)
+
+                    print_colored("[✓] Syllabus ID, Paper, Subject, and Chapter updated automatically.", COLORS.GREEN)
                     # ----- AUTO-REGENERATE original_filename -----
                     # Re-fetch updated record
                     conn2 = get_connection()

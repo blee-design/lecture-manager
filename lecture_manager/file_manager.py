@@ -104,7 +104,7 @@ def describe_syllabus_id(syllabus_id, paper_key):
         out['chapter_name'] = _chapter_lookup().get((paper_key, subj_code, chap_code))
     return out
 
-def auto_detect_from_syllabus(syllabus_id, title_text=None, title_subject=None, interactive=True):
+def auto_detect_from_syllabus(syllabus_id, title_text=None, title_subject=None, interactive=True, existing_paper=None):
     """
     Given a syllabus_id like '3.1.0' or '04.02.03', auto-detect which paper
     contains that subject+chapter, and return all related names.
@@ -166,6 +166,12 @@ def auto_detect_from_syllabus(syllabus_id, title_text=None, title_subject=None, 
                      if (c['paper_key'], subj_code, chap_code) in chap_lookup]
         if with_chap:
             candidates = with_chap
+
+    # Step 3.5: Prioritize the existing paper if it's a valid candidate
+    if existing_paper and len(candidates) > 1:
+        preferred = [c for c in candidates if c['paper_key'] == existing_paper]
+        if preferred:
+            candidates = preferred
 
     result['candidates'] = candidates
 
