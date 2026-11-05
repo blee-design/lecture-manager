@@ -24,10 +24,10 @@ print("🚀 LOADING POMODORO MODULE")
 # Stats and charts update automatically the moment a new type is logged.
 SESSION_TYPES = [
     "study",
-    "exam",
+    "class",
     "revision",
     "pretest",
-    "class",
+    "exam",
     "quiz",
     "newspaper",
 ]
@@ -1178,9 +1178,10 @@ class PomodoroApp:
             if type_match:
                 session_type = type_match.group(1)
 
-            # Validate against allowed ENUM values
-            ALLOWED_SESSION_TYPES = {'study', 'revision', 'pretest', 'exam', 'quiz'}
-            if session_type not in ALLOWED_SESSION_TYPES:
+            # Trust whatever session type is in the log text.
+            # The database column is VARCHAR(50), so it accepts custom types
+            # like 'class' or 'newspaper' safely.
+            if not session_type:
                 session_type = 'study'
 
             # Notes
