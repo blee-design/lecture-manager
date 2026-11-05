@@ -255,6 +255,7 @@ def create_table():
         remaining_seconds INT NOT NULL,
         notes TEXT,
         subject VARCHAR(255),
+        syllabus VARCHAR(255) NULL,
         cycles_completed INT DEFAULT 0,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     );
@@ -338,6 +339,12 @@ def create_table():
 
     # Insert a dummy row if not exists (for easier update)
     cursor.execute("INSERT IGNORE INTO pomodoro_state (id, current_phase, remaining_seconds) VALUES (1, 'work', 0)")
+
+    # --- NEW: Ensure the syllabus column exists ---
+    cursor.execute("SHOW COLUMNS FROM pomodoro_state LIKE 'syllabus'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE pomodoro_state ADD COLUMN syllabus VARCHAR(255) NULL")
+        print_colored("[✓] Added 'syllabus' column to pomodoro_state.", COLORS.GREEN)
     # Insert default settings if they don't exist
     cursor.execute("INSERT IGNORE INTO pomodoro_settings (id) VALUES (1)")
     # Add subject column to pomodoro_log if missing
@@ -1039,6 +1046,12 @@ def _baseline_migration_v1(cursor):
     if not cursor.fetchone():
         cursor.execute("ALTER TABLE pomodoro_state ADD COLUMN task_id INT NULL")
         print_colored("[✓] Added 'task_id' column to pomodoro_state.", COLORS.GREEN)
+
+    # --- NEW: Add syllabus column ---
+    cursor.execute("SHOW COLUMNS FROM pomodoro_state LIKE 'syllabus'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE pomodoro_state ADD COLUMN syllabus VARCHAR(255) NULL")
+        print_colored("[✓] Added 'syllabus' column to pomodoro_state.", COLORS.GREEN)
 
     # --- Add subject_id and session_type to pomodoro_log ---
     cursor.execute("SHOW COLUMNS FROM pomodoro_log LIKE 'subject_id'")

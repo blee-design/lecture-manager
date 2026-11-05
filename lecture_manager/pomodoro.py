@@ -2770,17 +2770,18 @@ class PomodoroApp:
             current_task_id = self.get_current_task_id()  # helper to get selected task ID
             cursor.execute("""
                 REPLACE INTO pomodoro_state
-                (id, current_phase, remaining_seconds, notes, subject, cycles_completed,
-                session_type, task_id)   -- added two new columns
-                VALUES (1, %s, %s, %s, %s, %s, %s, %s)
+                (id, current_phase, remaining_seconds, notes, subject, syllabus, cycles_completed,
+                session_type, task_id)
+                VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 self.current_phase,
                 self.remaining_seconds,
                 self.notes_text.get("1.0", tk.END).strip(),
                 self._current_canonical_subject(),
+                self.syllabus_var.get(),       # <-- NEW: Save syllabus
                 self.cycles_completed,
-                self.type_var.get().strip(),   # session_type
-                current_task_id                # task_id (can be None)
+                self.type_var.get().strip(),
+                current_task_id
             ))
             conn.commit()
             cursor.close()
@@ -2847,6 +2848,12 @@ class PomodoroApp:
             self.current_phase = state['current_phase']
             self.remaining_seconds = state['remaining_seconds']
             self.cycles_completed = state['cycles_completed']
+
+            # --- NEW: Restore Syllabus FIRST ---
+            saved_syllabus = state.get('syllabus')
+            if saved_syllabus and saved_syllabus in self._syllabus_map:
+                self.syllabus_var.set(saved_syllabus)
+                self.on_syllabus_change()  # Reloads subjects for this syllabus
 
             if state.get('subject'):
                 canonical = state['subject'].strip()
