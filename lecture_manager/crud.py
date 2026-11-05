@@ -614,8 +614,23 @@ def add_lecture():
             success, msg, _ = upload_cloud_only(
                 record, privacy_status="private",
                 interactive=False, auto_confirm=True)
+
         if success:
             print_colored(f"[✓] {msg}", COLORS.GREEN)
+
+            # --- NEW: Print final receipt showing YouTube/Mirror data ---
+            updated_record = get_record_by_video_id(video_id)
+            if updated_record:
+                print("\n  ────────────────────────────────────────────────")
+                print_colored("  ✓ Final Database Record (Media Attached)", COLORS.CYAN, bold=True)
+                print(f"  DB ID       : {updated_record['id']}")
+                print(f"  Video ID    : {updated_record['video_id']}")
+                print(f"  Mirror ID   : {updated_record.get('mirror_video_id') or '(none)'}")
+                print(f"  Upload ID   : {updated_record.get('youtube_upload_id') or '(none)'}")
+                print(f"  File Hash   : {updated_record.get('file_hash') or '(none - cloud only)'}")
+                print(f"  Upload Stat : {updated_record.get('youtube_upload_status') or '(none)'}")
+                print("  ────────────────────────────────────────────────\n")
+
         else:
             print_colored(f"[!] {msg}", COLORS.RED)
 
