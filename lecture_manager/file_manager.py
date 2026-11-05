@@ -182,39 +182,99 @@ def auto_detect_from_syllabus(syllabus_id, title_text=None, title_subject=None, 
     elif not interactive:
         return result
     else:
-        # Group candidates by syllabus for a clean display
         from . import syllabus_config as SC
         syll_map = {s['id']: s for s in SC.get_syllabi(active_only=False)}
-        grouped = {}
-        for c in candidates:
-            p = papers.get(c['paper_key'], {})
-            sid = p.get('syllabus_id')
-            syll_name = syll_map.get(sid, {}).get('display_name', 'Unknown syllabus') if sid else '(no syllabus)'
-            grouped.setdefault(syll_name, []).append(c)
+        papers_dict = _papers()
 
-        print()
-        print_colored(f"[!] Subject code '{subj_code}' found in {len(candidates)} paper(s). "
-                      f"Which one is this lecture for?", COLORS.YELLOW)
-        print()
-        idx = 0
-        flat_list = []
-        for syll_name, group in grouped.items():
-            print_colored(f"  📚 {syll_name}", COLORS.CYAN, bold=True)
-            for c in group:
-                idx += 1
-                flat_list.append(c)
-                star = " ⭐ (Title matched)" if c.get('keyword_match') else ""
-                print(f"    {idx}. [{c['paper_key']}] {c['paper_display']}{star}")
-                print(f"       Subject: {subj_code} — {c['subject_name']}")
+        def _build_grouped(cands, show_stars=False):
+            """Helper to group candidates by syllabus and print them beautifully."""
+            grouped = {}
+            for c in cands:
+                p_cfg = papers_dict.get(c['paper_key'], {})
+                sid = p_cfg.get('syllabus_id')
+                syll_info = syll_map.get(sid)
+
+                if syll_info:
+                    lvl = f" (Level {syll_info['level']})" if syll_info.get('level') else ""
+                    group_name = f"{syll_info['display_name']}{lvl}"
+                else:
+                    group_name = "Unassigned Papers"
+
+                grouped.setdefault(group_name, []).append(c)
+
+            # Sort groups alphabetically
+            sorted_groups = sorted(grouped.items(), key=lambda x: x[0].lower())
+
+            flat_list = []
+            idx = 1
             print()
-        print("    0. Cancel (skip auto-detect)")
+            for group_name, group_cands in sorted_groups:
+                print_colored(f"  📚 {group_name}", COLORS.CYAN, bold=True)
+                # Sort within group by display order
+                group_cands.sort(key=lambda x: papers_dict.get(x['paper_key'], {}).get('display_order', 0))
 
-        choice = input(color_text(f"  Choose (1-{len(flat_list)}, 0=cancel): ", COLORS.MAGENTA)).strip()
-        if not choice.isdigit() or not (1 <= int(choice) <= len(flat_list)):
-            result['status'] = 'ambiguous'
-            return result
-        chosen = flat_list[int(choice) - 1]
-        result['status'] = 'ok'
+                for c in group_cands:
+                    flat_list.append(c)
+                    star = color_text(" ⭐", COLORS.YELLOW) if show_stars and c.get('keyword_match') else ""
+                    print(f"    {idx:>2}. [{c['paper_key']}] {c['paper_display']}{star}")
+                    if c.get('subject_name'):
+                        print(f"        Subject: {subj_code} — {c['subject_name']}")
+                    idx += 1
+                print()
+            return flat_list
+
+        starred_candidates = [c for c in candidates if c.get('keyword_match')]
+
+        while True:
+            display_list = starred_candidates if starred_candidates else candidates
+
+            print()
+            print_colored(f"[!] Subject code '{subj_code}' found in {len(candidates)} paper(s).", COLORS.YELLOW)
+            if starred_candidates:
+                print_colored("  (Showing title-matched papers)", COLORS.BLUE)
+
+            flat_list = _build_grouped(display_list, show_stars=True)
+
+            print("    0. Show ALL papers (fallback list)")
+            print("    c. Cancel")
+
+            choice = input(color_text(f"  Choose (1-{len(flat_list)}, 0=fallback, c=cancel): ", COLORS.MAGENTA)).strip().lower()
+
+            if choice == 'c':
+                result['status'] = 'ambiguous'
+                return result
+
+            if choice == '0':
+                # Fallback: Show ALL papers grouped by syllabus
+                print()
+                print_colored("  ── ALL PAPERS (Fallback List) ──", COLORS.CYAN, bold=True)
+
+                all_cands = [
+                    {'paper_key': p['paper_key'], 'paper_display': p['display_name']}
+                    for p in papers_dict.values()
+                ]
+                fallback_flat = _build_grouped(all_cands)
+
+                fb_choice = input(color_text(f"  Choose (1-{len(fallback_flat)}), or 0 to go back: ", COLORS.MAGENTA)).strip()
+                if not fb_choice.isdigit() or int(fb_choice) == 0 or int(fb_choice) > len(fallback_flat):
+                    continue # loop back to the initial prompt
+
+                chosen_paper_key = fallback_flat[int(fb_choice) - 1]['paper_key']
+
+                chosen = {
+                    'paper_key': chosen_paper_key,
+                    'paper_display': papers_dict[chosen_paper_key]['display_name'],
+                    'subject_name': _subject_lookup().get((chosen_paper_key, subj_code))
+                }
+                result['status'] = 'ok'
+                break
+
+            if choice.isdigit() and 1 <= int(choice) <= len(flat_list):
+                chosen = flat_list[int(choice) - 1]
+                result['status'] = 'ok'
+                break
+
+            print_colored("[!] Invalid choice.", COLORS.RED)
 
     # Populate remaining details
     paper_key = chosen['paper_key']
