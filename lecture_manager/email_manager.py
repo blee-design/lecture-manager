@@ -64,12 +64,27 @@ def view_emails():
         print_colored("[i] No emails found.", COLORS.YELLOW)
         return
 
-    print("\n" + "─" * 80)
-    print(f"  {'ID':<4} | {'Mail ID':<30} | {'Owner':<15} | {'Supercell':<15}")
-    print("─" * 80)
+    print("\n" + "═" * 60)
+    print_colored(f"  📧 ALL EMAILS ({len(rows)} found)", COLORS.CYAN, bold=True)
+    print("═" * 60)
+
     for r in rows:
-        print(f"  {r['id']:<4} | {r['mail_id']:<30} | {(r['owner'] or '')[:15]:<15} | {(r['supercell'] or '')[:15]:<15}")
-    print("─" * 80)
+        mail_id = str(r.get('mail_id') or '—')
+        owner = str(r.get('owner') or '—')
+        supercell = str(r.get('supercell') or '—')
+        passwd = str(r.get('passwd') or '—')
+        remark = str(r.get('remark') or '—')
+        date = r['date'].strftime('%Y-%m-%d') if r.get('date') else '—'
+
+        print(color_text(f"  ┌─── ✉️ EMAIL ID: {r['id']} ───────────────────────────────┐", COLORS.CYAN))
+        print(color_text("  │ ", COLORS.CYAN) + f"📧 {color_text('Mail ID:', COLORS.YELLOW)} {mail_id}")
+        print(color_text("  │ ", COLORS.CYAN) + f"👤 {color_text('Owner  :', COLORS.YELLOW)} {owner:<20} " + color_text("│", COLORS.CYAN) + f" 📅 {color_text('Date:', COLORS.YELLOW)} {date}")
+        print(color_text("  ├─── 🔐 DETAILS ─────────────────────────────────────────┤", COLORS.CYAN))
+        print(color_text("  │ ", COLORS.CYAN) + f"🔑 {color_text('Passwd :', COLORS.YELLOW)} {passwd}")
+        print(color_text("  │ ", COLORS.CYAN) + f"🏢 {color_text('Supercell:', COLORS.YELLOW)} {supercell}")
+        print(color_text("  │ ", COLORS.CYAN) + f"📝 {color_text('Remark :', COLORS.YELLOW)} {remark}")
+        print(color_text("  └──────────────────────────────────────────────────────┘", COLORS.CYAN))
+        print()
 
 def search_emails():
     query = input(color_text("Search by Mail ID, Owner, or Remark: ", COLORS.MAGENTA)).strip()
@@ -90,22 +105,44 @@ def search_emails():
         print_colored("[i] No matches found.", COLORS.YELLOW)
         return
 
-    print(f"\n--- SEARCH RESULTS ({len(rows)} found) ---")
+    print(f"\n  " + color_text(f"Found {len(rows)} match(es):", COLORS.GREEN, bold=True))
+
     for r in rows:
-        print(f"  ID: {r['id']} | {r['mail_id']} | Owner: {r['owner']} | Pass: {r['passwd']}")
-        print(f"  Remark: {r['remark']} | Supercell: {r['supercell']}")
+        mail_id = str(r.get('mail_id') or '—')
+        owner = str(r.get('owner') or '—')
+        supercell = str(r.get('supercell') or '—')
+        passwd = str(r.get('passwd') or '—')
+        remark = str(r.get('remark') or '—')
+        date = r['date'].strftime('%Y-%m-%d') if r.get('date') else '—'
+
+        print(color_text(f"  ┌─── ✉️ EMAIL ID: {r['id']} ───────────────────────────────┐", COLORS.CYAN))
+        print(color_text("  │ ", COLORS.CYAN) + f"📧 {color_text('Mail ID:', COLORS.YELLOW)} {mail_id}")
+        print(color_text("  │ ", COLORS.CYAN) + f"👤 {color_text('Owner  :', COLORS.YELLOW)} {owner:<20} " + color_text("│", COLORS.CYAN) + f" 📅 {color_text('Date:', COLORS.YELLOW)} {date}")
+        print(color_text("  ├─── 🔐 DETAILS ─────────────────────────────────────────┤", COLORS.CYAN))
+        print(color_text("  │ ", COLORS.CYAN) + f"🔑 {color_text('Passwd :', COLORS.YELLOW)} {passwd}")
+        print(color_text("  │ ", COLORS.CYAN) + f"🏢 {color_text('Supercell:', COLORS.YELLOW)} {supercell}")
+        print(color_text("  │ ", COLORS.CYAN) + f"📝 {color_text('Remark :', COLORS.YELLOW)} {remark}")
+        print(color_text("  └──────────────────────────────────────────────────────┘", COLORS.CYAN))
+        print()
 
 def update_email():
-    email_id = input(color_text("Enter Email ID to update (Database ID): ", COLORS.MAGENTA)).strip()
-    if not email_id.isdigit(): return
+    identifier = input(color_text("Enter DB ID or Mail ID to update: ", COLORS.MAGENTA)).strip()
+    if not identifier: return
 
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM email WHERE id = %s", (email_id,))
+
+    if identifier.isdigit():
+        cursor.execute("SELECT * FROM email WHERE id = %s", (identifier,))
+    else:
+        cursor.execute("SELECT * FROM email WHERE mail_id = %s", (identifier,))
+
     row = cursor.fetchone()
     if not row:
         print_colored("[!] Email not found.", COLORS.RED)
         cursor.close(); conn.close(); return
+
+    email_id = row['id']
 
     print(f"\nUpdating Email: {row['mail_id']} (Leave blank to keep current)")
 
@@ -128,15 +165,19 @@ def update_email():
         cursor.close(); conn.close()
 
 def delete_email():
-    email_id = input(color_text("Enter Email ID to delete (Database ID): ", COLORS.MAGENTA)).strip()
-    if not email_id.isdigit(): return
+    identifier = input(color_text("Enter DB ID or Mail ID to delete: ", COLORS.MAGENTA)).strip()
+    if not identifier: return
 
-    confirm = input(color_text(f"Are you sure you want to delete Email ID {email_id}? (y/n): ", COLORS.RED)).strip().lower()
+    confirm = input(color_text(f"Are you sure you want to delete '{identifier}'? (y/n): ", COLORS.RED)).strip().lower()
     if confirm != 'y': return
 
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM email WHERE id = %s", (email_id,))
+
+    if identifier.isdigit():
+        cursor.execute("DELETE FROM email WHERE id = %s", (identifier,))
+    else:
+        cursor.execute("DELETE FROM email WHERE mail_id = %s", (identifier,))
     conn.commit()
     if cursor.rowcount > 0:
         print_colored("[✓] Email deleted.", COLORS.GREEN)
