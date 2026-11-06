@@ -352,6 +352,35 @@ def create_table():
     if not cursor.fetchone():
         cursor.execute("ALTER TABLE pomodoro_log ADD COLUMN subject VARCHAR(255) NULL")
         print_colored("[✓] Added 'subject' column to pomodoro_log.", COLORS.GREEN)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS sim_details (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        cell_number VARCHAR(15) UNIQUE,
+        security_code INT(8) UNSIGNED ZEROFILL DEFAULT 00000000,
+        pin_1 INT(9),
+        pin_2 INT(9),
+        puk_1 INT(8) UNSIGNED ZEROFILL DEFAULT 00000000,
+        puk_2 INT(8) UNSIGNED ZEROFILL DEFAULT 00000000,
+        brand ENUM('SMART','NTC','SKY','NCELL'),
+        owner VARCHAR(100) NOT NULL DEFAULT 'UNKNOWN',
+        user VARCHAR(100) NOT NULL DEFAULT 'UNKNOWN',
+        date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS email (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        mail_id VARCHAR(200) UNIQUE,
+        supercell VARCHAR(200) NOT NULL DEFAULT 'Not available',
+        owner VARCHAR(200),
+        passwd VARCHAR(50),
+        remark VARCHAR(100) NOT NULL DEFAULT 'Not available'
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    """)
     conn.commit()
     cursor.close()
     conn.close()

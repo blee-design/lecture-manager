@@ -33,6 +33,8 @@ from .storage_manager import (
     purge_local_file_for_record,
 )
 from .pomodoro_io import pomodoro_io_menu
+from .sim_manager import sim_menu
+from .email_manager import email_menu
 
 
 web_server_process = None
@@ -1383,6 +1385,10 @@ def main():
         '9': [
             ("📚 Syllabus Setup (papers & subjects)", syllabus_menu),
         ],
+        '10': [
+            ("📱 SIM Details Manager", sim_menu),
+            ("✉️ Email Manager", email_menu),
+        ],
     }
 
     # ----- Helper to display a sub‑menu -----
@@ -1398,6 +1404,7 @@ def main():
             '7': "☁️ YOUTUBE UPLOAD & MIRROR MANAGEMENT",
             '8': "🧰 EXTERNAL TOOLS",
             '9': "📚 SYLLABUS SETUP",
+            '10': "📱 SIM & EMAIL MANAGEMENT",
         }
 
         # Single-item category → invoke directly, skip the pointless submenu
@@ -1444,11 +1451,12 @@ def main():
         print("  7. ☁️ YouTube Upload & Mirror Management")
         print("  8. 🧰 External Tools")
         print("  9. 📚 Syllabus Setup (papers & subjects)")
+        print(" 10. 📱 SIM & Email Management")
         print("  0. 🚪 Exit")
         print("  " + "─" * 40)
 
         try:
-            choice = input(color_text("Choose a category (0-9): ", COLORS.MAGENTA)).strip()
+            choice = input(color_text("Choose a category (0-10): ", COLORS.MAGENTA)).strip()
             if choice == '0':
                 kill_pomodoro()
                 print_colored("\nGoodbye! Have a great day! 👋", COLORS.CYAN)
