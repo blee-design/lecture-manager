@@ -79,17 +79,35 @@ def view_sims():
         print_colored("[i] No SIMs found.", COLORS.YELLOW)
         return
 
-    print("\n" + "─" * 90)
-    print(f"  {'ID':<4} | {'Cell Number':<12} | {'Brand':<6} | {'Owner':<15} | {'User':<15} | {'PINs':<10}")
-    print("─" * 90)
+    print("\n" + "═" * 60)
+    print_colored(f"  📱 ALL SIMS ({len(rows)} found)", COLORS.CYAN, bold=True)
+    print("═" * 60)
+
     for r in rows:
-        pins = f"P1:{r['pin_1'] or '---'} / P2:{r['pin_2'] or '---'}"
-        cell = str(r['cell_number'] or '—')
-        brand = str(r['brand'] or '—')
-        owner = (r['owner'] or '')[:15]
-        user = (r['user'] or '')[:15]
-        print(f"  {r['id']:<4} | {cell:<12} | {brand:<6} | {owner:<15} | {user:<15} | {pins}")
-    print("─" * 90)
+        # Handle None values safely
+        cell = str(r.get('cell_number') or '—')
+        brand = str(r.get('brand') or '—')
+        owner = str(r.get('owner') or '—')[:18]
+        user = str(r.get('user') or '—')[:18]
+        sec = str(r.get('security_code') or '00000000').zfill(8)
+        pin1 = str(r.get('pin_1') or '—')
+        pin2 = str(r.get('pin_2') or '—')
+        puk1 = str(r.get('puk_1') or '00000000').zfill(8)
+        puk2 = str(r.get('puk_2') or '00000000').zfill(8)
+
+        added = r['date'].strftime('%Y-%m-%d') if r.get('date') else '—'
+        updated = r['updated_on'].strftime('%Y-%m-%d') if r.get('updated_on') else '—'
+
+        print(color_text(f"  ┌─── 📱 SIM ID: {r['id']} ─────────────────────────────────────┐", COLORS.CYAN))
+        print(color_text("  │ ", COLORS.CYAN) + f"📞 {color_text('Number:', COLORS.YELLOW)} {cell:<15} " + color_text("│", COLORS.CYAN) + f" 📶 {color_text('Brand:', COLORS.YELLOW)} {brand}")
+        print(color_text("  │ ", COLORS.CYAN) + f"👤 {color_text('Owner :', COLORS.YELLOW)} {owner:<15} " + color_text("│", COLORS.CYAN) + f" 👥 {color_text('User :', COLORS.YELLOW)} {user}")
+        print(color_text("  │ ", COLORS.CYAN) + f"📅 {color_text('Added :', COLORS.YELLOW)} {added:<15} " + color_text("│", COLORS.CYAN) + f" 🔄 {color_text('Updt :', COLORS.YELLOW)} {updated}")
+        print(color_text("  ├─── 🔐 SECURITY ───────────────────────────────────────────┤", COLORS.CYAN))
+        print(color_text("  │ ", COLORS.CYAN) + f"🔑 {color_text('PIN 1 :', COLORS.YELLOW)} {pin1:<10} " + color_text("│", COLORS.CYAN) + f" 🔑 {color_text('PIN 2 :', COLORS.YELLOW)} {pin2}")
+        print(color_text("  │ ", COLORS.CYAN) + f"🔓 {color_text('PUK 1 :', COLORS.YELLOW)} {puk1:<10} " + color_text("│", COLORS.CYAN) + f" 🔓 {color_text('PUK 2 :', COLORS.YELLOW)} {puk2}")
+        print(color_text("  │ ", COLORS.CYAN) + f"🛡️  {color_text('SEC   :', COLORS.YELLOW)} {sec}")
+        print(color_text("  └──────────────────────────────────────────────────────────┘", COLORS.CYAN))
+        print()
 
 def search_sims():
     query = input(color_text("Search by Cell, Owner, or Brand: ", COLORS.MAGENTA)).strip()
