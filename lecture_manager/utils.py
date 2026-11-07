@@ -647,65 +647,77 @@ def parse_lecture_title(title):
     if not title:
         return None
 
-    parts = [p.strip() for p in title.split('||') if p.strip()]
-    if not parts:
-        return None
+    # 1. Clean up separators. Convert standalone 'II' (roman numeral 2) and '|' to '||'
+    # We use \bII\b to avoid replacing 'II' inside words.
+    cleaned = re.sub(r'\bII\b', '||', title, flags=re.IGNORECASE)
+    cleaned = cleaned.replace('|', '||')
 
-    # Patterns for date, time, and name indicators
-    date_pattern = re.compile(r'\b\d{4}-\d{2}-\d{2}\b')
-    # Relaxed pattern to catch 6:30AM, 6.30 PM, etc.
-    time_pattern = re.compile(r'\b\d{1,2}[:\.\s]\d{2}\s*[AP]M\b', re.IGNORECASE)
-    name_pattern = re.compile(r'\b(MRS?|MR|MS|SIR|MAM|PROF|DR)\b', re.IGNORECASE)
+    # 2. Extract Date (YYYY-MM-DD)
+    date_match = re.search(r'\b(\d{4}-\d{2}-\d{2})\b', cleaned)
+    nepali_date = date_match.group(1) if date_match else ""
 
-    # Find date and time positions
-    date_idx = None
-    time_idx = None
-    for i, p in enumerate(parts):
-        if date_pattern.search(p):
-            date_idx = i
-        if time_pattern.search(p):
-            time_idx = i
-
-    # If date or time missing, fallback to old 4‑part logic
-    if date_idx is None or time_idx is None:
-        if len(parts) == 4:
-            return {
-                'subject': parts[0],
-                'lecturer': parts[1],
-                'nepali_date': parts[2],
-                'time': parts[3]
-            }
-        return None
-
-    nepali_date = parts[date_idx]
-    time_str = parts[time_idx]
-
-    # Remove date and time from the list
-    remaining = [p for j, p in enumerate(parts) if j not in (date_idx, time_idx)]
-    if not remaining:
-        return None
-
-    # Try to find the lecturer: the part that contains a name title
-    lecturer_idx = None
-    for i, p in enumerate(remaining):
-        if name_pattern.search(p):
-            lecturer_idx = i
-            break
-
-    if lecturer_idx is not None:
-        lecturer = remaining.pop(lecturer_idx)
+    # 3. Extract Time (robustly)
+    time_str = ""
+    # Pattern: 1-2 digits, optional colon/dot/space, 2 digits, optional space, AM/PM
+    time_match = re.search(r'\b(\d{1,2})[:\.\s](\d{2})\s*([AaPp][Mm])\b', cleaned, re.IGNORECASE)
+    if time_match:
+        hour = int(time_match.group(1))
+        minute = time_match.group(2)
+        ampm = time_match.group(3).upper()
+        time_str = f"{hour:02d}:{minute} {ampm}"
     else:
-        # If no title found, assume the last part before date/time is the lecturer
-        lecturer = remaining.pop(-1)
+        # Fallback: If no AM/PM, but it looks like HH:MM, pad it.
+        time_match2 = re.search(r'\b(\d{1,2}):(\d{2})\b', cleaned)
+        if time_match2:
+             time_str = f"{int(time_match2.group(1)):02d}:{time_match2.group(2)}"
 
-    # The first remaining part becomes the subject
-    subject = remaining[0] if remaining else ''
+    # 4. Remove date and time from the string so they don't confuse the name/subject parser
+    text_only = re.sub(r'\b\d{4}-\d{2}-\d{2}\b', '', cleaned)
+    text_only = re.sub(r'\b\d{1,2}[:\.\s]\d{2}\s*[AaPp][Mm]\b', '', text_only, flags=re.IGNORECASE)
+    text_only = re.sub(r'\b\d{1,2}:\d{2}\b', '', text_only)
+
+    # 5. Split by || into clean parts
+    parts = [p.strip() for p in text_only.split('||') if p.strip()]
+
+    # 6. Identify Lecturer and Subject using Smart Filtering
+    lecturer = ""
+    subject_parts = []
+
+    # Common boilerplate words that are NOT the specific topic
+    BOILERPLATE = {"ECONOMICS", "ENGLISH MEDIUM", "NEPALI MEDIUM", "MANAGEMENT", "ACCOUNT", "FINANCE"}
+    # Titles that indicate the lecturer
+    TITLES = {"SIR", "MADAM", "MR", "MRS", "MS", "PROF", "DR", "TEACHER", "GURU"}
+
+    for part in parts:
+        part_upper = part.upper()
+        # Check if this part is the lecturer
+        if any(re.search(r'\b' + t + r'\b', part_upper) for t in TITLES):
+            lecturer = part.title()  # e.g., "Tilak Sir"
+        else:
+            # Check if it's just boilerplate noise
+            is_boiler = False
+            for b in BOILERPLATE:
+                if b in part_upper:
+                    is_boiler = True
+                    break
+            if not is_boiler:
+                subject_parts.append(part)
+
+    # 7. Determine the final Subject
+    if subject_parts:
+        # If we found a specific topic (e.g., "TERM STRUCTURE OF INTEREST RATE"), use it.
+        subject = " ".join(subject_parts)
+    elif parts:
+        # If no specific topic was found, fallback to the first word (e.g., "ECONOMICS")
+        subject = parts[0].title()
+    else:
+        subject = "Unknown"
 
     return {
         'subject': subject,
-        'lecturer': lecturer,
+        'lecturer': lecturer or "Unknown",
         'nepali_date': nepali_date,
-        'time': normalize_time_str(time_str)
+        'time': time_str
     }
 
 def clear_screen():
