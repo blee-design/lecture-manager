@@ -803,3 +803,61 @@ def normalize_time_str(time_str):
         return f"{hour:02d}:{minute} {ampm}"
 
     return time_str
+
+def normalize_title_case(text):
+    """
+    Converts ALL CAPS text into Title Case.
+    - 'ROLE OF MONETARY' -> 'Role of Monetary'
+    - Keeps acronyms (like NRB, GDP) uppercase.
+    - Fixes common typos.
+    """
+    if not text:
+        return text
+
+    text = str(text).strip()
+
+    # Only process if the text is mostly uppercase (to avoid ruining properly typed mixed-case text)
+    if text.isupper():
+        # Common typos in economics/banking (expandable)
+        TYPO_MAP = {
+            'PLOICY': 'POLICY',
+            'DIFFRERENT': 'DIFFERENT',
+            'MANAGMENT': 'MANAGEMENT',
+            'ECONMICS': 'ECONOMICS',
+            'INTREEST': 'INTEREST',
+        }
+
+        # Words that should stay lowercase (unless they are the first or last word)
+        lowercase_words = {'a', 'an', 'the', 'and', 'but', 'or', 'for', 'nor',
+                           'on', 'at', 'to', 'from', 'by', 'of', 'in', 'with',
+                           'without', 'via'}
+
+        words = text.split()
+        if not words:
+            return text
+
+        normalized = []
+        for i, word in enumerate(words):
+            clean_word = word.strip('.,!?"\'()[]{}')
+            lower_check = clean_word.lower()
+
+            # 1. Fix typos first
+            if clean_word in TYPO_MAP:
+                clean_word = TYPO_MAP[clean_word]
+                word = word.replace(word.strip('.,!?"\'()[]{}'), clean_word)
+                lower_check = clean_word.lower()
+
+            # 2. Keep small acronyms uppercase (e.g., NRB, GDP, IS, LM)
+            if clean_word.isupper() and len(clean_word) <= 4 and lower_check not in lowercase_words:
+                normalized.append(word)
+            # 3. Keep small joining words lowercase if they are in the middle
+            elif 0 < i < len(words) - 1 and lower_check in lowercase_words:
+                normalized.append(word.lower())
+            # 4. Title case everything else
+            else:
+                normalized.append(word.capitalize())
+
+        return " ".join(normalized)
+
+    # If it's already mixed case, return it as-is (the user probably typed it correctly)
+    return text

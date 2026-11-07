@@ -5,7 +5,7 @@ import mysql.connector
 import glob
 from .db import get_connection, TABLE_NAME, get_record_by_video_id, get_record_by_any_id, get_any_media_record
 from .youtube import extract_video_id, fetch_youtube_title, get_embed_link, _ensure_cookie_file
-from .utils import clean_field, get_display_title, sanitize_filename, parse_lecture_title, color_text, print_colored, COLORS, normalize_syllabus_id, build_original_filename, DOWNLOAD_DIR
+from .utils import clean_field, get_display_title, sanitize_filename, parse_lecture_title, color_text, print_colored, COLORS, normalize_syllabus_id, build_original_filename, DOWNLOAD_DIR, normalize_title_case
 from .file_manager import organize_video, sync_record_files, detect_paper, get_target_path, ROOT_DIR, auto_detect_from_syllabus
 from .facebook_manager import add_facebook_lecture
 from .upload import upload_video_to_youtube, update_youtube_title
@@ -283,6 +283,8 @@ def add_lecture():
 
     # ---- Topic (manual input) ----
     topic = input(color_text("Topic (optional): ", COLORS.MAGENTA)).strip() or None
+    if topic:
+        topic = normalize_title_case(topic)
 
     if parsed:
         # ---- Fall back to title-based detection only if needed ----
@@ -416,8 +418,8 @@ def add_lecture():
                     elif choice == '5': # Topic
                         new_val = input(color_text(f"Topic [{fields['topic'] or ''}]: ", COLORS.MAGENTA)).strip()
                         if new_val:
-                            fields['topic'] = new_val
-                            print_colored(f"[✓] Topic set to '{new_val}'.", COLORS.GREEN)
+                            fields['topic'] = normalize_title_case(new_val)
+                            print_colored(f"[✓] Topic set to '{fields['topic']}'.", COLORS.GREEN)
 
                     elif choice == '6': # Lecturer
                         new_val = input(color_text(f"Lecturer [{fields['lecturer']}]: ", COLORS.MAGENTA)).strip()
@@ -1230,9 +1232,12 @@ def update_lecture():
                 continue
 
             else:
-                # Generic update for subject, chapter, lecturer, nepali_date, time
-                if field == 'time':
-                    new_value = normalize_time_str(new_value)
+                # Generic update for subject, chapter, lecturer, nepali_date, time, topic
+                if field in ('time', 'topic', 'chapter'):
+                    if field == 'time':
+                        new_value = normalize_time_str(new_value)
+                    else:
+                        new_value = normalize_title_case(new_value)
 
                 conn = get_connection()
                 cursor = conn.cursor()
