@@ -543,6 +543,12 @@ def add_lecture():
         print("  ────────────────────────────────────────────────")
         print(f"  DB ID    : {new_id}")
         print(f"  Video ID : {video_id}")
+
+        # Add YouTube Title (truncated for neatness)
+        if title:
+            _title_display = title[:70] + "..." if len(title) > 70 else title
+            print(f"  Title    : {_title_display}")
+
         print(f"  Syllabus : {syllabus_id}")
         print(f"  Paper    : {paper}")
         print(f"  Subject  : {subject}")
@@ -554,6 +560,9 @@ def add_lecture():
         print(f"  Time     : {time_str}")
         if mirror_id:
             print(f"  Mirror ID: {mirror_id}")
+        if notes:
+            _notes_display = notes[:70] + "..." if len(notes) > 70 else notes
+            print(f"  Notes    : {_notes_display}")
         print("  ────────────────────────────────────────────────")
         print()
     except mysql.connector.IntegrityError as e:
