@@ -432,7 +432,7 @@ def add_lecture():
                     elif choice == '8': # Time
                         new_val = input(color_text(f"Time [{fields['time']}]: ", COLORS.MAGENTA)).strip()
                         if new_val:
-                            fields['time'] = new_val
+                            fields['time'] = normalize_time_str(new_val)
 
             syllabus_id = fields['syllabus_id']
             chapter = fields['chapter']
@@ -455,7 +455,8 @@ def add_lecture():
         subject = input(color_text(subj_prompt, COLORS.MAGENTA)).strip() or default_subj
         lecturer = input(color_text("Lecturer Name: ", COLORS.MAGENTA)).strip()
         nepali_date = input(color_text("Nepali Date (B.S.): ", COLORS.MAGENTA)).strip()
-        time_str = input(color_text("Time: ", COLORS.MAGENTA)).strip()
+        time_str = input(color_text("Time (e.g., 06:30 AM): ", COLORS.MAGENTA)).strip()
+        time_str = normalize_time_str(time_str)
 
         if detected_paper:
             paper = detected_paper
@@ -1221,6 +1222,9 @@ def update_lecture():
 
             else:
                 # Generic update for subject, chapter, lecturer, nepali_date, time
+                if field == 'time':
+                    new_value = normalize_time_str(new_value)
+
                 conn = get_connection()
                 cursor = conn.cursor()
                 try:

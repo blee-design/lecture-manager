@@ -653,7 +653,8 @@ def parse_lecture_title(title):
 
     # Patterns for date, time, and name indicators
     date_pattern = re.compile(r'\b\d{4}-\d{2}-\d{2}\b')
-    time_pattern = re.compile(r'\b\d{1,2}:\d{2}\s*[AP]M\b', re.IGNORECASE)
+    # Relaxed pattern to catch 6:30AM, 6.30 PM, etc.
+    time_pattern = re.compile(r'\b\d{1,2}[:\.\s]\d{2}\s*[AP]M\b', re.IGNORECASE)
     name_pattern = re.compile(r'\b(MRS?|MR|MS|SIR|MAM|PROF|DR)\b', re.IGNORECASE)
 
     # Find date and time positions
@@ -704,7 +705,7 @@ def parse_lecture_title(title):
         'subject': subject,
         'lecturer': lecturer,
         'nepali_date': nepali_date,
-        'time': time_str
+        'time': normalize_time_str(time_str)
     }
 
 def clear_screen():
@@ -768,3 +769,25 @@ def build_youtube_title(record, max_length=100):
         title = title[:max_length - 3] + "..."
 
     return title
+def normalize_time_str(time_str):
+    """
+    Normalizes a time string to 'HH:MM AM/PM'.
+    - '6:30AM'  -> '06:30 AM'
+    - '6.30 pm' -> '06:30 PM'
+    - '12:15am' -> '12:15 AM'
+    If no valid time pattern is found, returns the original string untouched.
+    """
+    if not time_str:
+        return time_str
+
+    time_str = str(time_str).strip()
+
+    # Look for: 1-2 digits, a separator (: or . or space), 2 digits, AM/PM
+    match = re.search(r'(\d{1,2})[:\.\s](\d{2})\s*([AaPp][Mm])', time_str)
+    if match:
+        hour = int(match.group(1))
+        minute = match.group(2)
+        ampm = match.group(3).upper()
+        return f"{hour:02d}:{minute} {ampm}"
+
+    return time_str
