@@ -6,7 +6,7 @@ import glob
 import re
 from .db import get_connection, TABLE_NAME, get_record_by_video_id, get_record_by_any_id, get_any_media_record
 from .youtube import extract_video_id, fetch_youtube_title, get_embed_link, _ensure_cookie_file
-from .utils import clean_field, get_display_title, sanitize_filename, parse_lecture_title, color_text, print_colored, COLORS, normalize_syllabus_id, build_original_filename, DOWNLOAD_DIR, normalize_title_case
+from .utils import clean_field, get_display_title, sanitize_filename, parse_lecture_title, color_text, print_colored, COLORS, normalize_syllabus_id, build_original_filename, DOWNLOAD_DIR, normalize_title_case, normalize_time_str
 from .file_manager import organize_video, sync_record_files, detect_paper, get_target_path, ROOT_DIR, auto_detect_from_syllabus
 from .facebook_manager import add_facebook_lecture
 from .upload import upload_video_to_youtube, update_youtube_title
