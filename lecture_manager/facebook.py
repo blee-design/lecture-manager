@@ -696,9 +696,9 @@ def _download_video(url, custom_name=None, force=False, probe=None):
 def _download_photos(url, output_dir=None):
     """
     Download all photos from a Facebook album/page/group using gallery-dl.
-    This function remains unchanged – it does NOT add entries to the database.
-    It's kept for quick photo album downloads.
     """
+    import tempfile
+
     # Ensure cookies.txt is fresh
     _ensure_cookie_file()
 
@@ -707,100 +707,74 @@ def _download_photos(url, output_dir=None):
         print_colored("[!] cookies.txt not found. Please run option 23 to refresh cookies.", COLORS.RED)
         return
 
-    # Default base directory
+    # Default base directory (only used for prompt, final path is set by _process_album_files)
     if not output_dir:
         output_dir = PHOTO_BASE_DIR
-
-    custom_dir = input(color_text(f"Output directory (default: {output_dir}): ", COLORS.MAGENTA)).strip()
-    if custom_dir:
-        output_dir = custom_dir
-
-    os.makedirs(output_dir, exist_ok=True)
 
     # ---- Merge filename pattern into gallery-dl.conf ----
     config_file = 'gallery-dl.conf'
     config = {}
 
-    # Load existing config if it exists
     if os.path.exists(config_file):
         try:
             import json
             with open(config_file, 'r') as f:
                 config = json.load(f)
-            print_colored(f"[i] Loaded existing config: {config_file}", COLORS.BLUE)
-        except Exception as e:
-            print_colored(f"[!] Could not parse existing config: {e}. Will create a new one.", COLORS.YELLOW)
+        except Exception:
             config = {}
 
-    # Ensure extractor.facebook section exists
     if 'extractor' not in config:
         config['extractor'] = {}
     if 'facebook' not in config['extractor']:
         config['extractor']['facebook'] = {}
 
-    # Set filename pattern (preserve other keys like sleep, retries)
     config['extractor']['facebook']['filename'] = "{uploader}_{date}_{caption}_{id}.{extension}"
 
-    # Write back the config
     try:
         import json
         with open(config_file, 'w') as f:
             json.dump(config, f, indent=4)
-        print_colored(f"[✓] Updated config with filename pattern: {config_file}", COLORS.GREEN)
-    except Exception as e:
-        print_colored(f"[!] Failed to write config: {e}", COLORS.RED)
-        return
+    except Exception:
+        pass
 
-    # Build gallery-dl command
-    cmd = [
-        'gallery-dl',
-        '--cookies', cookie_file,
-        '-v',
-        '--config', config_file,
-        '--verbose',
-        '-d', output_dir,
-        url
-    ]
+    # ---- THE FIX: Use a Temporary Directory ----
+    # This guarantees that ONLY the newly downloaded files are processed,
+    # because the temp folder starts completely empty.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cmd = [
+            'gallery-dl',
+            '--cookies', cookie_file,
+            '-v',
+            '--config', config_file,
+            '--verbose',
+            '-d', tmpdir,   # <-- Download to temp dir
+            url
+        ]
 
-    print_colored(f"[⏳] Downloading photos from: {url}", COLORS.BLUE)
-    print_colored(f"[i] Output folder: {output_dir}", COLORS.BLUE)
-    print_colored("[i] Filename pattern: uploader_date_caption_id", COLORS.BLUE)
-    print_colored("[i] Note: Photo albums are NOT tracked in the database.", COLORS.YELLOW)
+        print_colored(f"[⏳] Downloading photos from: {url}", COLORS.BLUE)
+        print_colored("[i] Note: Photo albums ARE tracked in the database.", COLORS.YELLOW)
 
-    try:
-        # Timestamp BEFORE download — only files newer than this count
-        import time as _time
-        download_start = _time.time() - 5   # 5s buffer for clock skew
+        try:
+            subprocess.run(cmd, check=True)
 
-        subprocess.run(cmd, check=True)
+            # Collect ALL files in the temp dir (they are guaranteed to be new)
+            image_exts = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
+            downloaded = []
+            for root, _, files in os.walk(tmpdir):
+                for f in files:
+                    if f.lower().endswith(image_exts):
+                        downloaded.append(os.path.join(root, f))
 
-        # Collect ONLY files created/modified during this download.
-        # Without this filter, os.walk would pick up photos from every
-        # previous album on disk and merge them into this one.
-        image_exts = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
-        downloaded = []
-        skipped_old = 0
-        for root, _, files in os.walk(output_dir):
-            for f in files:
-                if f.lower().endswith(image_exts):
-                    fp = os.path.join(root, f)
-                    if os.path.getmtime(fp) >= download_start:
-                        downloaded.append(fp)
-                    else:
-                        skipped_old += 1
+            if downloaded:
+                _process_album_files(downloaded, url, uploader=None, probe=None)
+                print_colored(f"[✓] Photos processed and saved to database.", COLORS.GREEN)
+            else:
+                print_colored("[!] No photos were downloaded by gallery-dl.", COLORS.YELLOW)
 
-        if skipped_old:
-            print_colored(
-                f"[i] Skipping {skipped_old} photo(s) from previous downloads.",
-                COLORS.BLUE)
-        if downloaded:
-            _process_album_files(downloaded, url, uploader=None, probe=None)
-
-        print_colored(f"[✓] Photos downloaded to {output_dir}", COLORS.GREEN)
-    except subprocess.CalledProcessError as e:
-        print_colored(f"[!] Download failed: {e}", COLORS.RED)
-    except FileNotFoundError:
-        print_colored("[!] gallery-dl not found. Install with: pip install gallery-dl", COLORS.RED)
+        except subprocess.CalledProcessError as e:
+            print_colored(f"[!] Download failed: {e}", COLORS.RED)
+        except FileNotFoundError:
+            print_colored("[!] gallery-dl not found. Install with: pip install gallery-dl", COLORS.RED)
 
 def download_facebook():
     print("\n" + "═" * 50)
