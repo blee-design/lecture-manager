@@ -806,58 +806,46 @@ def normalize_time_str(time_str):
 
 def normalize_title_case(text):
     """
-    Converts ALL CAPS text into Title Case.
-    - 'ROLE OF MONETARY' -> 'Role of Monetary'
-    - Keeps acronyms (like NRB, GDP) uppercase.
-    - Fixes common typos.
+    Converts messy text into Title Case.
+    - Fixes typos.
+    - Keeps acronyms (like NRB, GDP, FS) uppercase.
+    - Keeps small words (of, in, the) lowercase in the middle.
     """
     if not text:
         return text
 
     text = str(text).strip()
 
-    # Only process if the text is mostly uppercase (to avoid ruining properly typed mixed-case text)
-    if text.isupper():
-        # Common typos in economics/banking (expandable)
-        TYPO_MAP = {
-            'PLOICY': 'POLICY',
-            'DIFFRERENT': 'DIFFERENT',
-            'MANAGMENT': 'MANAGEMENT',
-            'ECONMICS': 'ECONOMICS',
-            'INTREEST': 'INTEREST',
-        }
+    TYPO_MAP = {
+        'PLOICY': 'POLICY',
+        'DIFFRERENT': 'DIFFERENT',
+        'MANAGMENT': 'MANAGEMENT',
+        'ECONMICS': 'ECONOMICS',
+    }
 
-        # Words that should stay lowercase (unless they are the first or last word)
-        lowercase_words = {'a', 'an', 'the', 'and', 'but', 'or', 'for', 'nor',
-                           'on', 'at', 'to', 'from', 'by', 'of', 'in', 'with',
-                           'without', 'via'}
+    lowercase_words = {'a', 'an', 'the', 'and', 'but', 'or', 'for', 'nor',
+                       'on', 'at', 'to', 'from', 'by', 'of', 'in', 'with',
+                       'without', 'via', ':'}
 
-        words = text.split()
-        if not words:
-            return text
+    words = text.split()
+    normalized = []
 
-        normalized = []
-        for i, word in enumerate(words):
-            clean_word = word.strip('.,!?"\'()[]{}')
-            lower_check = clean_word.lower()
+    for i, word in enumerate(words):
+        clean_word = word.strip('.,!?"\'()[]{}')
+        upper_clean = clean_word.upper()
 
-            # 1. Fix typos first
-            if clean_word in TYPO_MAP:
-                clean_word = TYPO_MAP[clean_word]
-                word = word.replace(word.strip('.,!?"\'()[]{}'), clean_word)
-                lower_check = clean_word.lower()
+        if upper_clean in TYPO_MAP:
+            clean_word = TYPO_MAP[upper_clean]
+            word = word.replace(word.strip('.,!?"\'()[]{}'), clean_word)
 
-            # 2. Keep small acronyms uppercase (e.g., NRB, GDP, IS, LM)
-            if clean_word.isupper() and len(clean_word) <= 4 and lower_check not in lowercase_words:
-                normalized.append(word)
-            # 3. Keep small joining words lowercase if they are in the middle
-            elif 0 < i < len(words) - 1 and lower_check in lowercase_words:
-                normalized.append(word.lower())
-            # 4. Title case everything else
-            else:
-                normalized.append(word.capitalize())
+        # Keep acronyms uppercase (e.g., NRB, GDP, FS)
+        if clean_word.isupper() and len(clean_word) <= 4 and clean_word.lower() not in lowercase_words:
+            normalized.append(word)
+        # Keep small words lowercase in the middle
+        elif 0 < i < len(words) - 1 and clean_word.lower() in lowercase_words:
+            normalized.append(word.lower())
+        # Title case everything else
+        else:
+            normalized.append(word.capitalize())
 
-        return " ".join(normalized)
-
-    # If it's already mixed case, return it as-is (the user probably typed it correctly)
-    return text
+    return " ".join(normalized)

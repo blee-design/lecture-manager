@@ -3,6 +3,7 @@ import os
 import subprocess
 import mysql.connector
 import glob
+import re
 from .db import get_connection, TABLE_NAME, get_record_by_video_id, get_record_by_any_id, get_any_media_record
 from .youtube import extract_video_id, fetch_youtube_title, get_embed_link, _ensure_cookie_file
 from .utils import clean_field, get_display_title, sanitize_filename, parse_lecture_title, color_text, print_colored, COLORS, normalize_syllabus_id, build_original_filename, DOWNLOAD_DIR, normalize_title_case
@@ -185,6 +186,49 @@ def download_video(record, output_dir=DOWNLOAD_DIR, video_id_to_download=None, s
         print_colored("    1. Run option 23 to refresh YouTube cookies.", COLORS.YELLOW)
         print_colored("    2. Make sure you are logged into YouTube in your browser.", COLORS.YELLOW)
 
+def _resolve_lecturer_name(parsed_lecturer):
+    """
+    If the parsed name is a short version (e.g., 'Tilak Sir'),
+    try to find the full name in the database (e.g., 'Tilak Mahara Sir').
+    """
+    if not parsed_lecturer or parsed_lecturer == "Unknown":
+        return parsed_lecturer
+
+    from .utils import normalize_title_case
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"SELECT DISTINCT lecturer FROM {TABLE_NAME} WHERE lecturer IS NOT NULL AND lecturer != ''")
+        existing = [row[0] for row in cursor.fetchall()]
+    finally:
+        cursor.close()
+        conn.close()
+
+    parsed_lower = parsed_lecturer.lower().strip()
+    parsed_words = re.findall(r'\b\w+\b', parsed_lower)
+
+    # If no words found, just return the normalized version
+    if not parsed_words:
+        return normalize_title_case(parsed_lecturer)
+
+    first_name = parsed_words[0]
+
+    # Find ALL matches based on the first name
+    matches = []
+    for lec in existing:
+        lec_words = re.findall(r'\b\w+\b', lec.lower())
+        if lec_words and lec_words[0] == first_name:
+            matches.append(lec)
+
+    if matches:
+        # Sort by length descending to get the most complete name (Tilak Mahara Sir > TILAK SIR)
+        matches.sort(key=len, reverse=True)
+        return normalize_title_case(matches[0])
+
+    # If no match found in DB, return the parsed name formatted properly
+    return normalize_title_case(parsed_lecturer)
+
 def add_lecture():
     print("\n" + "═" * 50)
     print_colored("  ADD NEW LECTURE", COLORS.CYAN, bold=True)
@@ -232,6 +276,13 @@ def add_lecture():
     # ---- Fetch title and parse ----
     title = fetch_youtube_title(video_id) or ""
     parsed = parse_lecture_title(title)
+
+    # --- NEW: Resolve short names to full names from DB ---
+    if parsed and parsed.get('lecturer'):
+        resolved_name = _resolve_lecturer_name(parsed['lecturer'])
+        if resolved_name != parsed['lecturer']:
+            print_colored(f"[i] Auto-resolved lecturer: '{parsed['lecturer']}' → '{resolved_name}'", COLORS.BLUE)
+            parsed['lecturer'] = resolved_name
 
     syllabus_raw = input(color_text("Syllabus ID (or press Enter to cancel): ", COLORS.MAGENTA)).strip()
     if not syllabus_raw:
@@ -445,7 +496,8 @@ def add_lecture():
             time_str = fields['time']
             paper = fields['paper']
         else:
-            subject = parsed['subject']
+            # Use the syllabus auto-detect if available, otherwise fallback to title
+            subject = auto_subject or parsed['subject']
             lecturer = parsed['lecturer']
             nepali_date = parsed['nepali_date']
             time_str = parsed['time']
