@@ -174,25 +174,79 @@ def update_sim():
 
     sim_id = row['id']
 
-    print(f"\nUpdating SIM: {row['cell_number']} (Leave blank to keep current)")
+    while True:
+        # Re-fetch to show the freshest data after each update
+        cursor.execute("SELECT * FROM sim_details WHERE id = %s", (sim_id,))
+        row = cursor.fetchone()
 
-    new_cell = input(f"Cell Number [{row['cell_number']}]: ").strip() or row['cell_number']
-    new_owner = input(f"Owner [{row['owner']}]: ").strip() or row['owner']
-    new_user = input(f"User [{row['user']}]: ").strip() or row['user']
-    new_brand = input(f"Brand [{row['brand']}]: ").strip().upper() or row['brand']
+        print("\n" + "═" * 50)
+        print_colored(f"  UPDATE SIM (ID: {row['id']})", COLORS.CYAN, bold=True)
+        print("═" * 50)
+        print(f"  1. Cell Number   : {row['cell_number']}")
+        print(f"  2. Brand         : {row['brand']}")
+        print(f"  3. Owner         : {row['owner']}")
+        print(f"  4. User          : {row['user']}")
+        print(f"  5. Security Code : {row['security_code']}")
+        print(f"  6. PIN 1         : {row['pin_1']}")
+        print(f"  7. PIN 2         : {row['pin_2']}")
+        print(f"  8. PUK 1         : {row['puk_1']}")
+        print(f"  9. PUK 2         : {row['puk_2']}")
+        print("  0. Finish / Exit")
+        print("═" * 50)
 
-    try:
-        cursor.execute("""
-            UPDATE sim_details
-            SET cell_number = %s, owner = %s, `user` = %s, brand = %s
-            WHERE id = %s
-        """, (new_cell, new_owner, new_user, new_brand, sim_id))
-        conn.commit()
-        print_colored("[✓] SIM updated.", COLORS.GREEN)
-    except Exception as e:
-        print_colored(f"[!] Error: {e}", COLORS.RED)
-    finally:
-        cursor.close(); conn.close()
+        choice = input(color_text("Choose field to update (0-9): ", COLORS.MAGENTA)).strip()
+
+        if choice == '0':
+            break
+
+        field_map = {
+            '1': 'cell_number', '2': 'brand', '3': 'owner', '4': 'user',
+            '5': 'security_code', '6': 'pin_1', '7': 'pin_2', '8': 'puk_1', '9': 'puk_2'
+        }
+
+        if choice not in field_map:
+            print_colored("[!] Invalid choice.", COLORS.RED)
+            continue
+
+        field = field_map[choice]
+        current_val = row.get(field)
+
+        # Display current value
+        display_val = current_val if current_val is not None else "(empty)"
+        new_val = input(color_text(f"New {field.replace('_', ' ').title()} [{display_val}]: ", COLORS.MAGENTA)).strip()
+
+        if new_val == '':
+            print_colored("[i] No change made.", COLORS.YELLOW)
+            continue
+
+        # Convert numeric fields to integers to avoid database type errors
+        if field in ('security_code', 'pin_1', 'pin_2', 'puk_1', 'puk_2') and new_val.isdigit():
+            new_val = int(new_val)
+
+        if field == 'brand':
+            new_val = new_val.upper()
+            if new_val not in SIM_BRANDS:
+                print_colored(f"[!] Invalid brand. Choose from: {', '.join(SIM_BRANDS)}", COLORS.RED)
+                continue
+
+        if str(current_val) == str(new_val):
+            print_colored("[i] Value is identical. No DB change made.", COLORS.BLUE)
+            continue
+
+        # Apply update
+        col_expr = f"`{field}`" if field == 'user' else field
+        try:
+            cursor.execute(f"UPDATE sim_details SET {col_expr} = %s WHERE id = %s", (new_val, sim_id))
+            conn.commit()
+            if cursor.rowcount > 0:
+                print_colored(f"[✓] {field.replace('_', ' ').title()} updated.", COLORS.GREEN)
+            else:
+                print_colored("[!] Database did not register a change.", COLORS.YELLOW)
+        except Exception as e:
+            print_colored(f"[!] Error updating {field}: {e}", COLORS.RED)
+
+    cursor.close()
+    conn.close()
 
 def delete_sim():
     identifier = input(color_text("Enter DB ID or Cell Number to delete: ", COLORS.MAGENTA)).strip()

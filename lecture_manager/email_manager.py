@@ -144,25 +144,63 @@ def update_email():
 
     email_id = row['id']
 
-    print(f"\nUpdating Email: {row['mail_id']} (Leave blank to keep current)")
+    while True:
+        # Re-fetch to show the freshest data after each update
+        cursor.execute("SELECT * FROM email WHERE id = %s", (email_id,))
+        row = cursor.fetchone()
 
-    new_mail = input(f"Mail ID [{row['mail_id']}]: ").strip() or row['mail_id']
-    new_owner = input(f"Owner [{row['owner']}]: ").strip() or row['owner']
-    new_passwd = input(f"Password [{row['passwd']}]: ").strip() or row['passwd']
-    new_remark = input(f"Remark [{row['remark']}]: ").strip() or row['remark']
+        print("\n" + "═" * 50)
+        print_colored(f"  UPDATE EMAIL (ID: {row['id']})", COLORS.CYAN, bold=True)
+        print("═" * 50)
+        print(f"  1. Mail ID   : {row['mail_id']}")
+        print(f"  2. Owner     : {row['owner']}")
+        print(f"  3. Password  : {row['passwd']}")
+        print(f"  4. Supercell : {row['supercell']}")
+        print(f"  5. Remark    : {row['remark']}")
+        print("  0. Finish / Exit")
+        print("═" * 50)
 
-    try:
-        cursor.execute("""
-            UPDATE email
-            SET mail_id = %s, owner = %s, passwd = %s, remark = %s
-            WHERE id = %s
-        """, (new_mail, new_owner, new_passwd, new_remark, email_id))
-        conn.commit()
-        print_colored("[✓] Email updated.", COLORS.GREEN)
-    except Exception as e:
-        print_colored(f"[!] Error: {e}", COLORS.RED)
-    finally:
-        cursor.close(); conn.close()
+        choice = input(color_text("Choose field to update (0-5): ", COLORS.MAGENTA)).strip()
+
+        if choice == '0':
+            break
+
+        field_map = {
+            '1': 'mail_id', '2': 'owner', '3': 'passwd', '4': 'supercell', '5': 'remark'
+        }
+
+        if choice not in field_map:
+            print_colored("[!] Invalid choice.", COLORS.RED)
+            continue
+
+        field = field_map[choice]
+        current_val = row.get(field)
+
+        # Display current value
+        display_val = current_val if current_val is not None else "(empty)"
+        new_val = input(color_text(f"New {field.title()} [{display_val}]: ", COLORS.MAGENTA)).strip()
+
+        if new_val == '':
+            print_colored("[i] No change made.", COLORS.YELLOW)
+            continue
+
+        if str(current_val) == str(new_val):
+            print_colored("[i] Value is identical. No DB change made.", COLORS.BLUE)
+            continue
+
+        # Apply update
+        try:
+            cursor.execute(f"UPDATE email SET {field} = %s WHERE id = %s", (new_val, email_id))
+            conn.commit()
+            if cursor.rowcount > 0:
+                print_colored(f"[✓] {field.title()} updated.", COLORS.GREEN)
+            else:
+                print_colored("[!] Database did not register a change.", COLORS.YELLOW)
+        except Exception as e:
+            print_colored(f"[!] Error updating {field}: {e}", COLORS.RED)
+
+    cursor.close()
+    conn.close()
 
 def delete_email():
     identifier = input(color_text("Enter DB ID or Mail ID to delete: ", COLORS.MAGENTA)).strip()
