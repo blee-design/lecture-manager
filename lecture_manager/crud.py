@@ -188,13 +188,18 @@ def download_video(record, output_dir=DOWNLOAD_DIR, video_id_to_download=None, s
 
 def _resolve_lecturer_name(parsed_lecturer):
     """
-    If the parsed name is a short version (e.g., 'Tilak Sir'),
-    try to find the full name in the database (e.g., 'Tilak Mahara Sir').
+    Dynamically resolves a short name (e.g., 'Tilak Sir') to the most complete
+    name found in the database (e.g., 'Tilak Mahara Sir') by matching the first name.
     """
     if not parsed_lecturer or parsed_lecturer == "Unknown":
         return parsed_lecturer
 
     from .utils import normalize_title_case
+
+    # 1. Ignore obvious garbage words that aren't names
+    garbage_words = ['pretest', 'morning class', 'youtube', 'economics', 'class']
+    if any(g in parsed_lecturer.lower() for g in garbage_words):
+        return "Unknown"
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -205,28 +210,30 @@ def _resolve_lecturer_name(parsed_lecturer):
         cursor.close()
         conn.close()
 
-    parsed_lower = parsed_lecturer.lower().strip()
-    parsed_words = re.findall(r'\b\w+\b', parsed_lower)
-
-    # If no words found, just return the normalized version
+    # 2. Extract the first name from what we parsed
+    parsed_words = re.findall(r'\b\w+\b', parsed_lecturer.lower())
     if not parsed_words:
         return normalize_title_case(parsed_lecturer)
 
     first_name = parsed_words[0]
 
-    # Find ALL matches based on the first name
+    # 3. Find ALL database entries that start with this first name
     matches = []
     for lec in existing:
         lec_words = re.findall(r'\b\w+\b', lec.lower())
         if lec_words and lec_words[0] == first_name:
             matches.append(lec)
 
+    # 4. If we found matches, pick the LONGEST one (most complete name)
     if matches:
-        # Sort by length descending to get the most complete name (Tilak Mahara Sir > TILAK SIR)
+        # Sort by length descending. 'Khagendra Katwal Sir' beats 'KHAGENDRA SIR'
         matches.sort(key=len, reverse=True)
-        return normalize_title_case(matches[0])
+        best_match = matches[0]
 
-    # If no match found in DB, return the parsed name formatted properly
+        # Format it beautifully and return
+        return normalize_title_case(best_match)
+
+    # 5. If no match in DB, just return the parsed name formatted beautifully
     return normalize_title_case(parsed_lecturer)
 
 def add_lecture():
