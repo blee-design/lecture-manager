@@ -1,5 +1,3 @@
-# pomodoro.py
-
 import math
 import matplotlib.pyplot as plt
 import matplotlib.transforms as mtransforms
@@ -3287,7 +3285,7 @@ class PomodoroApp:
             cursor.execute("""
                 SELECT COALESCE(t.task_text, 'Uncategorized Task') as task_text, SUM(l.duration_min) as total_min
                 FROM pomodoro_log l LEFT JOIN pomodoro_tasks t ON l.task_id = t.id
-                WHERE l.phase = 'work' GROUP BY l.task_id ORDER BY total_min DESC LIMIT 5
+                WHERE l.phase = 'work' GROUP BY l.task_id ORDER BY total_min DESC LIMIT 10
             """)
             data = cursor.fetchall(); cursor.close(); conn.close()
 
@@ -3300,7 +3298,7 @@ class PomodoroApp:
                 fig3, ax3 = plt.subplots(figsize=(8, 4))
                 figures.append(fig3)
                 ax3.barh(tasks, mins, color='#2196F3')
-                ax3.set_title('Top 5 Tasks (Time Spent)'); ax3.set_xlabel('Minutes')
+                ax3.set_title('Top 10 Tasks (Time Spent)'); ax3.set_xlabel('Minutes')
                 canvas3 = FigureCanvasTkAgg(fig3, master=tab4)
                 canvas3.draw(); canvas3.get_tk_widget().pack(fill=tk.BOTH, expand=True)
             else:
@@ -3329,19 +3327,102 @@ class PomodoroApp:
                 set_status(lbl_peak, "No hourly data available.", COLORS.YELLOW)
 
         def render_insights_tab():
-            set_status(lbl_insights, "Analyzing data for insights...", COLORS.BLUE)
+            set_status(lbl_insights, "Analyzing data for smart insights...", COLORS.BLUE)
+            conn = get_connection(); cursor = conn.cursor(dictionary=True)
+
+            # 1. Most studied task/subject
+            cursor.execute("""
+                SELECT COALESCE(t.task_text, 'Uncategorized') as task_text, SUM(l.duration_min) as total_min
+                FROM pomodoro_log l LEFT JOIN pomodoro_tasks t ON l.task_id = t.id
+                WHERE l.phase = 'work' GROUP BY l.task_id ORDER BY total_min DESC LIMIT 1
+            """)
+            top_task = cursor.fetchone()
+
+            # 2. Most productive day of week
+            cursor.execute("""
+                SELECT DAYNAME(timestamp) as day_name, SUM(duration_min) as total_min
+                FROM pomodoro_log WHERE phase = 'work' GROUP BY day_name ORDER BY total_min DESC LIMIT 1
+            """)
+            top_day = cursor.fetchone()
+
+            # 3. Peak hour
+            cursor.execute("""
+                SELECT HOUR(timestamp) as hour, COUNT(*) as sessions
+                FROM pomodoro_log WHERE phase = 'work' GROUP BY HOUR(timestamp) ORDER BY sessions DESC LIMIT 1
+            """)
+            peak_hour = cursor.fetchone()
+
+            # 4. Avg daily time
+            cursor.execute("""
+                SELECT SUM(duration_min) / COUNT(DISTINCT DATE(timestamp)) as avg_daily
+                FROM pomodoro_log WHERE phase = 'work'
+            """)
+            avg_daily_row = cursor.fetchone()
+            avg_daily = avg_daily_row['avg_daily'] if avg_daily_row else 0
+
+            # 5. Best month
+            cursor.execute("""
+                SELECT DATE_FORMAT(timestamp, '%Y-%m') as month, SUM(duration_min) as total_min
+                FROM pomodoro_log WHERE phase = 'work' GROUP BY month ORDER BY total_min DESC LIMIT 1
+            """)
+            top_month = cursor.fetchone()
+
+            # 6. Total lifetime minutes
+            cursor.execute("SELECT SUM(duration_min) as total_min FROM pomodoro_log WHERE phase = 'work'")
+            total_row = cursor.fetchone()
+            total_mins = total_row['total_min'] if total_row and total_row['total_min'] else 0
+
+            cursor.close(); conn.close()
+
             set_status(lbl_insights, "Rendering insights...", COLORS.GREEN)
             for w in tab6.winfo_children(): w.destroy()
 
             insights = "📌 **DYNAMIC INSIGHTS BASED ON YOUR DATA**\n\n"
-            insights += "🚀 Your peak productivity time is shown in the 'Peak Hours' tab.\n"
-            insights += "📚 Keep focusing on your top subjects to build momentum.\n"
-            if streak >= 5:
-                insights += f"\n🔥 **You are on a {streak}-day streak!** This is your prime time to build momentum."
-            else:
-                insights += f"\n🔄 Start a new streak today! Just 1 Pomodoro is enough."
 
-            ttk.Label(tab6, text=insights, font=("Helvetica", 11), justify=tk.LEFT, wraplength=800).pack(anchor=tk.W, padx=20, pady=20)
+            if total_mins > 0:
+                hrs = total_mins // 60
+                mins = total_mins % 60
+                insights += f"⏱️ **Total Study Time:** You have logged an incredible **{hrs}h {mins}m** of deep work.\n\n"
+
+                if top_task and top_task.get('task_text'):
+                    t_hrs = top_task['total_min'] // 60
+                    t_mins = top_task['total_min'] % 60
+                    insights += f"🏆 **Top Focus Area:** You spent the most time on **{top_task['task_text']}** ({t_hrs}h {t_mins}m).\n\n"
+
+                if top_day:
+                    insights += f"📅 **Most Productive Day:** You tend to study the most on **{top_day['day_name']}s**.\n\n"
+
+                if peak_hour:
+                    h = peak_hour['hour']
+                    ampm = "AM" if h < 12 else "PM"
+                    disp_h = h if 0 < h <= 12 else abs(h - 12)
+                    if disp_h == 0: disp_h = 12
+                    insights += f"⚡ **Peak Productivity:** Your brain is most active around **{disp_h}:00 {ampm}**.\n\n"
+
+                insights += f"📊 **Daily Average:** You average **{int(avg_daily)} minutes** of focused study per active day.\n\n"
+
+                if top_month and top_month.get('month'):
+                    insights += f"📈 **Best Month:** **{top_month['month']}** was your strongest month with {top_month['total_min']//60} hours logged.\n\n"
+
+            if streak >= 5:
+                insights += f"🔥 **Streak Alert:** You are on a **{streak}-day streak!** This is your prime time to build momentum. Don't break the chain!"
+            else:
+                insights += f"🔄 **Streak Status:** You are on a {streak}-day streak. Start a new streak today! Just 1 Pomodoro is enough."
+
+            # Use a scrollable Text widget so it never breaks the window size
+            text_frame = ttk.Frame(tab6)
+            text_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+            text_widget = tk.Text(text_frame, font=("Helvetica", 12), wrap=tk.WORD,
+                                  bg="#2c3e50", fg="#ecf0f1", relief=tk.FLAT, borderwidth=0)
+            text_widget.insert(tk.END, insights)
+            text_widget.config(state=tk.DISABLED)  # Read-only
+
+            scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=text_widget.yview)
+            text_widget.configure(yscrollcommand=scrollbar.set)
+
+            text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # ---- Lazy Loading Router ----
         rendered_tabs = set()
