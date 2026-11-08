@@ -1253,7 +1253,7 @@ def move_video_interactive():
         print_colored(f"[!] Failed to move: {e}", COLORS.RED)
 
 def delete_video_to_trash():
-    raw = input(color_text("Enter video ID, syllabus ID, mirror ID, or YouTube URL: ", COLORS.MAGENTA)).strip()
+    raw = input(color_text("Enter DB ID, video ID, syllabus ID, mirror ID, or YouTube URL: ", COLORS.MAGENTA)).strip()
     if not raw:
         return
 
@@ -1263,10 +1263,10 @@ def delete_video_to_trash():
     # First try by video_id or mirror_id (using existing helper)
     record = get_record_by_any_id(identifier)
     if not record:
-        # If not found, try by syllabus_id
+        # If not found, try by syllabus_id or DB ID
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE syllabus_id = %s", (identifier,))
+        cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE syllabus_id = %s OR CAST(id AS CHAR) = %s", (identifier, identifier))
         record = cursor.fetchone()
         cursor.close()
         conn.close()
@@ -2117,7 +2117,7 @@ def tally_db_with_files():
             print_colored("[!] For the entire library, this takes ~30–40 hours.", COLORS.YELLOW)
             print_colored("[!] Make sure you have at least 5 GB free disk space.", COLORS.YELLOW)
 
-            prompt = ("Enter a specific Video ID, Mirror ID, or file hash (MD5) to compress only that one\n"
+            prompt = ("Enter a specific DB ID, Video ID, Mirror ID, or file hash (MD5) to compress only that one\n"
                       "or press 'y' to list the 5 largest files, or press Enter for ALL: ")
             user_input = input(color_text(prompt, COLORS.MAGENTA)).strip()
 

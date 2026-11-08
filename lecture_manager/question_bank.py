@@ -3063,7 +3063,7 @@ def unified_question_menu():
 
         print(_section_header("📖  BROWSE"))
         print("      1. All questions          paginated, sortable list")
-        print("      2. Quick lookup           by date / institution / level")
+        print("      2. Quick lookup           by date / institution / level / DB ID")
         print("      3. Whole paper view       grouped by section")
         print("      4. " + color_text("Browse by syllabus", COLORS.GREEN) + "     paper → subject → chapter")
         print("      5. Advanced search        multi-field filters")

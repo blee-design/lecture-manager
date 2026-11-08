@@ -93,6 +93,54 @@ def _paper_choices(subject_code=None):
 
     return choices
 
+def _resolve_lecturer_alias(parsed_name):
+    """
+    Resolve partial names (e.g., 'Mahara Sir') to the full canonical name
+    by checking the existing lecturer names in the database.
+    """
+    if not parsed_name:
+        return parsed_name
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"SELECT DISTINCT lecturer FROM {TABLE_NAME} WHERE lecturer IS NOT NULL AND lecturer != ''")
+    existing_names = [row[0] for row in cursor.fetchall()]
+    cursor.close()
+    conn.close()
+
+    if not existing_names:
+        return parsed_name
+
+    parsed_lower = parsed_name.strip().lower()
+
+    # 1. Exact match (case-insensitive)
+    for name in existing_names:
+        if name.strip().lower() == parsed_lower:
+            return name
+
+    # 2. Token/Substring match
+    # Ignore common titles so "Mahara Sir" and "Tilak Mahara Sir" both just check "mahara" / "tilak"
+    ignore_words = {"sir", "madam", "teacher", "prof", "dr", "mr", "mrs", "ms"}
+    parsed_tokens = set(w for w in re.findall(r'\b\w+\b', parsed_lower) if w not in ignore_words)
+
+    if not parsed_tokens:
+        return parsed_name
+
+    matches = []
+    for name in existing_names:
+        name_tokens = set(w for w in re.findall(r'\b\w+\b', name.lower()) if w not in ignore_words)
+        # If all the words the parser found exist in the DB name, it's a match
+        # e.g., parsed has {"mahara"}, DB has {"tilak", "mahara"} -> Match!
+        if parsed_tokens.issubset(name_tokens):
+            matches.append(name)
+
+    # If exactly one existing lecturer matches the partial name, return the full name
+    if len(matches) == 1:
+        return matches[0]
+
+    # If multiple matches or none, return what was parsed (to avoid incorrect auto-corrections)
+    return parsed_name
+
 def download_video(record, output_dir=DOWNLOAD_DIR, video_id_to_download=None, silent=False):
     """
     Download a video from YouTube.
@@ -283,6 +331,10 @@ def add_lecture():
     # ---- Fetch title and parse ----
     title = fetch_youtube_title(video_id) or ""
     parsed = parse_lecture_title(title)
+
+    # ---- NEW: Upgrade partial names using DB knowledge ----
+    if parsed and parsed.get('lecturer'):
+        parsed['lecturer'] = _resolve_lecturer_alias(parsed['lecturer'])
 
     # --- NEW: Resolve short names to full names from DB ---
     if parsed and parsed.get('lecturer'):
@@ -809,11 +861,11 @@ def view_all():
         print(f"{bracket}{main} {id_part}")
 
 def view_one():
-    raw = input(color_text("Enter video ID, syllabus ID, mirror ID, or YouTube URL: ", COLORS.MAGENTA)).strip()
+    raw = input(color_text("Enter DB ID, video ID, syllabus ID, mirror ID, or YouTube URL: ", COLORS.MAGENTA)).strip()
     if not raw:
         return
 
-    # If it's a URL, extract the video ID; otherwise keep as-is (for syllabus ID)
+    # If it's a URL, extract the video ID; otherwise keep as-is
     identifier = extract_video_id(raw) or raw
 
     conn = get_connection()
@@ -822,8 +874,11 @@ def view_one():
         SELECT id, video_id, mirror_video_id, video_title, syllabus_id, subject,
                chapter, topic, lecturer, nepali_date, time, notes, original_filename, file_hash
         FROM {TABLE_NAME}
-        WHERE video_id = %s OR syllabus_id = %s OR mirror_video_id = %s
-    """, (identifier, identifier, identifier))
+        WHERE video_id = %s
+           OR syllabus_id = %s
+           OR mirror_video_id = %s
+           OR CAST(id AS CHAR) = %s
+    """, (identifier, identifier, identifier, identifier))
     row = cursor.fetchone()
     cursor.close()
     conn.close()
@@ -914,7 +969,7 @@ def view_one():
 
 def update_lecture():
     while True:
-        identifier = input(color_text("Enter Video ID or Mirror ID to update (or press Enter to return): ", COLORS.MAGENTA)).strip()
+        identifier = input(color_text("Enter DB ID, Video ID, or Mirror ID to update (or press Enter to return): ", COLORS.MAGENTA)).strip()
         if not identifier:
             print_colored("Returning to main menu.", COLORS.YELLOW)
             return
@@ -1399,7 +1454,7 @@ def update_lecture():
             return
 
 def delete_lecture():
-    raw = input(color_text("Enter Video ID, Syllabus ID, or YouTube URL: ", COLORS.MAGENTA)).strip()
+    raw = input(color_text("Enter DB ID, Video ID, Syllabus ID, or YouTube URL: ", COLORS.MAGENTA)).strip()
     if not raw:
         return
 
@@ -1409,8 +1464,8 @@ def delete_lecture():
     cursor = conn.cursor(dictionary=True)
     cursor.execute(f"""
         SELECT * FROM {TABLE_NAME}
-        WHERE video_id = %s OR syllabus_id = %s
-    """, (identifier, identifier))
+        WHERE video_id = %s OR syllabus_id = %s OR CAST(id AS CHAR) = %s
+    """, (identifier, identifier, identifier))
     records = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -1473,7 +1528,7 @@ def download_existing():
         print_colored("[!] Unknown source type.", COLORS.RED)
 
 def show_embed_link():
-    raw = input(color_text("Enter video ID, mirror ID, or YouTube URL: ", COLORS.MAGENTA)).strip()
+    raw = input(color_text("Enter DB ID, video ID, mirror ID, or YouTube URL: ", COLORS.MAGENTA)).strip()
     if not raw:
         return
     identifier = extract_video_id(raw) or raw
@@ -1482,8 +1537,8 @@ def show_embed_link():
     cursor = conn.cursor(buffered=True)
     cursor.execute(f"""
         SELECT video_id, mirror_video_id FROM {TABLE_NAME}
-        WHERE video_id = %s OR mirror_video_id = %s
-    """, (identifier, identifier))
+        WHERE video_id = %s OR mirror_video_id = %s OR CAST(id AS CHAR) = %s
+    """, (identifier, identifier, identifier))
     row = cursor.fetchone()
     cursor.close()
     conn.close()

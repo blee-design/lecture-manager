@@ -1782,8 +1782,11 @@ def get_record_by_any_id(identifier):
     try:
         cursor.execute(f"""
             SELECT * FROM {TABLE_NAME}
-            WHERE video_id = %s OR mirror_video_id = %s OR file_hash = %s
-        """, (identifier, identifier, identifier))
+            WHERE video_id = %s
+               OR mirror_video_id = %s
+               OR file_hash = %s
+               OR CAST(id AS CHAR) = %s
+        """, (identifier, identifier, identifier, identifier))
         return cursor.fetchone()
     finally:
         cursor.close()
@@ -1799,8 +1802,8 @@ def get_any_media_record(identifier):
     from .facebook_manager import get_facebook_entry_by_id
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
-    cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE video_id = %s OR mirror_video_id = %s OR file_hash = %s OR syllabus_id = %s",
-                   (identifier, identifier, identifier, identifier))
+    cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE video_id = %s OR mirror_video_id = %s OR file_hash = %s OR syllabus_id = %s OR CAST(id AS CHAR) = %s",
+                   (identifier, identifier, identifier, identifier, identifier))
     row = cursor.fetchone()
     cursor.close()
     conn.close()
