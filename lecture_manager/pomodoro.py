@@ -3193,6 +3193,10 @@ class PomodoroApp:
                 set_status(lbl_monthly, f"Rendering {len(monthly_data)} months of data...", COLORS.GREEN)
                 for w in tab_monthly.winfo_children(): w.destroy()
 
+                # --- NEW: Sort newest first ---
+                monthly_data_sorted = sorted(monthly_data, key=lambda x: x['month'], reverse=True)
+
+                # Plot the graph (keep chronological order for the graph)
                 months = [r['month'] for r in monthly_data]
                 hrs = [r['total_min'] / 60 for r in monthly_data]
                 fig_monthly, ax_monthly = plt.subplots(figsize=(10, 4))
@@ -3203,11 +3207,30 @@ class PomodoroApp:
                 canvas_monthly = FigureCanvasTkAgg(fig_monthly, master=tab_monthly)
                 canvas_monthly.draw(); canvas_monthly.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
+                # --- NEW: Build summary text with newest at top ---
                 summary = "📊 Monthly Summary:\n"
-                for r in monthly_data:
+                for r in monthly_data_sorted:
                     avg = r['total_min'] / r['days_active'] if r['days_active'] else 0
                     summary += f"  {r['month']}: {r['total_min']//60}h {r['total_min']%60}m | {r['sessions']} sess | {r['days_active']} days | avg {avg:.0f} min/d\n"
-                ttk.Label(tab_monthly, text=summary, font=("Helvetica", 10), justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=10)
+
+                # --- NEW: Scrollable Text Widget ---
+                text_frame = ttk.Frame(tab_monthly)
+                text_frame.pack(fill=tk.X, padx=20, pady=10)
+
+                # height=6 shows exactly the header + 5 rows (approx 4-5 months).
+                # This prevents the window from resizing dynamically.
+                text_widget = tk.Text(text_frame, font=("Helvetica", 10), wrap=tk.NONE,
+                                      height=6, bg="#2c3e50", fg="#ecf0f1",
+                                      relief=tk.FLAT, borderwidth=0)
+                text_widget.insert(tk.END, summary)
+                text_widget.config(state=tk.DISABLED)  # Make read-only
+
+                scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=text_widget.yview)
+                text_widget.configure(yscrollcommand=scrollbar.set)
+
+                text_widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
             else:
                 set_status(lbl_monthly, "No monthly data available yet.", COLORS.YELLOW)
 
