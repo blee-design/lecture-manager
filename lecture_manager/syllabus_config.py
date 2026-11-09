@@ -311,7 +311,8 @@ def add_chapter(subject_id, chapter_code=None, name=None, description=None, disp
                 FROM chapters
                 WHERE subject_id = %s AND chapter_code REGEXP '^[0-9]+$'
             """, (subject_id,))
-            next_num = (cursor.fetchone()[0] or 0) + 1
+            # Cast to int() to prevent Decimal format string errors
+            next_num = int(cursor.fetchone()[0] or 0) + 1
             chapter_code = f"{next_num:02d}"
         else:
             chapter_code = str(chapter_code).zfill(2)
@@ -372,7 +373,8 @@ def add_subject(name, paper_key, chapter=None, group=None):
                 FROM subjects
                 WHERE paper = %s AND chapter REGEXP '^[0-9]+$'
             """, (paper_key,))
-            next_num = (cursor.fetchone()[0] or 0) + 1
+            # Cast to int() to prevent Decimal format string errors
+            next_num = int(cursor.fetchone()[0] or 0) + 1
             chapter = f"{next_num:02d}"
         else:
             chapter = str(chapter).zfill(2)
