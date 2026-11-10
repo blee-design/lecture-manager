@@ -403,6 +403,7 @@ class PomodoroApp:
         self._after_id = None
         self.task_var = tk.StringVar()
         self._subject_label_to_name = {}
+        self._syllabus_task_cache = {}  # <-- NEW: Cache for fast task display
 
         # pause tracking
         self.pauses = []
@@ -1386,6 +1387,98 @@ class PomodoroApp:
         self.refresh_task_list()
         self.update_task_combo()
 
+    def _build_syllabus_cache(self):
+        """Fetch all papers/chapters ONCE and store them in memory for instant lookup."""
+        self._syllabus_task_cache = {}
+        syllabus_key = self._syllabus_map.get(self.syllabus_var.get())
+        if not syllabus_key:
+            return
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor(dictionary=True)
+
+            # 1. Get all papers for this syllabus
+            cursor.execute("""
+                SELECT p.paper_key FROM papers p
+                JOIN syllabi sy ON p.syllabus_id = sy.id
+                WHERE sy.syllabus_key = %s
+                ORDER BY p.display_order, p.display_name
+            """, (syllabus_key,))
+            papers = cursor.fetchall()
+
+            paper_map = {}
+            pretest_paper = None
+            for i, p in enumerate(papers, 1):
+                pk = p['paper_key']
+                if 'pretest' in pk:
+                    pretest_paper = pk
+                else:
+                    paper_map[i] = pk
+
+            # 2. Get all chapters and subjects in one big query
+            cursor.execute("""
+                SELECT s.paper, s.chapter AS subj, c.chapter_code AS chap,
+                       s.name AS subj_name, c.name AS chap_name
+                FROM chapters c
+                JOIN subjects s ON c.subject_id = s.id
+                WHERE s.paper IN (
+                    SELECT paper_key FROM papers p
+                    JOIN syllabi sy ON p.syllabus_id = sy.id
+                    WHERE sy.syllabus_key = %s
+                )
+            """, (syllabus_key,))
+
+            # 3. Build the lookup dictionary
+            for row in cursor.fetchall():
+                paper = row['paper']
+                subj = str(int(row['subj']))
+                chap = str(int(row['chap']))
+                name = f"({row['subj_name']} - {row['chap_name']})"
+
+                if paper == pretest_paper:
+                    self._syllabus_task_cache[f"Pretest {subj}.{chap}"] = name
+                else:
+                    for p_num, pk in paper_map.items():
+                        if pk == paper:
+                            self._syllabus_task_cache[f"P{p_num}-{subj}.{chap}"] = name
+                            break
+
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"[Cache Build Error] {e}")
+
+    def _resolve_task_text(self, text):
+        """Translates codes using the in-memory cache (0.00s execution)."""
+        if not text or not self._syllabus_task_cache:
+            return text
+
+        text_stripped = text.strip()
+
+        # Standard: P1-A1.1
+        match = re.match(r'^P(\d+)-([A-Za-z]*)(\d+)\.(\d+)$', text_stripped, re.IGNORECASE)
+        if match:
+            p_num = match.group(1)
+            subj = str(int(match.group(3)))  # Removes leading zeros
+            chap = str(int(match.group(4)))
+            key = f"P{p_num}-{subj}.{chap}"
+            if key in self._syllabus_task_cache:
+                return f"{text} {self._syllabus_task_cache[key]}"
+            return text
+
+        # Pretest: Pretest 01.2 or pretest-1.2
+        pt_match = re.match(r'^[Pp]retest[\s-]+(\d+)\.(\d+)$', text_stripped, re.IGNORECASE)
+        if pt_match:
+            subj = str(int(pt_match.group(1)))
+            chap = str(int(pt_match.group(2)))
+            key = f"Pretest {subj}.{chap}"
+            if key in self._syllabus_task_cache:
+                return f"{text} {self._syllabus_task_cache[key]}"
+            return text
+
+        return text
+
     def refresh_task_list(self):
         self.task_listbox.delete(0, tk.END)
         self.task_listbox_task_ids = []
@@ -1404,7 +1497,8 @@ class PomodoroApp:
                 icon = '🟩'
             else:
                 icon = '⬜'
-            label = f"[P{priority}] {icon} {task['task_text']}"
+            display_text = self._resolve_task_text(task['task_text'])
+            label = f"[P{priority}] {icon} {display_text}"
             if task['completed']:
                 label += " ✓"
             self.task_listbox.insert(tk.END, label)
@@ -1504,6 +1598,13 @@ class PomodoroApp:
         self.subject_var.set('')
         self.refresh_subject_list()
 
+        # --- NEW: Build the fast cache for the new syllabus ---
+        self._build_syllabus_cache()
+
+        if hasattr(self, 'task_listbox'):
+            self.refresh_task_list()
+            self.update_task_combo()
+
     def on_subject_combo_select(self, event=None):
         """
         If the user picks a paper header row, jump to that paper's first
@@ -1528,7 +1629,8 @@ class PomodoroApp:
             if task['completed']:
                 continue
             priority = task['priority']
-            label = f"[P{priority}] {task['task_text']}"
+            display_text = self._resolve_task_text(task['task_text'])
+            label = f"[P{priority}] {display_text}"
             options.append(label)
         self.task_combo['values'] = options
         if options and not self.task_var.get():
@@ -1538,7 +1640,8 @@ class PomodoroApp:
         self.combo_label_to_id = {}
         for task in self.tasks:
             if not task['completed']:
-                label = f"[P{task['priority']}] {task['task_text']}"
+                display_text = self._resolve_task_text(task['task_text'])
+                label = f"[P{task['priority']}] {display_text}"
                 self.combo_label_to_id[label] = task['id']
 
     def _render_inline_bar(self, pct, fill_lbl, empty_lbl, width=10):
