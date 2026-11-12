@@ -1125,7 +1125,7 @@ class PomodoroApp:
 
         if not messagebox.askyesno("Save Log",
                                 "This will update only the changed entries.\n"
-                                "Entries without an ID (new ones) will be inserted.\n\n"
+                                "Any entry missing a valid ID will be skipped.\n\n"
                                 "Continue?"):
             return
 
@@ -1199,7 +1199,7 @@ class PomodoroApp:
             task_id = None
             if task_name:
                 conn = get_connection()
-                cursor = conn.cursor()
+                cursor = conn.cursor(buffered=True)  # <-- ADD buffered=True
                 cursor.execute("SELECT id FROM pomodoro_tasks WHERE task_text = %s", (task_name,))
                 row = cursor.fetchone()
                 if row:
@@ -1214,7 +1214,7 @@ class PomodoroApp:
             resolved_subject_name = subject  # what we actually store
             if subject:
                 conn = get_connection()
-                cursor = conn.cursor(dictionary=True)
+                cursor = conn.cursor(dictionary=True, buffered=True)  # <-- ADD buffered=True
 
                 # 1. Exact match
                 cursor.execute(
@@ -1250,9 +1250,9 @@ class PomodoroApp:
                 cursor.close()
                 conn.close()
 
-            # Now update or insert
+            # Now update ONLY. Never insert from the editor.
             conn = get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(buffered=True)
             if log_id:
                 cursor.execute("SELECT id FROM pomodoro_log WHERE id = %s", (log_id,))
                 if cursor.fetchone():
@@ -1267,14 +1267,10 @@ class PomodoroApp:
                     else:
                         unchanged += 1
                 else:
-                    # --- NEW: Throw error instead of inserting a new row ---
                     errors.append(f"Log ID #{log_id} not found in the database. Entry skipped.")
             else:
-                cursor.execute("""
-                    INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, subject_id, notes, task_id, session_type)
-                    VALUES (%s, 'work', %s, %s, %s, %s, %s, %s)
-                """, (timestamp_str, duration, subject, subject_id, notes, task_id, session_type))
-                inserted += 1
+                # If there is no ID at all, skip it safely.
+                errors.append(f"Entry missing ID, skipped: {first_line[:40]}...")
             conn.commit()
             cursor.close()
             conn.close()
