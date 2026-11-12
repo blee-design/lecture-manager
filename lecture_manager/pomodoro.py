@@ -3007,6 +3007,9 @@ class PomodoroApp:
             else:
                 self.subject_var.set('')
 
+            # --- NEW: Refresh the task dropdown for the restored subject! ---
+            self.update_task_combo()
+
             # ---------- NEW: Restore session type ----------
             if state.get('session_type'):
                 self.type_var.set(state['session_type'])
