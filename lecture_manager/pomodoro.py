@@ -852,6 +852,7 @@ class PomodoroApp:
                                 self.on_subject_combo_select)
 
         self.load_syllabus_list()
+        self._build_syllabus_cache()   # <-- NEW: Build cache immediately on startup
         self.refresh_subject_list()
 
         # ---------- Task List ----------
@@ -1266,11 +1267,8 @@ class PomodoroApp:
                     else:
                         unchanged += 1
                 else:
-                    cursor.execute("""
-                        INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, subject_id, notes, task_id, session_type)
-                        VALUES (%s, 'work', %s, %s, %s, %s, %s, %s)
-                    """, (timestamp_str, duration, subject, subject_id, notes, task_id, session_type))
-                    inserted += 1
+                    # --- NEW: Throw error instead of inserting a new row ---
+                    errors.append(f"Log ID #{log_id} not found in the database. Entry skipped.")
             else:
                 cursor.execute("""
                     INSERT INTO pomodoro_log (timestamp, phase, duration_min, subject, subject_id, notes, task_id, session_type)
@@ -1624,25 +1622,30 @@ class PomodoroApp:
                 return
 
     def update_task_combo(self):
-        options = []
-        for task in self.tasks:
-            if task['completed']:
-                continue
-            priority = task['priority']
-            display_text = self._resolve_task_text(task['task_text'])
-            label = f"[P{priority}] {display_text}"
-            options.append(label)
-        self.task_combo['values'] = options
-        if options and not self.task_var.get():
-            self.task_var.set(options[0])
-        elif not options:
-            self.task_var.set("")
         self.combo_label_to_id = {}
+        options = []
+
+        # 1. Build the dictionary first
         for task in self.tasks:
             if not task['completed']:
                 display_text = self._resolve_task_text(task['task_text'])
                 label = f"[P{task['priority']}] {display_text}"
+                options.append(label)
                 self.combo_label_to_id[label] = task['id']
+
+        # 2. Update the combobox values
+        self.task_combo['values'] = options
+
+        # 3. Ensure the current selection is valid
+        if options:
+            # If the current label is no longer in the list (e.g., because the cache expanded it),
+            # we must update the string variable, otherwise the exact match in log_work_session will fail.
+            if self.task_var.get() not in options:
+                self.task_var.set(options[0])
+                self.current_task_id = self.combo_label_to_id.get(options[0])
+        else:
+            self.task_var.set("")
+            self.current_task_id = None
 
     def _render_inline_bar(self, pct, fill_lbl, empty_lbl, width=10):
         """
@@ -2993,9 +2996,8 @@ class PomodoroApp:
                 # Find the task in self.tasks (which should be already loaded)
                 task = next((t for t in self.tasks if t['id'] == task_id), None)
                 if task:
-                    label = f"[P{task['priority']}] {task['task_text']}"
-                    # Ensure the combo has this label; if not, add it temporarily?
-                    # Actually, the combo values are built from tasks, so it should exist.
+                    display_text = self._resolve_task_text(task['task_text']) # <-- Use resolver
+                    label = f"[P{task['priority']}] {display_text}"
                     self.task_var.set(label)
                     self.current_task_id = task_id
                 else:
@@ -3027,6 +3029,15 @@ class PomodoroApp:
             self.phase_label.config(text="Work")
             self.update_display()
             self.update_progress()
+
+            # --- NEW: Force a hard reset of the dropdowns ---
+            if self.syllabus_combo['values']:
+                self.syllabus_var.set(self.syllabus_combo['values'][0])
+                self.on_syllabus_change()  # Rebuilds subjects, cache, and tasks
+
+            self.task_var.set('')
+            self.current_task_id = None
+            self.update_task_combo()
 
     def schedule_state_save(self):
         if self.timer_running or self.paused:
