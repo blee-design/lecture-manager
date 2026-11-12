@@ -1384,6 +1384,7 @@ class PomodoroApp:
     def _build_syllabus_cache(self):
         """Fetch all papers/chapters ONCE and store them in memory for instant lookup."""
         self._syllabus_task_cache = {}
+        self._subject_to_paper = {}  # <-- NEW: Maps subject name to paper
         syllabus_key = self._syllabus_map.get(self.syllabus_var.get())
         if not syllabus_key:
             return
@@ -1432,10 +1433,12 @@ class PomodoroApp:
 
                 if paper == pretest_paper:
                     self._syllabus_task_cache[f"Pretest {subj}.{chap}"] = name
+                    self._subject_to_paper[row['subj_name']] = 'Pretest'  # <-- NEW
                 else:
                     for p_num, pk in paper_map.items():
                         if pk == paper:
                             self._syllabus_task_cache[f"P{p_num}-{subj}.{chap}"] = name
+                            self._subject_to_paper[row['subj_name']] = f"P{p_num}"  # <-- NEW
                             break
 
             cursor.close()
@@ -1602,40 +1605,64 @@ class PomodoroApp:
     def on_subject_combo_select(self, event=None):
         """
         If the user picks a paper header row, jump to that paper's first
-        real subject. Otherwise do nothing.
+        real subject. Otherwise, just update the task list filter.
         """
         label = self.subject_var.get()
-        if not label or not label.startswith('──'):
-            return
-        values = list(self.subject_combo['values'])
-        try:
-            idx = values.index(label)
-        except ValueError:
-            return
-        for v in values[idx + 1:]:
-            if not v.startswith('──'):
-                self.subject_var.set(v)
+
+        # If it's a header row (── Paper ──), auto-select the first real subject under it
+        if label and label.startswith('──'):
+            values = list(self.subject_combo['values'])
+            try:
+                idx = values.index(label)
+            except ValueError:
                 return
+            for v in values[idx + 1:]:
+                if not v.startswith('──'):
+                    self.subject_var.set(v)
+                    break
+
+        # --- NEW: Refresh the task dropdown based on the new subject ---
+        self.update_task_combo()
 
     def update_task_combo(self):
         self.combo_label_to_id = {}
         options = []
 
-        # 1. Build the dictionary first
-        for task in self.tasks:
-            if not task['completed']:
-                display_text = self._resolve_task_text(task['task_text'])
-                label = f"[P{task['priority']}] {display_text}"
-                options.append(label)
-                self.combo_label_to_id[label] = task['id']
+        selected_subject = self._subject_label_to_name.get(self.subject_var.get())
+        target_paper = getattr(self, '_subject_to_paper', {}).get(selected_subject) if selected_subject else None
 
-        # 2. Update the combobox values
+        for task in self.tasks:
+            if task['completed']:
+                continue
+
+            raw_text = task['task_text']
+            display_text = self._resolve_task_text(raw_text)
+
+            # --- NEW: Intelligent Paper-based Filtering ---
+            if target_paper:
+                is_syllabus_task = False
+                task_paper = None
+
+                # Detect if this is a syllabus task and extract its paper
+                if raw_text.startswith('Pretest'):
+                    is_syllabus_task = True
+                    task_paper = 'Pretest'
+                elif re.match(r'^P\d+-', raw_text):
+                    is_syllabus_task = True
+                    task_paper = raw_text.split('-')[0] # e.g., 'P2'
+
+                # If it's a syllabus task, but NOT for the selected paper, skip it
+                if is_syllabus_task and task_paper != target_paper:
+                    continue
+
+            # If it passes the filter (or is a true generic task), add it
+            label = f"[P{task['priority']}] {display_text}"
+            options.append(label)
+            self.combo_label_to_id[label] = task['id']
+
         self.task_combo['values'] = options
 
-        # 3. Ensure the current selection is valid
         if options:
-            # If the current label is no longer in the list (e.g., because the cache expanded it),
-            # we must update the string variable, otherwise the exact match in log_work_session will fail.
             if self.task_var.get() not in options:
                 self.task_var.set(options[0])
                 self.current_task_id = self.combo_label_to_id.get(options[0])
