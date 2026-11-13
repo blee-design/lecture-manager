@@ -1628,8 +1628,8 @@ class PomodoroApp:
         self.combo_label_to_id = {}
         options = []
 
+        # Get the exact subject name (e.g., "Microeconomics")
         selected_subject = self._subject_label_to_name.get(self.subject_var.get())
-        target_paper = getattr(self, '_subject_to_paper', {}).get(selected_subject) if selected_subject else None
 
         for task in self.tasks:
             if task['completed']:
@@ -1638,30 +1638,28 @@ class PomodoroApp:
             raw_text = task['task_text']
             display_text = self._resolve_task_text(raw_text)
 
-            # --- NEW: Intelligent Paper-based Filtering ---
-            if target_paper:
+            # --- NEW: Strict Subject Filtering ---
+            if selected_subject:
+                # 1. Is this a syllabus task? (Starts with P1-, P2-, or Pretest)
                 is_syllabus_task = False
-                task_paper = None
-
-                # Detect if this is a syllabus task and extract its paper
-                if raw_text.startswith('Pretest'):
+                if raw_text.startswith('Pretest') or re.match(r'^P\d+-', raw_text):
                     is_syllabus_task = True
-                    task_paper = 'Pretest'
-                elif re.match(r'^P\d+-', raw_text):
-                    is_syllabus_task = True
-                    task_paper = raw_text.split('-')[0] # e.g., 'P2'
 
-                # If it's a syllabus task, but NOT for the selected paper, skip it
-                if is_syllabus_task and task_paper != target_paper:
-                    continue
+                # 2. If it IS a syllabus task, it MUST belong to the selected subject
+                if is_syllabus_task:
+                    # The resolver outputs: "P2-A1.1 (General Management - ...)"
+                    # If the selected subject isn't in that string, hide it.
+                    if selected_subject not in display_text:
+                        continue
 
-            # If it passes the filter (or is a true generic task), add it
+            # If it passes (or is a generic task like 'exam'), add it
             label = f"[P{task['priority']}] {display_text}"
             options.append(label)
             self.combo_label_to_id[label] = task['id']
 
         self.task_combo['values'] = options
 
+        # Ensure the current selection is valid
         if options:
             if self.task_var.get() not in options:
                 self.task_var.set(options[0])
