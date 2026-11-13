@@ -789,7 +789,8 @@ class PomodoroApp:
         stc.columnconfigure(0, weight=1)
         self.type_var = tk.StringVar(value="study")
         ttk.Combobox(stc, textvariable=self.type_var,
-                     state='readonly', values=SESSION_TYPES
+                     state='readonly', values=SESSION_TYPES,
+                     height=10  # <-- Show 10 items, then scroll
                      ).grid(row=0, column=0, sticky='ew')
 
         # ---------- Current Task ----------
@@ -797,7 +798,8 @@ class PomodoroApp:
                            row=2, column=0, sticky='ew', pady=(0, 8))
         tkc.columnconfigure(0, weight=1)
         self.task_combo = ttk.Combobox(tkc, textvariable=self.task_var,
-                                       state='readonly', width=50)
+                                       state='readonly', width=50,
+                                       height=15) # <-- Show 15 items, then scroll
         self.root.option_add('*TCombobox*Listbox.background', PALETTE['card'])
         self.root.option_add('*TCombobox*Listbox.foreground', PALETTE['text'])
         self.task_combo.grid(row=0, column=0, sticky='ew')
