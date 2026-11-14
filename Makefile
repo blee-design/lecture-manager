@@ -21,11 +21,11 @@ FLASK_DEBUG=0
 # --- Database settings (Auto-detected from app config) ---
 CONFIG_FILE    := $(HOME)/.lecture_manager_config.json
 
-# Extract values securely from the JSON config. Fallback to defaults if file is missing.
-DB_USER        ?= $(shell python3 -c "import json; print(json.load(open('$(CONFIG_FILE)'))['user'])" 2>/dev/null || echo "root")
-DB_PASSWORD    ?= $(shell python3 -c "import json; print(json.load(open('$(CONFIG_FILE)'))['password'])" 2>/dev/null)
-DB_NAME        ?= $(shell python3 -c "import json; print(json.load(open('$(CONFIG_FILE)'))['database'])" 2>/dev/null || echo "fox")
-DB_HOST        ?= $(shell python3 -c "import json; print(json.load(open('$(CONFIG_FILE)'))['host'])" 2>/dev/null || echo "localhost")
+# Extract values securely from the JSON config using the system's default python. Fallback to defaults if file is missing.
+DB_USER        ?= $(shell $(PYTHON) -c "import json; print(json.load(open('$(CONFIG_FILE)'))['user'])" 2>/dev/null || echo "root")
+DB_PASSWORD    ?= $(shell $(PYTHON) -c "import json; print(json.load(open('$(CONFIG_FILE)'))['password'])" 2>/dev/null)
+DB_NAME        ?= $(shell $(PYTHON) -c "import json; print(json.load(open('$(CONFIG_FILE)'))['database'])" 2>/dev/null || echo "fox")
+DB_HOST        ?= $(shell $(PYTHON) -c "import json; print(json.load(open('$(CONFIG_FILE)'))['host'])" 2>/dev/null || echo "localhost")
 
 DB_DUMP_FILE   := $(BACKUP_DIR)/$(PROJECT_NAME)_db_$(TIMESTAMP).sql
 SUDO_DB        ?= sudo
