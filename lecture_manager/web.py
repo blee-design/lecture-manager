@@ -426,7 +426,39 @@ def syllabus_browser():
 
 @app.route('/lectures')
 def lectures():
-    papers = SC.get_papers()
+    # --- NEW: Enrich and group papers by syllabus ---
+    papers_raw = SC.get_papers()
+    papers = papers_raw
+    syllabi = SC.get_syllabi()
+    syll_map = {s['id']: s['display_name'] for s in syllabi}
+
+    papers_by_syllabus = {}
+    paper_names = {}
+
+    for p in papers_raw:
+        s_name = syll_map.get(p.get('syllabus_id'), 'Unknown Institution')
+
+        if s_name not in papers_by_syllabus:
+            papers_by_syllabus[s_name] = []
+
+        p_copy = p.copy()
+        p_copy['syllabus_name'] = s_name
+        papers_by_syllabus[s_name].append(p_copy)
+
+        paper_names[p['paper_key']] = f"[{s_name}] {p['display_name']}"
+
+    # Sort institutions alphabetically
+    papers_by_syllabus = dict(sorted(papers_by_syllabus.items()))
+
+    # Group subjects by paper for the dropdown
+    subjects_raw = SC.get_subjects()
+    subjects_by_paper = {}
+    for s in subjects_raw:
+        pk = s.get('paper')
+        if pk not in subjects_by_paper:
+            subjects_by_paper[pk] = []
+        subjects_by_paper[pk].append(s)
+    # -----------------------------------------------
 
     # Get all filter parameters from the query string
     search = request.args.get('search', '')
@@ -520,7 +552,10 @@ def lectures():
                            lecturer=lecturer, subject=subject, syllabus=syllabus,
                            chapter=chapter, topic=topic, date_from=date_from, date_to=date_to,
                            notes=notes, video_id=video_id, mirror_id=mirror_id,
-                           exact=exact, papers=papers)
+                           exact=exact, papers=papers,
+                           papers_by_syllabus=papers_by_syllabus,
+                           subjects_by_paper=subjects_by_paper,
+                           paper_names=paper_names)
 
 @app.route('/lecture/<int:id>')
 def lecture_detail(id):
