@@ -18,13 +18,17 @@ BACKUP_FILE    := $(BACKUP_DIR)/$(PROJECT_NAME)_backup_$(TIMESTAMP).tar.xz
 
 FLASK_DEBUG=0
 
-# --- Database settings (for backup-db) ---
-# Credentials are read from environment variables; you can set them in a .env file or pass inline.
-DB_HOST        ?= localhost
-DB_USER        ?= fox
-DB_PASSWORD    ?= fox
-DB_NAME        ?= fox
+# --- Database settings (Auto-detected from app config) ---
+CONFIG_FILE    := $(HOME)/.lecture_manager_config.json
+
+# Extract values securely from the JSON config. Fallback to defaults if file is missing.
+DB_USER        ?= $(shell python3 -c "import json; print(json.load(open('$(CONFIG_FILE)'))['user'])" 2>/dev/null || echo "root")
+DB_PASSWORD    ?= $(shell python3 -c "import json; print(json.load(open('$(CONFIG_FILE)'))['password'])" 2>/dev/null)
+DB_NAME        ?= $(shell python3 -c "import json; print(json.load(open('$(CONFIG_FILE)'))['database'])" 2>/dev/null || echo "fox")
+DB_HOST        ?= $(shell python3 -c "import json; print(json.load(open('$(CONFIG_FILE)'))['host'])" 2>/dev/null || echo "localhost")
+
 DB_DUMP_FILE   := $(BACKUP_DIR)/$(PROJECT_NAME)_db_$(TIMESTAMP).sql
+SUDO_DB        ?= sudo
 
 # --- Files/directories to exclude from backup ---
 EXCLUDE := --exclude='__pycache__' \
@@ -242,11 +246,12 @@ backup: $(BACKUP_DIR)
 $(BACKUP_DIR):
 	mkdir -p $(BACKUP_DIR)
 
-# --- Database backup (requires DB credentials) ---
+# --- Database backup (Auto-detects credentials) ---
 .PHONY: backup-db
 backup-db: $(BACKUP_DIR)
-	@echo "$(BLUE)Dumping database $(DB_NAME)...$(NC)"
-	mysqldump -h $(DB_HOST) -u $(DB_USER) -p$(DB_PASSWORD) $(DB_NAME) > $(DB_DUMP_FILE)
+	@echo "$(BLUE)Dumping database $(DB_NAME) using user $(DB_USER)...$(NC)"
+	mariadb-dump -v -h $(DB_HOST) -u $(DB_USER) $(if $(DB_PASSWORD),-p$(DB_PASSWORD),-p) \
+		--databases $(DB_NAME) --hex-blob --routines --triggers --events --single-transaction > $(DB_DUMP_FILE)
 	@echo "$(GREEN)Database dump saved: $(DB_DUMP_FILE)$(NC)"
 
 # --- Database schema migrations ---
