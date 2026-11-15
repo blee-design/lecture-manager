@@ -1036,16 +1036,22 @@ def _baseline_migration_v1(cursor):
         """)
         print_colored("[✓] Created 'instapaper_articles' table.", COLORS.GREEN)
     else:
-        # --- NEW: Add new columns for existing installs ---
+        # --- NEW: Safely add columns to existing databases on startup ---
         cursor.execute("SHOW COLUMNS FROM instapaper_articles LIKE 'server_id'")
         if not cursor.fetchone():
             cursor.execute("ALTER TABLE instapaper_articles ADD COLUMN server_id BIGINT NULL")
+            print_colored("[✓] Added 'server_id' column to instapaper_articles.", COLORS.GREEN)
+
         cursor.execute("SHOW COLUMNS FROM instapaper_articles LIKE 'status'")
         if not cursor.fetchone():
             cursor.execute("ALTER TABLE instapaper_articles ADD COLUMN status VARCHAR(20) DEFAULT 'unread'")
+            print_colored("[✓] Added 'status' column to instapaper_articles.", COLORS.GREEN)
+
         cursor.execute("SHOW COLUMNS FROM instapaper_articles LIKE 'starred'")
         if not cursor.fetchone():
             cursor.execute("ALTER TABLE instapaper_articles ADD COLUMN starred BOOLEAN DEFAULT FALSE")
+            print_colored("[✓] Added 'starred' column to instapaper_articles.", COLORS.GREEN)
+
     # oauth token
     cursor.execute("SHOW COLUMNS FROM instapaper_credentials LIKE 'oauth_token'")
     if not cursor.fetchone():
