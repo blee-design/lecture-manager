@@ -1023,15 +1023,29 @@ def _baseline_migration_v1(cursor):
         CREATE TABLE instapaper_articles (
             id INT AUTO_INCREMENT PRIMARY KEY,
             bookmark_id VARCHAR(32) UNIQUE,
+            server_id BIGINT NULL,
             url VARCHAR(512) NOT NULL,
             title VARCHAR(512),
             author VARCHAR(255),
             content LONGTEXT,
+            status VARCHAR(20) DEFAULT 'unread',
+            starred BOOLEAN DEFAULT FALSE,
             saved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         );
         """)
         print_colored("[✓] Created 'instapaper_articles' table.", COLORS.GREEN)
+    else:
+        # --- NEW: Add new columns for existing installs ---
+        cursor.execute("SHOW COLUMNS FROM instapaper_articles LIKE 'server_id'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE instapaper_articles ADD COLUMN server_id BIGINT NULL")
+        cursor.execute("SHOW COLUMNS FROM instapaper_articles LIKE 'status'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE instapaper_articles ADD COLUMN status VARCHAR(20) DEFAULT 'unread'")
+        cursor.execute("SHOW COLUMNS FROM instapaper_articles LIKE 'starred'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE instapaper_articles ADD COLUMN starred BOOLEAN DEFAULT FALSE")
     # oauth token
     cursor.execute("SHOW COLUMNS FROM instapaper_credentials LIKE 'oauth_token'")
     if not cursor.fetchone():
