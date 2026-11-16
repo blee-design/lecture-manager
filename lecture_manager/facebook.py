@@ -168,29 +168,33 @@ def _extract_caption_from_description(desc):
 def _extract_uploader_from_url(url):
     """
     Best-effort page-name extraction from a Facebook URL.
-
-    Handles:
-      facebook.com/pages/<Name>/<id>       →  <Name>
-      facebook.com/<slug>/photos/...       →  <slug>
-      facebook.com/<slug>/videos/...       →  <slug>
-      facebook.com/profile.php?id=...      →  None (no name in URL)
+    Handles share links, profile.php, pages, and groups.
     """
     if not url:
         return None
 
-    # facebook.com/pages/<Name>/<id>  — the most informative pattern
-    m = re.search(r'facebook\.com/pages/([^/?#]+)', url, re.IGNORECASE)
-    if m:
-        name = m.group(1).replace('-', ' ').replace('_', ' ').replace('.', ' ')
-        return ' '.join(name.split()).strip()
+    # 1. Standard page/profile: facebook.com/<slug>
+    # 2. Group post: facebook.com/groups/<group_id>/posts/...
+    # 3. Profile ID: facebook.com/profile.php?id=12345
+    if "profile.php?id=" in url:
+        m = re.search(r'profile\.php\?id=(\d+)', url)
+        if m:
+            return f"User {m.group(1)}"
 
-    # facebook.com/<slug>/...  — fallback
     m = re.search(r'facebook\.com/([^/?#]+)', url, re.IGNORECASE)
     if m:
         slug = m.group(1)
         if slug.lower() not in _FB_URL_SLUG_IGNORE:
+            # If it's a known non-name slug (like 'share' or 'reel'),
+            # try to look for a nested ID.
+            if slug.lower() in ('share', 'reel', 'watch', 'videos'):
+                # e.g. facebook.com/share/v/12345678
+                m2 = re.search(r'/([a-zA-Z0-9]+)/?$', url)
+                if m2:
+                    return f"FB {slug.capitalize()} {m2.group(1)}"
+
             name = slug.replace('-', ' ').replace('_', ' ').replace('.', ' ')
-            return ' '.join(name.split()).strip()
+            return ' '.join(name.split()).title()
 
     return None
 
@@ -257,19 +261,6 @@ def _pick_album_title(probe, uploader=None, photo_count=None, custom_name=None):
     return "Facebook Album"
 
 def _fast_probe(url, timeout=8):
-    """
-    Fast network probe using plain HTTP + Open Graph meta tags.
-    Returns a dict:
-      {
-        'kind': 'video' | 'photo' | 'album' | 'unknown',
-        'title': str | None,
-        'uploader': str | None,
-        'description': str | None,
-        'og_video': str | None,
-        'og_image': str | None,
-      }
-    or None if the probe failed entirely.
-    """
     import re
     import html as _html
 
@@ -293,19 +284,14 @@ def _fast_probe(url, timeout=8):
         cookies = _parse_netscape_cookies('cookies.txt')
 
     try:
-        resp = requests.get(
-            url, headers=headers, cookies=cookies,
-            timeout=timeout, allow_redirects=True
-        )
+        resp = requests.get(url, headers=headers, cookies=cookies, timeout=timeout, allow_redirects=True)
         if resp.status_code != 200:
             return None
-        # Cap HTML size for speed — meta tags live in <head>
-        html_text = resp.text[:500_000]
+        html_text = resp.text[:800_000]
     except Exception:
         return None
 
     def _meta(prop):
-        # property="og:title" content="..." (either order)
         for pat in (
             rf'<meta[^>]+property=["\']{re.escape(prop)}["\'][^>]+content=["\']([^"\']*)["\']',
             rf'<meta[^>]+content=["\']([^"\']*)["\'][^>]+property=["\']{re.escape(prop)}["\']',
@@ -326,34 +312,25 @@ def _fast_probe(url, timeout=8):
         return None
 
     og_type    = _meta('og:type') or ''
-    og_video   = (_meta('og:video:url')
-                  or _meta('og:video:secure_url')
-                  or _meta('og:video'))
+    og_video   = (_meta('og:video:url') or _meta('og:video:secure_url') or _meta('og:video'))
     og_image   = _meta('og:image') or _meta('og:image:url')
-    og_title   = _meta('og:title') or _named_meta('title') or ''
-    og_desc    = _meta('og:description') or _named_meta('description') or ''
+    og_url     = _meta('og:url') or resp.url # <-- NEW: Canonical URL
+    og_title   = _meta('og:title') or _named_meta('twitter:title') or ''
+    og_desc    = _meta('og:description') or _named_meta('twitter:description') or _named_meta('description') or ''
 
-    # Fallback to <title> if OG title missing
     if not og_title:
         m = re.search(r'<title[^>]*>([^<]+)</title>', html_text, re.I)
         if m:
             og_title = _html.unescape(m.group(1)).strip()
 
-    # Strip Facebook suffix from titles
     for suffix in (' | Facebook', ' - Facebook', ' | Facebook Watch', ' | Watch'):
         if og_title.endswith(suffix):
             og_title = og_title[:-len(suffix)].strip()
 
-    # ---- Classify ----
-    url_lower = url.lower()
+    url_lower = og_url.lower()
     kind = 'unknown'
 
-    if og_video:
-        kind = 'video'
-    elif 'video' in og_type.lower():
-        kind = 'video'
-    elif any(p in url_lower for p in
-             ('/reel/', '/videos/', '/watch', 'fb.watch', '/share/r/', '/share/v/')):
+    if og_video or 'video' in og_type.lower() or any(p in url_lower for p in ('/reel/', '/videos/', '/watch', 'fb.watch', '/share/r/', '/share/v/')):
         kind = 'video'
     elif '/albums/' in url_lower or 'set=a.' in url_lower:
         kind = 'album'
@@ -362,10 +339,9 @@ def _fast_probe(url, timeout=8):
     elif og_image and not og_video:
         kind = 'photo'
 
-    # ---- Extract uploader ----
-    uploader = _extract_uploader_from_url(url)
+    # Extract uploader from the CANONICAL URL (which usually has the real page name)
+    uploader = _extract_uploader_from_url(og_url)
 
-    # Fallback: og:title patterns ("Photo by X on Facebook", "X - Watch", …)
     if not uploader and og_title:
         for pat in (
             r'^(?:Post|Video|Photo|Reel|Live)\s+by\s+(.+?)(?:\s+on\s+Facebook)?$',
@@ -383,26 +359,23 @@ def _fast_probe(url, timeout=8):
         'description': og_desc or None,
         'og_video': og_video,
         'og_image': og_image,
+        'og_url': og_url
     }
 
 def _get_facebook_metadata(url, timeout=10):
-    """
-    Return (uploader, title) for a Facebook URL.
-
-    Flow:
-      1. Fast HTTP + OG probe (1-2 seconds, no cookies needed for public content)
-      2. yt-dlp fallback (only if probe yields nothing usable)
-      3. gallery-dl fallback (last resort)
-    """
-    # ---- 1. Fast probe ----
     probe = _fast_probe(url, timeout=min(timeout, 8))
     if probe:
         title = probe.get('title')
         uploader = probe.get('uploader')
         if uploader and uploader.lower() not in ('unknown', 'facebook', ''):
             return uploader, title
+        # If probe failed to find uploader, try the canonical URL
+        if probe.get('og_url'):
+            uploader = _extract_uploader_from_url(probe['og_url'])
+            if uploader:
+                return uploader, title
 
-    # ---- 2. yt-dlp fallback ----
+    # yt-dlp fallback
     try:
         import yt_dlp
         _ensure_cookie_file()
@@ -418,39 +391,9 @@ def _get_facebook_metadata(url, timeout=10):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             if info:
-                uploader = (info.get('uploader') or info.get('creator')
-                            or info.get('channel') or info.get('uploader_id'))
-                title = (info.get('title') or info.get('description')
-                         or info.get('alt_title'))
-                if uploader and uploader.lower() not in ('unknown', 'facebook', ''):
-                    return uploader.strip(), title
-    except Exception:
-        pass
-
-    # ---- 3. gallery-dl fallback ----
-    try:
-        import json, subprocess
-        _ensure_cookie_file()
-        cookie_file = 'cookies.txt' if os.path.exists('cookies.txt') else None
-        cmd = ['gallery-dl', '-j']
-        if cookie_file:
-            cmd.extend(['--cookies', cookie_file])
-        cmd.append(url)
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        if proc.returncode == 0:
-            data = json.loads(proc.stdout)
-            first = None
-            if isinstance(data, list) and data:
-                item = data[0]
-                if isinstance(item, list) and len(item) >= 3:
-                    first = item[2]
-                elif isinstance(item, dict):
-                    first = item
-            if first:
-                uploader = (first.get('uploader') or first.get('username')
-                            or first.get('owner') or first.get('author'))
-                title = (first.get('title') or first.get('caption')
-                         or first.get('description'))
+                uploader = (info.get('uploader') or info.get('channel') or
+                            info.get('creator') or info.get('uploader_id'))
+                title = (info.get('title') or info.get('description'))
                 if uploader and uploader.lower() not in ('unknown', 'facebook', ''):
                     return uploader.strip(), title
     except Exception:
@@ -647,8 +590,8 @@ def _download_video(url, custom_name=None, force=False, probe=None):
                 facebook_id = _info.get('id') or _extract_facebook_id(url)
         if not title:
             title = "Facebook Video"
-        if not uploader:
-            uploader = _extract_facebook_uploader_from_url(url) or "Unknown"
+        if not uploader or uploader == "Unknown":
+            uploader = _extract_facebook_uploader_from_url(url) or f"FB ID: {facebook_id}"
         if not facebook_id:
             facebook_id = _extract_facebook_id(url)
 
@@ -995,7 +938,7 @@ def _download_single_photo(url, custom_name=None, probe=None, force=False):
         title = title or fb_title
 
     if not uploader or uploader == "Unknown":
-        uploader = _extract_facebook_uploader_from_url(url)
+        uploader = _extract_facebook_uploader_from_url(url) or f"FB ID: {_extract_facebook_id(url)}"
     if not title:
         title = _pick_photo_title(probe, uploader=uploader,
                                   custom_name=custom_name)
