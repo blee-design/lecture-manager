@@ -51,6 +51,11 @@ def _apply_also_in(qid, also_in):
         home_paper = (home.get('paper') or '').strip()
         home_code  = (home.get('syllabus_code') or '').strip()
 
+        # --- NEW: Fetch the home paper's syllabus ID ---
+        cur.execute("SELECT syllabus_id FROM papers WHERE paper_key = %s", (home_paper,))
+        home_syll_row = cur.fetchone()
+        home_syllabus_id = home_syll_row['syllabus_id'] if home_syll_row else None
+
         # Parse the incoming list into a dict: {(paper, code): note}
         wanted = {}
         for raw in also_in:
@@ -83,13 +88,25 @@ def _apply_also_in(qid, also_in):
             chap = f"{int(m2.group(2)):02d}"
             norm = f"{subj}.{chap}"
 
-            if paper_key == home_paper and norm == home_code:
-                print_colored(
-                    f"[i] Skipped redundant link "
-                    f"(same as primary): {paper_key} · {norm}",
-                    COLORS.YELLOW,
+            # --- NEW: Loop Prevention Logic ---
+            # Check if the target paper belongs to the same syllabus as the primary paper
+            cur.execute("SELECT syllabus_id FROM papers WHERE paper_key = %s", (paper_key,))
+            target_syll_row = cur.fetchone()
+            target_syllabus_id = target_syll_row['syllabus_id'] if target_syll_row else None
+
+            if home_syllabus_id and target_syllabus_id and home_syllabus_id == target_syllabus_id:
+                raise ValidationError(
+                    f"Loop Prevention: Question {qid} is primarily in '{home_paper}'. "
+                    f"You cannot cross-link to '{paper_key}' because it belongs to the SAME syllabus. "
+                    f"Please remove the 'Also in: {paper_key}' line."
                 )
-                continue
+
+            if paper_key == home_paper and norm == home_code:
+                raise ValidationError(
+                    f"Loop Prevention: You cannot cross-link '{paper_key} · {norm}' "
+                    f"because it is the exact same as the primary link. "
+                    f"Please remove the 'Also in: {paper_key}' line."
+                )
 
             wanted[(paper_key, norm)] = note
 
