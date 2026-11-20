@@ -4049,13 +4049,18 @@ def view_whole_paper_interactive():
     Mirrors the advanced-search UX: all fields shown at once, pick a
     number to edit one, 90 to display, 0 to return.
     """
-    fields = ['date', 'institution', 'level', 'alias', 'paper']
+    # --- NEW: Expanded fields for maximum flexibility ---
+    fields = ['date', 'institution', 'level', 'alias', 'paper', 'source', 'group', 'subject', 'chapter']
     display_names = {
         'date':        'Question date',
         'institution': 'Institution',
         'level':       'Level',
         'alias':       'Alias (role)',
         'paper':       'Paper',
+        'source':      'Source (e.g. Facebook PSC L6 Pretest)',
+        'group':       'Group (e.g. A, B)',
+        'subject':     'Subject',
+        'chapter':     'Chapter',
     }
     criteria = {f: '' for f in fields}
     show_answers = False
