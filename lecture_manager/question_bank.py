@@ -1163,7 +1163,7 @@ def get_question_by_id(qid):
     conn.close()
     return q
 
-def get_questions_by_criteria(date=None, institution=None, level=None, alias=None, paper=None, group=None, subject=None, question_number=None, chapter=None, syllabus_code=None):
+def get_questions_by_criteria(date=None, institution=None, level=None, alias=None, paper=None, group=None, subject=None, question_number=None, chapter=None, syllabus_code=None, source=None):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     conditions = []
@@ -1181,6 +1181,9 @@ def get_questions_by_criteria(date=None, institution=None, level=None, alias=Non
     if alias:
         conditions.append("alias LIKE %s")
         params.append(f"%{alias}%")
+    if source:
+        conditions.append("source LIKE %s")
+        params.append(f"%{source}%")
     if paper:
         # Match either the question's PRIMARY paper, or any paper it's
         # linked to via question_links.
