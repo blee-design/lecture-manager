@@ -33,21 +33,26 @@
 - Web UI for browsing, searching, and viewing whole papers
 - Advanced search and filtering
 
-### ⏱️ Pomodoro Timer (New!)
+### ⏱️ Pomodoro Timer (Enhanced!)
 - Built‑in Tkinter GUI timer with study sessions, short/long breaks
+- **Smart Syllabus Integration:** Auto-expands task codes (e.g., `P1-A1.1`) into full chapter names based on the active syllabus.
+- **Context-Aware Filtering:** The task dropdown only shows chapters relevant to the selected subject.
 - Task management with priority, completion, and bulk add
 - Study logging with subjects, session types (study/revision/pretest/exam)
 - Daily, weekly, and monthly progress tracking
 - Badges and streak tracking to keep you motivated
 - Detailed analytics with charts (matplotlib)
 
-### 📰 Offline Article Reader (Instapaper Integration)
+### 📰 Offline Article Reader (Instapaper Two-Way Sync!)
 - Save articles, YouTube lectures, or questions to Instapaper
+- **Two-Way Sync:** Pull unread and archived bookmarks from the server, and archive/delete them locally and remotely.
 - Offline storage of full article content with local search
-- OAuth authentication and full API sync
+- Modern OAuth 1.0a authentication flow
 
-### 🌐 Web Interface (Flask)
+### 🌐 Web Interface (Flask) (Redesigned!)
 - Dashboard with library statistics and paper breakdown
+- **Master-Detail Syllabus Explorer:** Clean sidebar tree with dynamic chapter loading.
+- **Advanced Lectures View:** Sticky filter sidebar, grouped institution dropdowns, and clean 4-column table layout.
 - Browse and manage YouTube and Facebook entries
 - View questions, whole papers, and browse by chapter
 - Import/export questions via the web UI

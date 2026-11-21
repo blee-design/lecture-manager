@@ -1299,7 +1299,8 @@ class PomodoroApp:
                 parts.append(f"added {inserted} new entr{'y' if inserted == 1 else 'ies'}")
             msg = "Successfully " + " and ".join(parts) + "."
 
-        messagebox.showinfo("Done", msg)
+        if self.root.winfo_exists():
+            messagebox.showinfo("Done", msg)
 
     def toggle_edit_mode(self):
         """Enable/disable editing of the study log."""
@@ -1909,6 +1910,7 @@ class PomodoroApp:
         return streak
 
     def update_streak_display(self):
+        if not self.root.winfo_exists(): return
         streak = self.get_current_streak()
         if streak == 0:
             self.streak_label.config(text="🔥 0-day")
@@ -2455,12 +2457,13 @@ class PomodoroApp:
             print(f"[ERROR] timer_complete() crashed: {e}")
             import traceback
             traceback.print_exc()
-            self.current_phase = "work"
-            self.remaining_seconds = self.config["work_min"] * 60
-            self.phase_label.config(text="Work")
-            self.update_display()
-            self.save_state()
-            messagebox.showerror("Error", f"Timer completion failed: {e}\nReset to work phase.")
+            if self.root.winfo_exists():
+                self.current_phase = "work"
+                self.remaining_seconds = self.config["work_min"] * 60
+                self.phase_label.config(text="Work")
+                self.update_display()
+                self.save_state()
+                messagebox.showerror("Error", f"Timer completion failed: {e}\nReset to work phase.")
 
     def log_work_session(self):
         """Insert a log entry for a completed work session."""
@@ -2532,6 +2535,7 @@ class PomodoroApp:
         conn.close()
 
     def update_display(self):
+        if not self.root.winfo_exists(): return
         mins = self.remaining_seconds // 60
         secs = self.remaining_seconds % 60
         self.time_label.config(text=f"{mins:02d}:{secs:02d}")
@@ -2548,6 +2552,7 @@ class PomodoroApp:
             self.progress_bar['value'] = progress
 
     def update_progress(self):
+        if not self.root.winfo_exists(): return
         self.update_streak_display()
         goal = self.config["daily_goal"]
         self.progress_label.config(text=f"Today: {self.today_count} / {goal} Pomodoros")
